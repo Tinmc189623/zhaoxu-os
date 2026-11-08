@@ -58,6 +58,7 @@ ASM_SRCS := kernel/arch/x86_64/entry.S \
 ADA_SRCS := drivers/serial.adb \
             drivers/pit.adb \
             drivers/ps2.adb \
+            drivers/mouse.adb \
             drivers/gop.adb
 CXX_SRCS := kernel/lib/cxx.cpp \
             apps/shell.cpp

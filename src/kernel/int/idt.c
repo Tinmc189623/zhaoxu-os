@@ -1,4 +1,5 @@
 #include <console.h>
+#include <drivers.h>
 #include <idt.h>
 #include <io.h>
 #include <kprintf.h>
@@ -135,6 +136,9 @@ static void irq_dispatch(struct interrupt_frame *f)
         break;
     case 1:
         keyboard_irq();
+        break;
+    case 12:
+        mouse_irq();
         break;
     default:
         break;

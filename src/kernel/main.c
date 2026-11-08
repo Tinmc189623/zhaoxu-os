@@ -81,6 +81,13 @@ void kernel_main(struct boot_info *boot)
 
     timer_init(100);
     keyboard_init();
+    if (mouse_init((int)g_boot.width, (int)g_boot.height) > 0) {
+        pic_unmask(12);
+        kprintf("[mouse] PS/2 aux port ready, cursor bounds %ux%u\n",
+                g_boot.width, g_boot.height);
+    } else {
+        kprintf("[mouse] no PS/2 mouse detected\n");
+    }
     pic_unmask(0);
     pic_unmask(1);
     pic_unmask(2);

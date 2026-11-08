@@ -109,8 +109,9 @@ void keyboard_handle_scancode(u8 scancode)
 
 void keyboard_irq(void)
 {
-    if ((ps2_status() & 1) == 0)
-        return;
+    u8 status = ps2_status();
+    if ((status & 1) == 0 || (status & 0x20))
+        return;     /* no data, or the byte belongs to the mouse (IRQ12) */
     keyboard_handle_scancode(ps2_read_data());
 }
 

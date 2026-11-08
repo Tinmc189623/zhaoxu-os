@@ -14,6 +14,13 @@ void ps2_init(void);
 u8   ps2_status(void);
 u8   ps2_read_data(void);
 
+int  mouse_init(int width, int height);
+void mouse_irq(void);
+int  mouse_x(void);
+int  mouse_y(void);
+int  mouse_buttons(void);
+int  mouse_ready(void);
+
 void gop_fill_rect(u64 fb, u32 pitch, u32 x, u32 y, u32 w, u32 h, u32 color);
 void gop_blit_glyph(u64 fb, u32 pitch, u32 x, u32 y, const u8 *glyph,
                     u32 fg, u32 bg);
