@@ -70,9 +70,13 @@ OBJS := $(patsubst %.c,$(BUILD)/%.o,$(C_SRCS)) \
 
 HEADLESS ?= 0
 
-.PHONY: all clean run iso run-iso FORCE
+.PHONY: all clean run iso run-iso version FORCE
 
 all: $(OUT)/BOOTX64.EFI $(ESP)/BOOTX64.EFI
+
+# Sync the version from version.php (repo root) into all surfaces.
+version:
+	$(RUBY) tools/version.rb
 
 $(BUILD)/config.inc: FORCE
 	@mkdir -p $(BUILD)
@@ -100,7 +104,10 @@ $(OUT)/%.zxe: $(BUILD)/%.uelf tools/zxe-pack.rb
 # ---- initramfs -------------------------------------------------------
 RAMFS := $(BUILD)/initramfs
 RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/etc/motd $(RAMFS)/etc/version \
-               $(RAMFS)/mnt
+               $(RAMFS)/mnt \
+               $(RAMFS)/data/HELLO.TXT $(RAMFS)/data/HELLO.ZXE \
+               $(RAMFS)/data/HELLO.ELF \
+               $(RAMFS)/data/DOCS/INFO.TXT
 
 $(RAMFS)/bin/init: $(OUT)/init.zxe
 	@mkdir -p $(dir $@)
@@ -112,6 +119,27 @@ $(RAMFS)/etc/%: initramfs/etc/%
 
 $(RAMFS)/mnt:
 	@mkdir -p $@
+
+# Embedded mirror of the FAT32 data volume: /mnt falls back to /data when
+# no ZHAOXUDATA disk is present, so disk-less (ISO-only) boots still open
+# the sample files. The CJK font is NOT mirrored here on purpose: OVMF
+# refuses to boot a BOOTX64.EFI of that size; disk-less boots degrade to
+# '?' glyphs until the installer milestone ships data inside the ISO.
+$(RAMFS)/data/HELLO.TXT: initramfs/data/hello.txt
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/data/HELLO.ZXE: $(OUT)/hello.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/data/HELLO.ELF: $(BUILD)/hello.uelf
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/data/DOCS/INFO.TXT: initramfs/data/info.txt
+	@mkdir -p $(dir $@)
+	cp $< $@
 
 $(OUT)/initramfs.tar: $(RAMFS_FILES)
 	@mkdir -p $(OUT)

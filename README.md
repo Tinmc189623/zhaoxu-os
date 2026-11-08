@@ -49,7 +49,7 @@ Zhaoxu OS 是一个面向 x86_64 + UEFI 的多语言操作系统，内核代号 
 - `int 0x80` 系统调用入口（IDT DPL=3），用户指针逐页校验
 - 内嵌 ustar initramfs → 只读 ramfs；`/bin/init`、`/etc/motd` 等随内核分发
 - AHCI 块设备（PCI class 01/06/01），FAT32 只读驱动挂载到 `/mnt`
-- VFS 路径分发与只读 fd 表，用户程序通过 open/read/close 访问两个文件系统
+- VFS 路径分发与只读 fd 表，用户程序通过 open/read/close 访问两个文件系统；无数据盘时 `/mnt` 自动回退到 initramfs 内嵌数据镜像 `/data`（无中文字体，CJK 回退 `?`）
 
 **驱动（Ada）**
 

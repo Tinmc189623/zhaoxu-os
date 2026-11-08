@@ -2,8 +2,10 @@
  * Zhaoxu OS - virtual file system
  *
  * The initramfs ramfs provides the root filesystem.  A FAT32 volume, when
- * present, is mounted at /mnt.  File descriptors expose read-only access to
- * either backend.
+ * present, is mounted at /mnt.  When no FAT32 volume exists, /mnt falls
+ * back to the embedded copy of the data volume under /data in the ramfs,
+ * so ISO-only and disk-less boots still expose the same files.
+ * File descriptors expose read-only access to either backend.
  */
 #include <fat32.h>
 #include <kprintf.h>
@@ -34,6 +36,18 @@ static int path_is_mnt(const char *path)
     return path[4] == 0 || path[4] == '/';
 }
 
+/*
+ * With no FAT32 volume, translate /mnt/... to the embedded mirror at
+ * /data/....  Returns 1 when the translation was written to buffer.
+ */
+static int mnt_fallback_path(const char *path, char *buffer, usize capacity)
+{
+    if (g_fat_mounted || !path_is_mnt(path))
+        return 0;
+    int written = ksnprintf(buffer, capacity, "/data%s", path + 4);
+    return written > 0 && (usize)written < capacity;
+}
+
 int vfs_init(void)
 {
     memset(g_files, 0, sizeof(g_files));
@@ -54,6 +68,9 @@ int vfs_list(const char *path, vfs_list_cb callback, void *context)
     if (!path || !*path)
         path = "/";
 
+    char alt[300];
+    if (mnt_fallback_path(path, alt, sizeof(alt)))
+        return ramfs_list(alt, callback, context);
     if (g_fat_mounted && path_is_mnt(path)) {
         const char *inner = path + 4;
         if (!*inner)
@@ -67,6 +84,9 @@ int vfs_read_all(const char *path, u8 **buffer, u64 *size)
 {
     if (!path)
         return -1;
+    char alt[300];
+    if (mnt_fallback_path(path, alt, sizeof(alt)))
+        return ramfs_read_all(alt, buffer, size);
     if (g_fat_mounted && path_is_mnt(path)) {
         const char *inner = path + 4;
         if (!*inner)
@@ -80,6 +100,9 @@ int vfs_read_into(const char *path, u8 *dst, u64 cap, u64 *read_out)
 {
     if (!path)
         return -1;
+    char alt[300];
+    if (mnt_fallback_path(path, alt, sizeof(alt)))
+        return ramfs_read_into(alt, dst, cap, read_out);
     if (g_fat_mounted && path_is_mnt(path)) {
         const char *inner = path + 4;
         if (!*inner)
@@ -93,6 +116,9 @@ int vfs_stat(const char *path, int *is_dir, u64 *size)
 {
     if (!path)
         return -1;
+    char alt[300];
+    if (mnt_fallback_path(path, alt, sizeof(alt)))
+        return ramfs_stat(alt, is_dir, size);
     if (g_fat_mounted && path_is_mnt(path)) {
         const char *inner = path + 4;
         if (!*inner)
@@ -170,6 +196,14 @@ void vfs_close_all(void)
 int vfs_fat_mounted(void)
 {
     return g_fat_mounted;
+}
+
+int vfs_data_fallback(void)
+{
+    if (g_fat_mounted)
+        return 0;
+    int is_dir = 0;
+    return ramfs_stat("/data", &is_dir, NULL) == 0 && is_dir;
 }
 
 const char *vfs_fat_label(void)

@@ -390,8 +390,9 @@ void cmd_run(int argc, char **argv)
         return;
     }
 
-    if (!vfs_fat_mounted() && strncmp(argv[1], "/mnt", 4) == 0) {
-        print_error("run: FAT32 volume is not mounted");
+    if (!vfs_fat_mounted() && !vfs_data_fallback() &&
+        strncmp(argv[1], "/mnt", 4) == 0) {
+        print_error("run: no data volume (FAT32 unmounted, no embedded copy)");
         return;
     }
 
@@ -478,6 +479,8 @@ void cmd_mounts(int, char **)
     if (vfs_fat_mounted())
         kprintf("  /mnt FAT32 \"%s\" (AHCI, read-only)\n",
                 vfs_fat_label());
+    else if (vfs_data_fallback())
+        kprintf("  /mnt embedded data mirror /data (initramfs, read-only)\n");
     else
         kprintf("  /mnt not mounted\n");
 }

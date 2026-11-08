@@ -8,6 +8,8 @@
 4. GitCode 仓库（main）：https://gitcode.com/2503_94276351/zhaoxu-os
 5. 用 WSL2，可用：C（底层）、C++（上层应用）、FASM+GAS（底层）、Ada+SPARK（驱动）。
 6. 脚本必须完全使用 ruby 来编写，必须完全使用 AI 来生成代码。
+7. 引导加载器必须支持 uefi 和 legacy bios 两种启动模式。 
+8. 引导加载器的名称必须得是：`ZhaoxuBootloader`。
 
 ## 构建与运行
 
@@ -51,14 +53,14 @@
 - 用户 ELF 必须用 `src/user/user.ld` 链接到 `0x100000000`；该基址在 `process.c` 的 `USER_LOAD_BASE` 与链接脚本两处定义。用户代码用 `-mcmodel=large`，与内核一样禁用 SSE/red zone。
 - 内核是 freestanding：无 libc，禁用浮点/SSE/MMX/AVX（`-mgeneral-regs-only`）；C++ 关闭异常、RTTI、threadsafe statics，不要用 STL/iostream。字符串/打印用 `kernel/lib` 里的实现。
 - initramfs 源在 `src/initramfs/`，`src/Makefile` 的 `RAMFS_FILES` 是打包白名单；新增文件必须同时改 `RAMFS_FILES`。`src/initramfs/data/` 只用于生成 FAT32 数据盘，不进入 initramfs。
-- 存储仅 AHCI；FAT32 只读、按卷标 `ZHAOXUDATA` 选盘并挂到 `/mnt`，`/` 是 initramfs；VFS 只提供只读 fd。
+- 存储仅 AHCI；FAT32 只读、按卷标 `ZHAOXUDATA` 选盘并挂到 `/mnt`，`/` 是 initramfs；VFS 只提供只读 fd。没有数据盘时 `/mnt/...` 自动回退到 initramfs 内嵌镜像 `/data/...`（`RAMFS_FILES` 的 data 条目，名字必须用大写 8.3 风格与 FAT 卷一致），纯 ISO/无盘启动也能打开示例文件；字体不在镜像内（OVMF 拒绝启动 ~5MB 的 BOOTX64.EFI），无盘时中文回退 `?`。
 - AHCI DMA 用物理地址，依赖引导层对前 4 GiB 的恒等映射；命令头 `prdtl` 在 offset 2（`opts | prdtl << 16`），不要写到 `status`。
 - Ada 驱动在 `src/drivers/*.ads` 用 `pragma Export, Convention => C` 导出符号；端口 I/O 走 C 侧 `outb_port`/`inb_port`。编译带 `-gnatp` 且不链接 libgnat，避免依赖 GNAT 运行时。
 - `build/`、`out/`、`esp/` 是生成物，不要手改。
 
 ## 版本与发布
 
-- 版本号没有单一来源；发布时同步 5 处：`README.md`、`src/apps/shell.cpp`（`kVersion`）、`src/kernel/main.c`（`ZHAOXU_VERSION`）、`src/initramfs/etc/motd`、`src/initramfs/etc/version`。
+- 版本号唯一来源是仓库根的 `version.php`。改版本只改这个文件，然后在 `src/` 运行 `make version`（Ruby 脚本 `tools/version.rb` 同步 `README.md`、`src/apps/shell.cpp`、`src/kernel/main.c`、`src/initramfs/etc/motd`、`src/initramfs/etc/version`）；不要手工单独改这些派生文件。
 - 三个远端分支不同：GitHub `main`、Gitee `master`、GitCode `main`。
 - WSL 内没有 Git 凭据，push 会报 `could not read Username`。从 Windows Git 推送：
   ```powershell

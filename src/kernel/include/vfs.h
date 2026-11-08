@@ -18,6 +18,7 @@ int vfs_close(int fd);
 void vfs_close_all(void);
 
 int vfs_fat_mounted(void);
+int vfs_data_fallback(void);
 const char *vfs_fat_label(void);
 
 /* initramfs (ustar) backed ramfs */

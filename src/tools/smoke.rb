@@ -2,10 +2,13 @@
 # smoke.rb -- boot Zhaoxu OS headless in QEMU (inside WSL), drive the serial
 # shell interactively and assert a marker in the console output.
 #
-# usage: ruby tools/smoke.rb <marker> [commands]
-#   commands: newline-separated shell input, literal "\n" allowed;
-#             "shutdown" is always appended automatically.
-# env:   SMOKE_DISTRO SMOKE_ROOT SMOKE_TIMEOUT (seconds, default 180)
+#   usage: ruby tools/smoke.rb <marker> [commands]
+#     commands: newline-separated shell input, literal "\n" allowed;
+#               "shutdown" is always appended automatically.
+#   env:   SMOKE_DISTRO SMOKE_ROOT SMOKE_TIMEOUT (seconds, default 180)
+#          SMOKE_BOOT: esp (default, fat:rw:esp + data.img)
+#                      iso (cdrom out/zhaoxu-os.iso + data.img)
+#                      iso-nodata (cdrom only, exercises /mnt fallback)
 #
 # Run from Windows Ruby (WSL has no ruby): it shells out through wsl.exe and
 # feeds one command line at a time once the guest shows a prompt, so the
@@ -23,18 +26,37 @@ TIMEOUT = (ENV["SMOKE_TIMEOUT"] || 180).to_i
 marker = ARGV[0] or abort "usage: smoke.rb <marker> [commands]"
 commands = (ARGV[1] || "").gsub('\n', "\n").split("\n").reject(&:empty?)
 
-inner = <<~SH
-  cd "#{ROOT}" || exit 1
-  cp "\${OVMF_VARS:-/usr/share/OVMF/OVMF_VARS_4M.fd}" out/OVMF_VARS.fd
-  timeout #{TIMEOUT} qemu-system-x86_64 \\
-    -M \${QEMU_MACHINE:-q35} -m \${QEMU_MEM:-512M} -smp 1 \\
-    -drive if=pflash,format=raw,unit=0,readonly=on,file=\${OVMF_CODE:-/usr/share/OVMF/OVMF_CODE_4M.fd} \\
-    -drive if=pflash,format=raw,unit=1,file=out/OVMF_VARS.fd \\
-    -drive format=raw,file=fat:rw:esp \\
-    -drive if=none,id=zdata,format=raw,file=out/data.img \\
-    -device ide-hd,drive=zdata,bus=ide.1 \\
-    -net none -serial stdio -monitor none -display none -no-reboot
-SH
+boot = ENV["SMOKE_BOOT"] || "esp"
+drives = case boot
+         when "esp"
+           [
+             "-drive format=raw,file=fat:rw:esp",
+             "-drive if=none,id=zdata,format=raw,file=out/data.img",
+             "-device ide-hd,drive=zdata,bus=ide.1",
+           ]
+         when "iso"
+           [
+             "-cdrom out/zhaoxu-os.iso",
+             "-drive if=none,id=zdata,format=raw,file=out/data.img",
+             "-device ide-hd,drive=zdata,bus=ide.1",
+           ]
+         when "iso-nodata"
+           ["-cdrom out/zhaoxu-os.iso"]
+         else
+           abort "SMOKE_BOOT must be esp, iso or iso-nodata"
+         end
+
+inner = +"cd \"#{ROOT}\" || exit 1\n"
+inner << %[cp "${OVMF_VARS:-/usr/share/OVMF/OVMF_VARS_4M.fd}" out/OVMF_VARS.fd\n]
+qemu = [
+  "timeout #{TIMEOUT} qemu-system-x86_64",
+  "-M ${QEMU_MACHINE:-q35} -m ${QEMU_MEM:-512M} -smp 1",
+  "-drive if=pflash,format=raw,unit=0,readonly=on,file=${OVMF_CODE:-/usr/share/OVMF/OVMF_CODE_4M.fd}",
+  "-drive if=pflash,format=raw,unit=1,file=out/OVMF_VARS.fd",
+  *drives,
+  "-net none -serial stdio -monitor none -display none -no-reboot",
+]
+inner << qemu.map { |l| "  #{l} \\\\" }.join("\n").sub(/ \\\\\z/, "") << "\n"
 
 out = String.new(encoding: Encoding::BINARY)
 $stdout.binmode

@@ -126,6 +126,8 @@ void kernel_main(struct boot_info *boot)
     vfs_init();
     if (vfs_mount_data() == 0)
         kprintf("[vfs ] /mnt mounted (FAT32 \"%s\")\n", vfs_fat_label());
+    else if (vfs_data_fallback())
+        kprintf("[vfs ] /mnt -> embedded data mirror (no volume attached)\n");
     else
         kprintf("[vfs ] /mnt unavailable, using ramfs only\n");
 
