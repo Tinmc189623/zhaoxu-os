@@ -25,6 +25,11 @@ SECTIONS
         *(.initramfs)
     }
 
+    .biosblob : ALIGN(4096)
+    {
+        *(.biosblob)
+    }
+
     .data : ALIGN(4096)
     {
         *(.data .data.*)

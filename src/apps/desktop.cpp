@@ -9,6 +9,7 @@ extern "C" {
 #include <boot.h>
 #include <console.h>
 #include <drivers.h>
+#include <install.h>
 #include <keyboard.h>
 #include <kprintf.h>
 #include <rtc.h>
@@ -34,6 +35,7 @@ constexpr int kMaxEntries = 12;
 enum window_kind {
     KIND_WELCOME = 0,
     KIND_FILES = 1,
+    KIND_INSTALLER = 2,
 };
 
 struct window {
@@ -61,9 +63,22 @@ int g_cursor_y = -1;
 window g_windows[kMaxWindows] = {
     {  90, 100, 480, 240, "欢迎 · Welcome", KIND_WELCOME, true, 2 },
     { 600, 150, 440, 330, "文件 · Files", KIND_FILES, true, 1 },
+    { 300, 160, 520, 320, "安装 · Installer", KIND_INSTALLER, false, 0 },
 };
-int g_window_count = 2;
+int g_window_count = 3;
 int g_next_z = 3;
+
+enum install_phase {
+    INSTALL_IDLE = 0,
+    INSTALL_RUNNING = 1,
+    INSTALL_DONE = 2,
+    INSTALL_FAILED = 3,
+};
+
+const window *g_install_win;
+int g_install_phase = INSTALL_IDLE;
+u32 g_install_pct = 100;
+char g_install_message[96];
 
 file_entry g_files[kMaxEntries];
 int g_file_count;
@@ -302,6 +317,158 @@ void draw_file_row(int index, int x, int y, int body_bg)
     draw_text(size, after + 24, y, 0x667788, (u32)body_bg);
 }
 
+void installer_button_rect(const window *win, int *bx, int *by, int *bw,
+                           int *bh)
+{
+    *bx = win->x + 16;
+    *by = win->y + win->h - 52;
+    *bw = win->w - 32;
+    *bh = 34;
+}
+
+bool installer_button_at(const window *win, int x, int y)
+{
+    int bx, by, bw, bh;
+    installer_button_rect(win, &bx, &by, &bw, &bh);
+    return x >= bx && x < bx + bw && y >= by && y < by + bh;
+}
+
+void paint_install_bar(const window *win)
+{
+    int bx = win->x + 16;
+    int by = win->y + win->h - 82;
+    int bw = win->w - 32;
+    int bh = 18;
+
+    char pct[16];
+    ksnprintf(pct, sizeof(pct), "%u%%", (unsigned)g_install_pct);
+    draw_text(pct, bx + bw - text_width(pct), by - 22, 0x24384E, 0xF4F6F8);
+
+    fill_rect(bx, by, bw, bh, 0xFFFFFF);
+    border(bx, by, bw, bh, 0x8698AC);
+    int filled = (int)((u64)(u32)(bw - 2) * g_install_pct / 100);
+    if (filled > 0)
+        fill_rect(bx + 1, by + 1, filled, bh - 2, 0x3B82C4);
+}
+
+void installer_progress(u32 done, u32 total)
+{
+    g_install_pct = total ? (u32)((u64)done * 100 / total) : 0;
+    if (g_install_win)
+        paint_install_bar(g_install_win);
+}
+
+void start_install(const window *win)
+{
+    int source = install_source_disk();
+    int target = source >= 0 ? install_pick_target(source) : -1;
+
+    g_install_win = win;
+    g_install_message[0] = 0;
+    if (source < 0) {
+        g_install_phase = INSTALL_FAILED;
+        ksnprintf(g_install_message, sizeof(g_install_message),
+                  "未检测到 ZHAOXUEFI 安装介质。");
+        return;
+    }
+    if (target < 0) {
+        g_install_phase = INSTALL_FAILED;
+        ksnprintf(g_install_message, sizeof(g_install_message),
+                  "没有可用的目标磁盘（需要一块空白非数据盘）。");
+        return;
+    }
+
+    g_install_phase = INSTALL_RUNNING;
+    g_install_pct = 0;
+    if (install_run(source, target, installer_progress) == 0) {
+        g_install_phase = INSTALL_DONE;
+        g_install_pct = 100;
+        ksnprintf(g_install_message, sizeof(g_install_message),
+                  "安装完成：disk %d 已写入引导扇区与 ESP，重启后可从该盘启动。",
+                  target);
+    } else {
+        g_install_phase = INSTALL_FAILED;
+        ksnprintf(g_install_message, sizeof(g_install_message), "安装失败：%s",
+                  install_last_error());
+    }
+}
+
+void render_installer(const window *win)
+{
+    const u32 body_bg = 0xF4F6F8;
+    int x = win->x + 16;
+    int y = win->y + kTitleH + 12;
+
+    draw_text("将 Zhaoxu OS 安装到本地磁盘（MBR + FAT16 ESP）。", x, y,
+              0x16293C, body_bg);
+    y += 26;
+
+    int source = install_source_disk();
+    int target = -1;
+    char line[96];
+    if (source >= 0) {
+        target = install_pick_target(source);
+        ksnprintf(line, sizeof(line), "安装源：disk %d · ZHAOXUEFI · %llu MiB",
+                  source, (install_source_sectors() * 512) >> 20);
+        draw_text(line, x, y, 0x2A5C3A, body_bg);
+    } else {
+        draw_text("安装源：未检测到 ZHAOXUEFI 安装介质", x, y, 0x9A3342,
+                  body_bg);
+    }
+    y += 22;
+
+    if (target >= 0) {
+        struct install_disk_info disks[8];
+        int count = install_scan(disks, 8);
+        const char *model = "";
+        u64 sectors = 0;
+        for (int i = 0; i < count; i++) {
+            if (disks[i].disk != target)
+                continue;
+            model = disks[i].model;
+            sectors = disks[i].sectors;
+        }
+        ksnprintf(line, sizeof(line), "目标磁盘：disk %d · %s · %llu MiB",
+                  target, model, (sectors * 512) >> 20);
+        draw_text(line, x, y, 0x1C3A5A, body_bg);
+    } else {
+        draw_text("目标磁盘：未找到空白磁盘（数据盘与安装介质会被跳过）", x, y,
+                  0x9A3342, body_bg);
+    }
+    y += 26;
+
+    draw_text("注意：安装会覆盖目标磁盘的分区表和数据。", x, y, 0x8A5A20,
+              body_bg);
+
+    paint_install_bar(win);
+
+    if (g_install_phase == INSTALL_DONE)
+        draw_text(g_install_message, x, win->y + win->h - 128, 0x2A6B3A,
+                  body_bg);
+    else if (g_install_phase == INSTALL_FAILED)
+        draw_text(g_install_message, x, win->y + win->h - 128, 0x9A3342,
+                  body_bg);
+    else if (g_install_phase == INSTALL_IDLE)
+        draw_text("准备就绪。点击下方按钮开始。", x, win->y + win->h - 128,
+                  0x51606F, body_bg);
+
+    int bx, by, bw, bh;
+    installer_button_rect(win, &bx, &by, &bw, &bh);
+    u32 button_color = g_install_phase == INSTALL_RUNNING ? 0x9AA4AE : 0x3B82C4;
+    fill_rect(bx, by, bw, bh, button_color);
+    fill_rect(bx, by, bw, 4, 0xFFFFFF);
+    border(bx, by, bw, bh, 0x2A5C86);
+    const char *label = g_install_phase == INSTALL_DONE
+                            ? "重新安装 · Reinstall"
+                            : g_install_phase == INSTALL_FAILED
+                                  ? "重试 · Retry"
+                                  : g_install_phase == INSTALL_RUNNING
+                                        ? "安装中 · Installing…"
+                                        : "开始安装 · Install";
+    int lw = text_width(label);
+    draw_text(label, bx + (bw - lw) / 2, by + 9, 0xFFFFFF, button_color);
+}
+
 void render_window(const window *win)
 {
     const u32 body_bg = 0xF4F6F8;
@@ -351,7 +518,7 @@ void render_window(const window *win)
         else
             draw_text("未加载中文字体，CJK 显示为 ?（挂载数据盘可恢复）",
                       body_x, body_y + 154, 0x9A5B20, body_bg);
-    } else {
+    } else if (win->kind == KIND_FILES) {
         if (g_file_count == 0) {
             draw_text("/mnt 为空或不可用", body_x, body_y, 0x51606F,
                       body_bg);
@@ -363,6 +530,8 @@ void render_window(const window *win)
                 draw_file_row(i, body_x, row_y, (int)body_bg);
             }
         }
+    } else {
+        render_installer(win);
     }
 }
 
@@ -470,15 +639,22 @@ void dock_click(int x, int y)
         return;
 
     int index = (x - dx - 18) / 82;
-    if (index < 0 || index > 1)
-        return;     /* terminal and installer arrive with a later milestone */
+    int kind;
+    if (index == 0)
+        kind = KIND_WELCOME;
+    else if (index == 1)
+        kind = KIND_FILES;
+    else if (index == 3)
+        kind = KIND_INSTALLER;
+    else
+        return;     /* terminal arrives with a later milestone */
 
     for (int i = 0; i < g_window_count; i++) {
-        if (g_windows[i].kind != index)
+        if (g_windows[i].kind != kind)
             continue;
         g_windows[i].open = true;
         bring_to_front(i);
-        if (index == KIND_FILES)
+        if (kind == KIND_FILES)
             load_files();
         return;
     }
@@ -512,10 +688,21 @@ int desktop_run(int argc, char **argv)
 
     g_drag_window = -1;
     g_prev_buttons = 0;
+    g_install_win = nullptr;
+    g_install_phase = INSTALL_IDLE;
+    g_install_pct = 100;
+    g_install_message[0] = 0;
     load_files();
 
     int seconds = parse_seconds(argc, argv);
     u64 deadline = timer_ticks() + (u64)seconds * timer_hz();
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "install") != 0)
+            continue;
+        g_windows[2].open = true;
+        bring_to_front(2);
+    }
 
     render(mouse_x(), mouse_y());
     serial_line("[desk] Desktop-Shell active, ESC exits\n");
@@ -537,7 +724,11 @@ int desktop_run(int argc, char **argv)
             int index = window_index_at(mx, my);
             if (index >= 0) {
                 window *win = &g_windows[index];
-                if (close_button_at(win, mx, my)) {
+                if (win->kind == KIND_INSTALLER &&
+                    g_install_phase != INSTALL_RUNNING &&
+                    installer_button_at(win, mx, my)) {
+                    start_install(win);
+                } else if (close_button_at(win, mx, my)) {
                     win->open = false;
                     g_drag_window = -1;
                 } else if (my < win->y + kTitleH) {

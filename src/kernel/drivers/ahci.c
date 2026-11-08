@@ -49,6 +49,7 @@
 struct ahci_port {
     int port;
     u64 sectors;
+    char model[41];
     u64 clb_phys;
     u64 fis_phys;
     u64 ct_phys;
@@ -212,14 +213,18 @@ static int ahci_command(struct ahci_port *disk, u8 command, u64 lba,
     fis[14] = 0;
     fis[15] = 0;
 
-    u32 *prdt = (u32 *)(disk->ct + 0x80);
-    prdt[0] = (u32)(buffer_phys & 0xFFFFFFFF);
-    prdt[1] = (u32)(buffer_phys >> 32);
-    prdt[2] = 0;
-    prdt[3] = bytes - 1;
+    u32 prdtl = 0;
+    if (bytes > 0) {
+        u32 *prdt = (u32 *)(disk->ct + 0x80);
+        prdt[0] = (u32)(buffer_phys & 0xFFFFFFFF);
+        prdt[1] = (u32)(buffer_phys >> 32);
+        prdt[2] = 0;
+        prdt[3] = bytes - 1;
+        prdtl = 1;
+    }
 
     u32 *header = (u32 *)disk->clb;
-    header[0] = 5u | (1u << 16) | (write ? (1u << 6) : 0u) | (1u << 7);
+    header[0] = 5u | (prdtl << 16) | (write ? (1u << 6) : 0u) | (1u << 7);
     header[1] = 0;
     header[2] = (u32)(disk->ct_phys & 0xFFFFFFFF);
     header[3] = (u32)(disk->ct_phys >> 32);
@@ -308,15 +313,14 @@ static int port_probe(int port)
 
     disk->sectors = sectors;
 
-    char model[41];
     for (int i = 0; i < 40; i++)
-        model[i] = (char)(identify[27 + i / 2] >> (8 * (1 - (i & 1))));
-    model[40] = 0;
-    for (int i = 39; i >= 0 && (model[i] == ' ' || model[i] == 0); i--)
-        model[i] = 0;
+        disk->model[i] = (char)(identify[27 + i / 2] >> (8 * (1 - (i & 1))));
+    disk->model[40] = 0;
+    for (int i = 39; i >= 0 && (disk->model[i] == ' ' || disk->model[i] == 0); i--)
+        disk->model[i] = 0;
 
     kprintf("[ahci] port %d: %s, %llu sectors (%llu MiB)\n",
-            port, model, sectors, (sectors * AHCI_SECTOR_SIZE) >> 20);
+            port, disk->model, sectors, (sectors * AHCI_SECTOR_SIZE) >> 20);
 
     g_disk_count++;
     return 1;
@@ -400,4 +404,50 @@ int ahci_disk_read(int disk, u64 lba, u32 count, void *buffer)
         count -= chunk;
     }
     return 0;
+}
+
+int ahci_disk_write(int disk, u64 lba, u32 count, const void *buffer)
+{
+    if (disk < 0 || disk >= g_disk_count || !buffer)
+        return -1;
+
+    struct ahci_port *entry = &g_disks[disk];
+    const u8 *source = (const u8 *)buffer;
+
+    while (count > 0) {
+        u32 chunk = count > AHCI_BOUNCE_SECTORS ? AHCI_BOUNCE_SECTORS : count;
+        u32 bytes = chunk * AHCI_SECTOR_SIZE;
+        if (lba + chunk > entry->sectors)
+            return -1;
+        memcpy(entry->bounce, source, bytes);
+        if (ahci_command(entry, 0x35, lba, (u16)chunk,
+                         entry->bounce_phys, bytes, 1) != 0)
+            return -1;
+        source += bytes;
+        lba += chunk;
+        count -= chunk;
+    }
+    return 0;
+}
+
+int ahci_disk_flush(int disk)
+{
+    if (disk < 0 || disk >= g_disk_count)
+        return -1;
+    return ahci_command(&g_disks[disk], 0xEA, 0, 0,
+                        g_disks[disk].bounce_phys, 0, 1);
+}
+
+int ahci_disk_port(int disk)
+{
+    if (disk < 0 || disk >= g_disk_count)
+        return -1;
+    return g_disks[disk].port;
+}
+
+const char *ahci_disk_model(int disk)
+{
+    if (disk < 0 || disk >= g_disk_count)
+        return "";
+    return g_disks[disk].model;
 }

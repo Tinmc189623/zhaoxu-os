@@ -42,6 +42,7 @@ C_SRCS := kernel/main.c \
           kernel/fs/initramfs.c \
           kernel/fs/fat32.c \
           kernel/fs/vfs.c \
+          kernel/fs/install.c \
           kernel/proc/process.c \
           kernel/lib/string.c \
           kernel/lib/printf.c \
@@ -68,11 +69,13 @@ OBJS := $(patsubst %.c,$(BUILD)/%.o,$(C_SRCS)) \
         $(patsubst %.S,$(BUILD)/%.o,$(ASM_SRCS)) \
         $(patsubst %.cpp,$(BUILD)/%.o,$(CXX_SRCS)) \
         $(patsubst %.adb,$(BUILD)/%.o,$(ADA_SRCS)) \
-        $(BUILD)/initramfs.o
+        $(BUILD)/initramfs.o \
+        $(BUILD)/bios_stage1.o \
+        $(BUILD)/bios_stage2.o
 
 HEADLESS ?= 0
 
-.PHONY: all clean run iso run-iso version FORCE
+.PHONY: all clean run iso run-iso run-bios version FORCE
 
 all: $(OUT)/BOOTX64.EFI $(ESP)/BOOTX64.EFI
 
@@ -173,6 +176,47 @@ $(DATA_IMG): $(OUT)/hello.zxe $(BUILD)/hello.uelf initramfs/data/hello.txt initr
 $(BUILD)/kernel_blob.inc: $(OUT)/kernel.bin
 	@printf "kernel_blob:\nfile 'out/kernel.bin'\nkernel_blob_end:\n" > $@
 
+# ---- ZhaoxuBootloader legacy BIOS chain ------------------------------
+# stage1 (512-byte MBR / El Torito boot sector) loads stage2 from LBA 1;
+# stage2 collects VBE/E820/RSDP, loads the raw kernel and enters long mode
+# with the same boot_info contract as the UEFI layer.
+BIOS_S1 := $(OUT)/bios_stage1.bin
+BIOS_S2 := $(OUT)/bios_stage2.bin
+BIOS_IMG := $(OUT)/bios.img
+BIOS1_INC := $(BUILD)/bios_stage1.inc
+
+$(BIOS_S2): boot/bios_stage2.asm
+	@mkdir -p $(OUT)
+	$(FASM) $< $@
+
+$(BIOS1_INC): $(BIOS_S2)
+	@mkdir -p $(BUILD)
+	@size=`stat -c %s $<`; \
+	 printf 'STAGE2_SECTORS = %u\n' $$(( (size + 511) / 512 )) > $@
+
+$(BIOS_S1): boot/bios_stage1.asm $(BIOS1_INC)
+	@mkdir -p $(OUT)
+	$(FASM) $< $@
+
+$(BIOS_IMG): $(BIOS_S1) $(BIOS_S2) $(OUT)/kernel.bin tools/bios-img.rb
+	$(RUBY) tools/bios-img.rb $(BIOS_S1) $(BIOS_S2) $(OUT)/kernel.bin $@
+
+$(BUILD)/bios_stage1.o: $(BIOS_S1)
+	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 \
+	  --rename-section .data=.biosblob,alloc,load,readonly,data,contents \
+	  --redefine-sym _binary_out_bios_stage1_bin_start=bios_stage1_start \
+	  --redefine-sym _binary_out_bios_stage1_bin_end=bios_stage1_end \
+	  --redefine-sym _binary_out_bios_stage1_bin_size=bios_stage1_size \
+	  $< $@
+
+$(BUILD)/bios_stage2.o: $(BIOS_S2)
+	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 \
+	  --rename-section .data=.biosblob,alloc,load,readonly,data,contents \
+	  --redefine-sym _binary_out_bios_stage2_bin_start=bios_stage2_start \
+	  --redefine-sym _binary_out_bios_stage2_bin_end=bios_stage2_end \
+	  --redefine-sym _binary_out_bios_stage2_bin_size=bios_stage2_size \
+	  $< $@
+
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -208,7 +252,8 @@ clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin $(OUT)/BOOTX64.EFI \
 	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/initramfs.tar \
 	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu-os.iso \
-	       $(ESP)/BOOTX64.EFI
+	       $(OUT)/bios_stage1.bin $(OUT)/bios_stage2.bin $(OUT)/bios.img \
+	       $(OUT)/target.img $(ESP)/BOOTX64.EFI
 
 OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
@@ -217,7 +262,17 @@ QEMU_MEM ?= 512M
 QEMU_SMP ?= 1
 QEMU_DISPLAY ?= -display none
 
-run: all $(DATA_IMG)
+# Installer plumbing: out/efi.img is the read-only "installation media"
+# (16 MiB FAT16 ESP labelled ZHAOXUEFI); out/target.img is the blank disk the
+# graphical installer copies it onto.
+TARGET_IMG := $(OUT)/target.img
+EFI_IMG := $(OUT)/efi.img
+
+$(TARGET_IMG):
+	@mkdir -p $(OUT)
+	dd if=/dev/zero of=$@ bs=1M count=64 status=none
+
+run: all $(DATA_IMG) $(EFI_IMG) $(TARGET_IMG)
 	cp $(OVMF_VARS) $(OUT)/OVMF_VARS.fd
 	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
 	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
@@ -225,11 +280,14 @@ run: all $(DATA_IMG)
 	  -drive format=raw,file=fat:rw:esp \
 	  -drive if=none,id=zdata,format=raw,file=$(DATA_IMG) \
 	  -device ide-hd,drive=zdata,bus=ide.1 \
+	  -drive if=none,id=zsrc,format=raw,file=$(EFI_IMG) \
+	  -device ide-hd,drive=zsrc,bus=ide.2 \
+	  -drive if=none,id=zdst,format=raw,file=$(TARGET_IMG) \
+	  -device ide-hd,drive=zdst,bus=ide.3 \
 	  -net none -serial stdio -monitor none $(QEMU_DISPLAY) -no-reboot
 
 # ---- UEFI ISO --------------------------------------------------------
 ISO := $(OUT)/zhaoxu-os.iso
-EFI_IMG := $(OUT)/efi.img
 ISO_ROOT := $(BUILD)/iso
 ISO_ESP_MB ?= 16
 
@@ -241,22 +299,39 @@ $(EFI_IMG): $(OUT)/BOOTX64.EFI
 	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/EFI/BOOT
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $< ::/EFI/BOOT/BOOTX64.EFI
 
-$(ISO): $(OUT)/BOOTX64.EFI $(EFI_IMG)
+$(ISO): $(OUT)/BOOTX64.EFI $(EFI_IMG) $(BIOS_IMG)
 	@rm -rf $(ISO_ROOT)
 	@mkdir -p $(ISO_ROOT)/EFI/BOOT
 	cp $(OUT)/BOOTX64.EFI $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
 	cp $(EFI_IMG) $(ISO_ROOT)/efi.img
+	cp $(BIOS_IMG) $(ISO_ROOT)/bios.img
 	xorriso -as mkisofs -o $@ -V ZHAOXU_OS -J -R \
+	  -b bios.img -eltorito-alt-boot \
 	  -e efi.img -no-emul-boot -isohybrid-gpt-basdat $(ISO_ROOT)
 
 iso: $(ISO)
 
-run-iso: $(ISO) $(DATA_IMG)
+# The CD lives on ide.0; the installer media/target disks use ide.2/ide.3.
+QEMU_CD := -drive if=none,id=zcd,format=raw,media=cdrom,readonly=on,file=$(ISO) \
+           -device ide-cd,drive=zcd,bus=ide.0
+QEMU_INSTALL_DISKS := \
+	-drive if=none,id=zdata,format=raw,file=$(DATA_IMG) \
+	-device ide-hd,drive=zdata,bus=ide.1 \
+	-drive if=none,id=zsrc,format=raw,file=$(EFI_IMG) \
+	-device ide-hd,drive=zsrc,bus=ide.2 \
+	-drive if=none,id=zdst,format=raw,file=$(TARGET_IMG) \
+	-device ide-hd,drive=zdst,bus=ide.3
+
+run-iso: $(ISO) $(DATA_IMG) $(EFI_IMG) $(TARGET_IMG)
 	cp $(OVMF_VARS) $(OUT)/OVMF_VARS.fd
 	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
 	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
 	  -drive if=pflash,format=raw,unit=1,file=$(OUT)/OVMF_VARS.fd \
-	  -cdrom $(ISO) \
-	  -drive if=none,id=zdata,format=raw,file=$(DATA_IMG) \
-	  -device ide-hd,drive=zdata,bus=ide.1 \
+	  $(QEMU_CD) $(QEMU_INSTALL_DISKS) -boot order=d \
+	  -net none -serial stdio -monitor none $(QEMU_DISPLAY) -no-reboot
+
+# Legacy BIOS: SeaBIOS boots the El Torito image (ZhaoxuBootloader stage 1).
+run-bios: $(ISO) $(DATA_IMG) $(EFI_IMG) $(TARGET_IMG)
+	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
+	  $(QEMU_CD) $(QEMU_INSTALL_DISKS) -boot order=d \
 	  -net none -serial stdio -monitor none $(QEMU_DISPLAY) -no-reboot

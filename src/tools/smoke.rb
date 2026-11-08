@@ -6,9 +6,12 @@
 #     commands: newline-separated shell input, literal "\n" allowed;
 #               "shutdown" is always appended automatically.
 #   env:   SMOKE_DISTRO SMOKE_ROOT SMOKE_TIMEOUT (seconds, default 180)
+#          SMOKE_FW: uefi (default, OVMF pflash) or bios (SeaBIOS, no pflash)
 #          SMOKE_BOOT: esp (default, fat:rw:esp + data.img)
 #                      iso (cdrom out/zhaoxu-os.iso + data.img)
 #                      iso-nodata (cdrom only, exercises /mnt fallback)
+#                      installed (boot out/target.img)
+#          bios firmware supports iso, iso-nodata and installed.
 #
 # Run from Windows Ruby (WSL has no ruby): it shells out through wsl.exe and
 # feeds one command line at a time once the guest shows a prompt, so the
@@ -26,34 +29,71 @@ TIMEOUT = (ENV["SMOKE_TIMEOUT"] || 180).to_i
 marker = ARGV[0] or abort "usage: smoke.rb <marker> [commands]"
 commands = (ARGV[1] || "").gsub('\n', "\n").split("\n").reject(&:empty?)
 
+installer_disks = [
+  "-drive if=none,id=zsrc,format=raw,file=out/efi.img",
+  "-device ide-hd,drive=zsrc,bus=ide.2",
+  "-drive if=none,id=zdst,format=raw,file=out/target.img",
+  "-device ide-hd,drive=zdst,bus=ide.3",
+]
+data_disk = [
+  "-drive if=none,id=zdata,format=raw,file=out/data.img",
+  "-device ide-hd,drive=zdata,bus=ide.1",
+]
+iso_drives = [
+  "-drive if=none,id=zcd,format=raw,media=cdrom,readonly=on," \
+  "file=out/zhaoxu-os.iso",
+  "-device ide-cd,drive=zcd,bus=ide.0",
+]
 boot = ENV["SMOKE_BOOT"] || "esp"
+fw = ENV["SMOKE_FW"] || "uefi"
 drives = case boot
          when "esp"
            [
              "-drive format=raw,file=fat:rw:esp",
-             "-drive if=none,id=zdata,format=raw,file=out/data.img",
-             "-device ide-hd,drive=zdata,bus=ide.1",
+             *data_disk,
+             *installer_disks,
            ]
          when "iso"
-           [
-             "-cdrom out/zhaoxu-os.iso",
-             "-drive if=none,id=zdata,format=raw,file=out/data.img",
-             "-device ide-hd,drive=zdata,bus=ide.1",
-           ]
+           [*iso_drives, *data_disk, *installer_disks]
          when "iso-nodata"
-           ["-cdrom out/zhaoxu-os.iso"]
+           iso_drives
+         when "installed"
+           [
+             "-drive if=none,id=zdst,format=raw,file=out/target.img",
+             "-device ide-hd,drive=zdst,bus=ide.0",
+           ]
          else
-           abort "SMOKE_BOOT must be esp, iso or iso-nodata"
+           abort "SMOKE_BOOT must be esp, iso, iso-nodata or installed"
          end
 
+case fw
+when "uefi"
+  firmware = [
+    "-drive if=pflash,format=raw,unit=0,readonly=on," \
+    "file=${OVMF_CODE:-/usr/share/OVMF/OVMF_CODE_4M.fd}",
+    "-drive if=pflash,format=raw,unit=1,file=out/OVMF_VARS.fd",
+  ]
+  boot_order = boot.start_with?("iso") ? ["-boot", "order=d"] : []
+when "bios"
+  unless %w[iso iso-nodata installed].include?(boot)
+    abort "SMOKE_FW=bios supports only iso, iso-nodata and installed"
+  end
+  firmware = []
+  boot_order = ["-boot", boot == "installed" ? "order=c" : "order=d"]
+else
+  abort "SMOKE_FW must be uefi or bios"
+end
+
 inner = +"cd \"#{ROOT}\" || exit 1\n"
-inner << %[cp "${OVMF_VARS:-/usr/share/OVMF/OVMF_VARS_4M.fd}" out/OVMF_VARS.fd\n]
+if fw == "uefi"
+  inner << %[cp "${OVMF_VARS:-/usr/share/OVMF/OVMF_VARS_4M.fd}" out/OVMF_VARS.fd\n]
+end
 qemu = [
   "timeout #{TIMEOUT} qemu-system-x86_64",
   "-M ${QEMU_MACHINE:-q35} -m ${QEMU_MEM:-512M} -smp 1",
-  "-drive if=pflash,format=raw,unit=0,readonly=on,file=${OVMF_CODE:-/usr/share/OVMF/OVMF_CODE_4M.fd}",
-  "-drive if=pflash,format=raw,unit=1,file=out/OVMF_VARS.fd",
+  *firmware,
   *drives,
+  *boot_order,
   "-net none -serial stdio -monitor none -display none -no-reboot",
 ]
 inner << qemu.map { |l| "  #{l} \\\\" }.join("\n").sub(/ \\\\\z/, "") << "\n"

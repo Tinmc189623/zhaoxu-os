@@ -410,7 +410,7 @@ mmap_desc_ver   dd 0
 exit_retries    dq 0
 utf16_buf       dw 0, 0
 
-msg_banner      db 13,10,'Zhaoxu OS bootloader v0.2 (FASM, UEFI x86_64)',13,10,0
+msg_banner      db 13,10,'ZhaoxuBootloader (FASM, UEFI x86_64)',13,10,0
 msg_probe       db 'Probing UEFI services...',13,10,0
 msg_gop         db 'GOP framebuffer acquired.',13,10,0
 msg_nogop       db 'No GOP framebuffer; serial console only.',13,10,0

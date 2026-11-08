@@ -6,6 +6,6 @@ return [
     'name'      => 'Zhaoxu OS',
     'kernel'    => 'Yuanshuo',
     'kernel_cn' => '源朔',
-    'version'   => '0.4.0',
+    'version'   => '0.5.0',
     'codename'  => 'Yuanshuo',
 ];

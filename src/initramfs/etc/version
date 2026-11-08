@@ -1,4 +1,4 @@
-Zhaoxu OS 0.4.0 "Yuanshuo"
+Zhaoxu OS 0.5.0 "Yuanshuo"
 Initramfs: ustar archive embedded in the kernel image
 Root filesystem: ramfs
 Data volume: FAT32 at /mnt (AHCI, read-only)

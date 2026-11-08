@@ -7,9 +7,11 @@
  */
 extern "C" {
 #include <acpi.h>
+#include <ahci.h>
 #include <boot.h>
 #include <console.h>
 #include <cpu.h>
+#include <install.h>
 #include <io.h>
 #include <kprintf.h>
 #include <mem.h>
@@ -63,6 +65,8 @@ void cmd_ps(int argc, char **argv);
 void cmd_bench(int argc, char **argv);
 void cmd_sleep(int argc, char **argv);
 void cmd_desktop(int argc, char **argv);
+void cmd_disks(int argc, char **argv);
+void cmd_install(int argc, char **argv);
 void cmd_color(int argc, char **argv);
 void cmd_neofetch(int argc, char **argv);
 void cmd_reboot(int argc, char **argv);
@@ -90,6 +94,8 @@ const command kCommands[] = {
     { "bench",    cmd_bench,    "memory and TSC micro-benchmarks" },
     { "sleep",    cmd_sleep,    "sleep for the given milliseconds" },
     { "desktop",  cmd_desktop,  "start the graphical Desktop-Shell (ESC exits)" },
+    { "disks",    cmd_disks,    "list AHCI disks and installer roles" },
+    { "install",  cmd_install,  "install the OS to a target disk (graphical: desktop)" },
     { "color",    cmd_color,    "set console colours (0-15)" },
     { "neofetch", cmd_neofetch, "show a system summary" },
     { "reboot",   cmd_reboot,   "restart the machine through ACPI" },
@@ -583,6 +589,80 @@ void cmd_desktop(int argc, char **argv)
         return;
     }
     desktop_run(argc, argv);
+}
+
+void cmd_disks(int, char **)
+{
+    struct install_disk_info disks[8];
+    int count = install_scan(disks, 8);
+    if (count == 0) {
+        kprintf("No AHCI disks detected.\n");
+        return;
+    }
+
+    kprintf("Idx Port  Size        Label        Role    Model\n");
+    for (int i = 0; i < count; i++) {
+        const char *role = disks[i].is_esp      ? "media"
+                           : disks[i].is_data   ? "data"
+                           : disks[i].is_target ? "target"
+                                                : "other";
+        kprintf(" %d   %d   %llu MiB  %-12s %-7s %s\n", disks[i].disk,
+                disks[i].port, (disks[i].sectors * 512) >> 20,
+                disks[i].label[0] ? disks[i].label : "-", role,
+                disks[i].model);
+    }
+}
+
+u32 g_install_pct_shown;
+
+void cmd_install_progress(u32 done, u32 total)
+{
+    u32 pct = total ? done * 100 / total : 0;
+    if (pct == g_install_pct_shown)
+        return;
+    kprintf("\r  writing: %3u%%", pct);
+    g_install_pct_shown = pct;
+}
+
+void cmd_install(int argc, char **argv)
+{
+    int source = install_source_disk();
+    if (source < 0) {
+        print_error("install: no ZHAOXUEFI install media disk attached");
+        return;
+    }
+
+    int target;
+    if (argc > 1)
+        target = atoi(argv[1]);
+    else
+        target = install_pick_target(source);
+    if (target < 0) {
+        print_error("install: no suitable target disk (need a blank non-data disk)");
+        return;
+    }
+
+    struct install_disk_info disks[8];
+    int count = install_scan(disks, 8);
+    for (int i = 0; i < count; i++) {
+        if (disks[i].disk != target)
+            continue;
+        if (!disks[i].is_target) {
+            print_error("install: target must be a blank disk (media and data volumes are skipped)");
+            return;
+        }
+        kprintf("Installing from disk %d (ZHAOXUEFI) to disk %d: %s\n", source,
+                target, disks[i].model);
+    }
+
+    g_install_pct_shown = 100;
+    if (install_run(source, target, cmd_install_progress) != 0) {
+        kprintf("\ninstall failed: %s\n", install_last_error());
+        return;
+    }
+    kprintf("\nInstall complete: MBR + FAT16 ESP written to disk %d.\n",
+            target);
+    kprintf("Detach the install media and boot from that disk to test.\n");
 }
 
 void cmd_color(int argc, char **argv)

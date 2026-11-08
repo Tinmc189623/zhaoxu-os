@@ -1,10 +1,19 @@
 # Zhaoxu OS
 
-Zhaoxu OS 是一个面向 x86_64 + UEFI 的多语言操作系统，内核代号 **Yuanshuo**，当前版本 **0.4.0**。引导层用 FASM 直接生成 PE64 EFI 映像，建立恒等映射与 higher-half 页表；退出 UEFI Boot Services 后进入 C 内核，外设驱动用 Ada，交互 Shell 用 C++20 编写，全部链接进同一个内核镜像。0.4.0 引入 TrueType 中文渲染与自研 `.zxe` 可执行文件格式（继续兼容 ELF64）。
+Zhaoxu OS 是一个面向 x86_64 的多语言操作系统，内核代号 **Yuanshuo**，当前版本 **0.5.0**。引导加载器 **ZhaoxuBootloader** 同时支持 UEFI 与 legacy BIOS 两种启动模式：UEFI 层用 FASM 直接生成 PE64 EFI 映像，BIOS 层由 MBR 引导扇区与 stage 2 组成；两者建立恒等映射与 higher-half 页表，进入 C 内核，外设驱动用 Ada，交互 Shell 用 C++20 编写，全部链接进同一个内核镜像。0.5.0 引入 Desktop-Shell 图形桌面与图形安装器（AHCI 写入），0.4.0 引入 TrueType 中文渲染与自研 `.zxe` 可执行文件格式（继续兼容 ELF64）。
 
 <!-- 就你晒着，就你晒着，你晒最多 -->
 
 ![Zhaoxu OS shell](docs/screenshot.png)
+
+## 0.5.0 新增
+
+- Desktop-Shell / DS-WM（Aqua 风格）：渐变菜单栏与 RTC 时钟、可拖动/关闭/层叠窗口、Dock、软件光标，标题与正文走 TrueType 中文字形
+- PS/2 鼠标：IRQ12 三字节包解析、溢出与符号位处理，桌面窗口拖动/关闭与安装器按钮均可点击
+- 图形安装器：桌面「安装」窗口或 Shell `install` 启动，把只读安装介质（`ZHAOXUEFI` FAT16 ESP 镜像）按原始扇区复制进目标盘的新 MBR 分区（类型 0x0E，起始 LBA 2048）
+- 安装安全校验：目标盘必须是空白盘或旧 Zhaoxu MBR，安装介质与 `ZHAOXUDATA` 数据盘永不作为目标；写入后校验分区起始扇区并 flush
+- AHCI 写入路径：WRITE DMA EXT / FLUSH CACHE EXT，PRDTL 仅在有数据时置位
+- Shell 新增 `disks`（磁盘、卷标与角色）与 `install [disk]`；`tools/screenshot.rb` 无头抓取桌面 PNG
 
 ## 0.4.0 新增
 
@@ -87,6 +96,8 @@ Zhaoxu OS 是一个面向 x86_64 + UEFI 的多语言操作系统，内核代号 
 | `bench` | memset 带宽与 TSC ALU 基准 |
 | `sleep <ms>` | 休眠指定毫秒 |
 | `desktop [seconds]` | 启动 Desktop-Shell 图形桌面，ESC 退出 |
+| `disks` | 列出 AHCI 磁盘、卷标与角色（媒体/数据/目标） |
+| `install [disk]` | 把安装介质复制到空白目标盘（缺省自动选择） |
 | `color <fg> <bg>` | 设置控制台颜色（0-15） |
 | `neofetch` | 系统摘要 |
 | `reboot` | ACPI 重启 |
@@ -120,8 +131,9 @@ cd src                     # 仓库内的 src 目录（WSL 下用 wslpath 换算
 make -j4
 make run                 # 无头 + 串口
 make run QEMU_DISPLAY="-display gtk"
-make iso                 # 生成 UEFI 启动 ISO：out/zhaoxu-os.iso
-make run-iso             # 从 ISO 启动，并挂载 out/data.img
+make iso                 # 生成 UEFI + legacy BIOS 双启动 ISO：out/zhaoxu-os.iso
+make run-iso             # 从 ISO 启动（UEFI），并挂载 out/data.img
+make run-bios            # 从 ISO 启动（SeaBIOS，走 MBR 引导链），并挂载安装盘
 ```
 
 依赖：
@@ -142,33 +154,47 @@ Zhaoxu OS/
     ├── Makefile             WSL2 内的编译、链接与 QEMU 规则
     ├── build.ps1            构建入口（转发 WSL2 make）
     ├── run.ps1              QEMU/OVMF 运行入口
-    ├── boot/                FASM：UEFI 引导层与 UEFI 常量
+    ├── boot/                FASM：UEFI 引导层、legacy BIOS stage 1/2 与 UEFI 常量
     ├── kernel/
     │   ├── arch/x86_64/     入口、GDT/TSS、中断桩、PIC、CPUID、端口 I/O、ring 3 切换
     │   ├── int/             IDT 与异常/IRQ/系统调用分发
     │   ├── drivers/         PIT、键盘、RTC、PCI、ACPI、AHCI
-    │   ├── fs/              initramfs（ustar/ramfs）、FAT32、VFS
+    │   ├── fs/              initramfs（ustar/ramfs）、FAT32、VFS、安装器
     │   ├── proc/            ELF64 / .zxe 加载、用户页管理、系统调用
     │   ├── mem/             PMM、VMM、堆
     │   ├── lib/             字符串、printf、UTF-8 控制台、C++ 运行时
     │   ├── font/            font8x8 字体数据、TrueType glyf 光栅化引擎
     │   └── include/         内核公共头文件
-    ├── drivers/             Ada：串口、PIT、PS/2、GOP
-    ├── apps/                C++：Shell
+    ├── drivers/             Ada：串口、PIT、PS/2 键盘与鼠标、GOP
+    ├── apps/                C++：Shell、Desktop-Shell
     ├── user/                ring 3 程序（init、hello）与用户库/链接脚本
     ├── initramfs/           ramfs 初始内容（motd、version、测试文本）
     ├── initramfs/data/      生成 FAT32 数据盘的素材（WQY.TTC 字体等）
-    ├── tools/               FASM、zxe-pack.rb（ELF→.zxe）、smoke.rb（无头冒烟）
+    ├── tools/               FASM、zxe-pack.rb（ELF→.zxe）、bios-img.rb、smoke.rb、screenshot.rb
     ├── esp/                 构建出的 UEFI 引导目录
     └── out/                 构建产物（含 FAT32 数据盘 data.img、启动 ISO）
 ```
 
 ## 引导流程
 
+ZhaoxuBootloader 有两套引导层，共用同一份内核镜像与 `boot_info` 契约。
+
+UEFI：
+
 1. UEFI 固件加载 `esp/EFI/BOOT/BOOTX64.EFI`（FASM 生成的 PE64 EFI 映像）。
 2. 引导层取得 GOP 帧缓冲、ACPI RSDP 与 UEFI 内存映射。
 3. 分配并复制内核 flat binary，建立恒等映射与 higher-half 页表。
 4. 调用 `ExitBootServices`，切换 CR3，跳转到 higher-half 内核入口。
+
+legacy BIOS：
+
+1. SeaBIOS 从 ISO 的 El Torito 入口或安装盘的 MBR 加载 stage 1（512 字节引导扇区）。
+2. stage 1 用 INT 13h CHS 读把 stage 2 载入 0x8000。
+3. stage 2 选择 32bpp VBE LFB、收集 E820 内存图、扫描 ACPI RSDP，并把内核整块读入 0x10000。
+4. stage 2 把内核复制到 32 MiB 物理窗口、清零整个窗口、建立恒等映射与 higher-half 页表，写入 `boot_info` 后进入长模式。
+
+公共：
+
 5. 内核建立 GDT/IDT，初始化 PMM/VMM/堆、CPUID、ACPI、RTC、AHCI 与 VFS（initramfs + FAT32），并从数据盘加载 TrueType 中文字体。
 6. 启用中断，打印启动日志；自动以 ring 3 运行 initramfs 中的 `/bin/init`。
 7. `/bin/init` 通过系统调用读取 `/etc/motd` 与 `/mnt` 下的 FAT32 文件，退出后回到内核。
@@ -186,7 +212,7 @@ Zhaoxu OS/
 - 文件系统只读：FAT32 不支持写入/创建，块设备驱动仅覆盖 AHCI（无 NVMe/USB）
 - 用户进程共享内核页表，依靠页级 `U/S` 位隔离，尚无独立地址空间
 - 无网络协议栈
-- 输入仅 PS/2 键盘与 COM1 串口，显示输出依赖 UEFI GOP 帧缓冲
+- 输入仅 PS/2 键盘与 COM1 串口，显示输出依赖 UEFI GOP 或 VBE LFB 帧缓冲
 - ACPI `_S5` 通过 DSDT AML 模式匹配解析，覆盖常见固件；无法匹配时回退探测
 
 ## 许可证

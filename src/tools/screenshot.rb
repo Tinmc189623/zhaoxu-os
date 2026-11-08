@@ -22,6 +22,12 @@ TIMEOUT = (ENV["SMOKE_TIMEOUT"] || 180).to_i
 DELAY = (ARGV[0] || 2.0).to_f
 SHOT = ARGV[1] || "out/desk.png"
 
+installer_disks = [
+  "-drive if=none,id=zsrc,format=raw,file=out/efi.img",
+  "-device ide-hd,drive=zsrc,bus=ide.2",
+  "-drive if=none,id=zdst,format=raw,file=out/target.img",
+  "-device ide-hd,drive=zdst,bus=ide.3",
+]
 boot = ENV["SMOKE_BOOT"] || "esp"
 drives = case boot
          when "esp"
@@ -29,17 +35,24 @@ drives = case boot
              "-drive format=raw,file=fat:rw:esp",
              "-drive if=none,id=zdata,format=raw,file=out/data.img",
              "-device ide-hd,drive=zdata,bus=ide.1",
+             *installer_disks,
            ]
          when "iso"
            [
              "-cdrom out/zhaoxu-os.iso",
              "-drive if=none,id=zdata,format=raw,file=out/data.img",
              "-device ide-hd,drive=zdata,bus=ide.1",
+             *installer_disks,
            ]
          when "iso-nodata"
            ["-cdrom out/zhaoxu-os.iso"]
+         when "installed"
+           [
+             "-drive if=none,id=zdst,format=raw,file=out/target.img",
+             "-device ide-hd,drive=zdst,bus=ide.0",
+           ]
          else
-           abort "SMOKE_BOOT must be esp, iso or iso-nodata"
+           abort "SMOKE_BOOT must be esp, iso, iso-nodata or installed"
          end
 
 inner = +"cd \"#{ROOT}\" || exit 1\n"
@@ -112,7 +125,7 @@ Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout,
       next
     end
     unless desktop_sent
-      stdin.write("desktop\n")
+      stdin.write((ENV["SHOT_CMD"] || "desktop") + "\n")
       stdin.flush
       desktop_sent = true
       desktop_at = Time.now
