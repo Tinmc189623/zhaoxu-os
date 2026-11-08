@@ -47,6 +47,7 @@ C_SRCS := kernel/main.c \
           kernel/lib/printf.c \
           kernel/lib/console.c \
           kernel/font/font.c \
+          kernel/font/ttf.c \
           kernel/mem/pmm.c \
           kernel/mem/vmm.c \
           kernel/mem/heap.c

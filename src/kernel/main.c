@@ -15,6 +15,7 @@
 #include <shell.h>
 #include <string.h>
 #include <timer.h>
+#include <ttf.h>
 #include <types.h>
 #include <vfs.h>
 
@@ -126,6 +127,17 @@ void kernel_main(struct boot_info *boot)
         kprintf("[vfs ] /mnt mounted (FAT32 \"%s\")\n", vfs_fat_label());
     else
         kprintf("[vfs ] /mnt unavailable, using ramfs only\n");
+
+    if (vfs_fat_mounted()) {
+        int font_status = ttf_autoload("/mnt/WQY.TTC");
+        if (font_status == 0)
+            kprintf("[ttf ] WQY.TTC loaded: upem %u, %u glyphs, cmap fmt %d\n",
+                    ttf_upem(), ttf_num_glyphs(), ttf_cmap_fmt());
+        else
+            kprintf("[ttf ] CJK font unavailable (%d)\n", font_status);
+    } else {
+        kprintf("[ttf ] no CJK font (no data volume)\n");
+    }
     process_init();
 
     console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
