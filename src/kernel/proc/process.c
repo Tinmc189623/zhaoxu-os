@@ -78,6 +78,27 @@ struct elf64_program_header {
 
 #define ELF_PT_LOAD 1
 
+struct zxe_header {
+    u8 magic[4];
+    u16 version;
+    u16 machine;
+    u16 seg_count;
+    u16 hdr_size;
+    u32 reserved;
+    u64 entry;
+    u64 file_size;
+} __attribute__((packed));
+
+struct zxe_segment {
+    u64 vaddr;
+    u64 file_off;
+    u64 file_size;
+    u64 mem_size;
+    u64 flags;
+} __attribute__((packed));
+
+#define ZXE_SEG_MAX 16
+
 static u64 map_user_page(u64 virtual_address)
 {
     for (int i = 0; i < g_mapping_count; i++) {
@@ -182,6 +203,77 @@ static int elf_load(const u8 *image, u64 image_size, u64 *entry_out)
     return 0;
 }
 
+static int zxe_load(const u8 *image, u64 image_size, u64 *entry_out)
+{
+    if (!image || image_size < sizeof(struct zxe_header))
+        return -1;
+
+    const struct zxe_header *header = (const struct zxe_header *)image;
+    if (header->magic[0] != 'Z' || header->magic[1] != 'X' ||
+        header->magic[2] != 'E' || header->magic[3] != 1)
+        return -1;
+    if (header->version != 1 || header->machine != 62)
+        return -1;
+    if (header->seg_count == 0 || header->seg_count > ZXE_SEG_MAX)
+        return -1;
+
+    u64 expected_hdr = 32 + (u64)header->seg_count *
+                             sizeof(struct zxe_segment);
+    expected_hdr = (expected_hdr + 15) & ~15ULL;
+    if (header->hdr_size != expected_hdr || header->hdr_size > image_size)
+        return -1;
+    if (header->file_size != image_size)
+        return -1;
+
+    for (u16 i = 0; i < header->seg_count; i++) {
+        const struct zxe_segment *segment = (const struct zxe_segment *)
+            (image + 32 + (u64)i * sizeof(struct zxe_segment));
+        if (segment->vaddr < USER_LOAD_BASE)
+            return -1;
+        if (segment->vaddr & 0xFFF)
+            return -1;
+        if (segment->mem_size == 0 || segment->file_size > segment->mem_size)
+            return -1;
+        if (segment->vaddr + segment->mem_size < segment->vaddr)
+            return -1;
+        if (segment->vaddr + segment->mem_size > USER_ADDRESS_LIMIT)
+            return -1;
+        if (segment->file_off < header->hdr_size ||
+            segment->file_off + segment->file_size > image_size ||
+            segment->file_off + segment->file_size < segment->file_off)
+            return -1;
+
+        u64 end = (segment->vaddr + segment->mem_size + 0xFFFULL) & ~0xFFFULL;
+        for (u64 page = segment->vaddr; page < end; page += PAGE_SIZE) {
+            if (!map_user_page(page))
+                return -1;
+        }
+
+        if (segment->file_size)
+            memcpy((void *)(uintptr_t)segment->vaddr,
+                   image + segment->file_off, segment->file_size);
+        if (segment->mem_size > segment->file_size)
+            memset((void *)(uintptr_t)(segment->vaddr +
+                                       segment->file_size),
+                   0, segment->mem_size - segment->file_size);
+    }
+
+    if (header->entry < USER_LOAD_BASE ||
+        header->entry >= USER_ADDRESS_LIMIT)
+        return -1;
+
+    *entry_out = header->entry;
+    return 0;
+}
+
+static int image_load(const u8 *image, u64 image_size, u64 *entry_out)
+{
+    if (image_size >= 4 && image[0] == 'Z' && image[1] == 'X' &&
+        image[2] == 'E' && image[3] == 1)
+        return zxe_load(image, image_size, entry_out);
+    return elf_load(image, image_size, entry_out);
+}
+
 static u64 build_user_stack(int argc, const char **argv)
 {
     u64 stack = USER_STACK_TOP - 16;
@@ -234,10 +326,10 @@ int process_run(const char *path, int argc, char **argv)
 
     g_mapping_count = 0;
     u64 entry = 0;
-    int status = elf_load(image, image_size, &entry);
+    int status = image_load(image, image_size, &entry);
     kfree(image);
     if (status != 0) {
-        kprintf("[proc] %s is not a valid ELF64 executable\n", path);
+        kprintf("[proc] %s is not a valid ZXE/ELF64 executable\n", path);
         release_user_pages();
         return -1;
     }
