@@ -54,6 +54,7 @@ void cmd_ls(int argc, char **argv);
 void cmd_cat(int argc, char **argv);
 void cmd_run(int argc, char **argv);
 void cmd_mounts(int argc, char **argv);
+void cmd_ps(int argc, char **argv);
 void cmd_bench(int argc, char **argv);
 void cmd_sleep(int argc, char **argv);
 void cmd_color(int argc, char **argv);
@@ -78,6 +79,7 @@ const command kCommands[] = {
     { "cat",      cmd_cat,      "print a file from ramfs or FAT32" },
     { "run",      cmd_run,      "execute an ELF64 program in ring 3" },
     { "mounts",   cmd_mounts,   "show mounted filesystems" },
+    { "ps",       cmd_ps,       "show ring 3 process state" },
     { "bench",    cmd_bench,    "memory and TSC micro-benchmarks" },
     { "sleep",    cmd_sleep,    "sleep for the given milliseconds" },
     { "color",    cmd_color,    "set console colours (0-15)" },
@@ -412,6 +414,29 @@ void cmd_mounts(int, char **)
                 vfs_fat_label());
     else
         kprintf("  /mnt not mounted\n");
+}
+
+void cmd_ps(int, char **)
+{
+    const struct process_info *info = process_get_info();
+
+    console_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
+    kprintf("Processes\n");
+    console_reset_color();
+    kprintf("  PID  STATE    ENTRY              KERNEL STACK\n");
+
+    if (info && info->active) {
+        console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
+        kprintf("  %-4llu ", info->pid);
+        console_reset_color();
+        kprintf("running  0x%016llx 0x%016llx\n",
+                info->entry, info->kernel_stack);
+        kprintf("  user pages: %llu KiB\n", info->user_pages / 1024);
+    } else {
+        console_set_color(COLOR_DARK_GRAY, COLOR_BLACK);
+        kprintf("  (no ring 3 process; only the kernel shell is running)\n");
+        console_reset_color();
+    }
 }
 
 void cmd_bench(int, char **)

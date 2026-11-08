@@ -69,7 +69,7 @@ OBJS := $(patsubst %.c,$(BUILD)/%.o,$(C_SRCS)) \
 
 HEADLESS ?= 0
 
-.PHONY: all clean run FORCE
+.PHONY: all clean run iso run-iso FORCE
 
 all: $(OUT)/BOOTX64.EFI $(ESP)/BOOTX64.EFI
 
@@ -169,7 +169,8 @@ $(ESP)/BOOTX64.EFI: $(OUT)/BOOTX64.EFI
 clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin $(OUT)/BOOTX64.EFI \
 	       $(OUT)/init.elf $(OUT)/hello.elf $(OUT)/initramfs.tar \
-	       $(OUT)/data.img $(ESP)/BOOTX64.EFI
+	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu-os.iso \
+	       $(ESP)/BOOTX64.EFI
 
 OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
@@ -184,6 +185,40 @@ run: all $(DATA_IMG)
 	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
 	  -drive if=pflash,format=raw,unit=1,file=$(OUT)/OVMF_VARS.fd \
 	  -drive format=raw,file=fat:rw:esp \
+	  -drive if=none,id=zdata,format=raw,file=$(DATA_IMG) \
+	  -device ide-hd,drive=zdata,bus=ide.1 \
+	  -net none -serial stdio -monitor none $(QEMU_DISPLAY) -no-reboot
+
+# ---- UEFI ISO --------------------------------------------------------
+ISO := $(OUT)/zhaoxu-os.iso
+EFI_IMG := $(OUT)/efi.img
+ISO_ROOT := $(BUILD)/iso
+ISO_ESP_MB ?= 16
+
+$(EFI_IMG): $(OUT)/BOOTX64.EFI
+	@mkdir -p $(OUT)
+	dd if=/dev/zero of=$@ bs=1M count=$(ISO_ESP_MB) status=none
+	mkfs.vfat -F 16 -n ZHAOXUEFI $@ >/dev/null
+	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/EFI
+	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/EFI/BOOT
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $< ::/EFI/BOOT/BOOTX64.EFI
+
+$(ISO): $(OUT)/BOOTX64.EFI $(EFI_IMG)
+	@rm -rf $(ISO_ROOT)
+	@mkdir -p $(ISO_ROOT)/EFI/BOOT
+	cp $(OUT)/BOOTX64.EFI $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
+	cp $(EFI_IMG) $(ISO_ROOT)/efi.img
+	xorriso -as mkisofs -o $@ -V ZHAOXU_OS -J -R \
+	  -e efi.img -no-emul-boot -isohybrid-gpt-basdat $(ISO_ROOT)
+
+iso: $(ISO)
+
+run-iso: $(ISO) $(DATA_IMG)
+	cp $(OVMF_VARS) $(OUT)/OVMF_VARS.fd
+	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
+	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
+	  -drive if=pflash,format=raw,unit=1,file=$(OUT)/OVMF_VARS.fd \
+	  -cdrom $(ISO) \
 	  -drive if=none,id=zdata,format=raw,file=$(DATA_IMG) \
 	  -device ide-hd,drive=zdata,bus=ide.1 \
 	  -net none -serial stdio -monitor none $(QEMU_DISPLAY) -no-reboot

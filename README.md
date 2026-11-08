@@ -108,11 +108,13 @@ cd '/mnt/g/Apps/OS/x86/AMD64/Zhaoxu OS/src'
 make -j4
 make run                 # 无头 + 串口
 make run QEMU_DISPLAY="-display gtk"
+make iso                 # 生成 UEFI 启动 ISO：out/zhaoxu-os.iso
+make run-iso             # 从 ISO 启动，并挂载 out/data.img
 ```
 
 依赖：
 
-- WSL2 Ubuntu 26.04：`gcc`、`g++`、`gcc-14`（提供 `gnat1`）、`ld.lld`、`objcopy`、`qemu-system-x86_64`、`ovmf`
+- WSL2 Ubuntu 26.04：`gcc`、`g++`、`gcc-14` + `gnat-14`（提供 `gnat1`）、`ld.lld`、`objcopy`、`qemu-system-x86_64`、`ovmf`、`dosfstools`、`mtools`、`tar`、`xorriso`
 - Flat Assembler 1.73.34：仓库自带 `src/tools/fasm`；缺失时可执行 `src/tools/install-fasm.sh`
 
 ## 目录结构
@@ -143,7 +145,7 @@ Zhaoxu OS/
     ├── user/                ring 3 程序（init、hello）与用户库/链接脚本
     ├── initramfs/           ramfs 初始内容（motd、version、测试文本）
     ├── esp/                 构建出的 UEFI 引导目录
-    └── out/                 构建产物（含 FAT32 数据盘 data.img）
+    └── out/                 构建产物（含 FAT32 数据盘 data.img、启动 ISO）
 ```
 
 ## 引导流程

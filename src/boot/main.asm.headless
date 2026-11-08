@@ -1,0 +1,460 @@
+; Zhaoxu OS — UEFI 引导层
+; 职责：串口早期输出、GOP 帧缓冲查询、UEFI 内存映射、
+;       自建恒等页表与 GDT、ExitBootServices、装载内核并跳转。
+; 约定：内核装载到 KERN_VMA，入口以 SysV ABI 接收 boot_info*（RDI）。
+
+format pe64 efi
+entry efi_main
+
+include '../build/config.inc'
+
+KERN_VMA    equ 0x0000000001000000    ; 内核装载/链接物理地址 16MiB
+STACK_PAGES equ 16                    ; 引导后专用栈 64KiB
+PT_PAGES    equ 6                     ; PML4 + PDPT + 4*PD → 恒等映射 4GiB
+
+; boot_info 结构偏移（须与 kernel/boot_info.h 一致）
+BI_MAGIC    equ 0
+BI_FB_BASE  equ 8
+BI_FB_W     equ 16
+BI_FB_H     equ 20
+BI_FB_PITCH equ 24
+BI_FB_FMT   equ 28
+BI_MMAP     equ 32
+BI_MMAP_SZ  equ 40
+BI_DESC_SZ  equ 48
+BI_DESC_VER equ 56
+BI_KERN_SZ  equ 64
+BI_HEADLESS equ 72
+BI_SIZE     equ 80
+
+section '.text' code readable executable
+
+; ---- 入口：RCX=ImageHandle, RDX=SystemTable（MS x64 ABI）----
+efi_main:
+    mov     [image_handle], rcx
+    mov     [system_table], rdx
+    sub     rsp, 40                     ; 32B 影子空间；入口 rsp%16==8 → 本处 0
+
+    mov     rax, [system_table]
+    mov     rax, [rax+0x60]             ; SystemTable->BootServices
+    mov     [boot_services], rax
+
+    call    serial_init
+    lea     rsi, [msg_banner]
+    call    serial_puts
+
+if HEADLESS = 0
+    ; ConOut 横幅（UTF-16）
+    mov     rax, [system_table]
+    mov     rcx, [rax+0x40]             ; SystemTable->ConOut
+    test    rcx, rcx
+    jz      .gop
+    lea     rdx, [msg_banner_u16]
+    mov     rax, [rcx+8]                ; ConOut->OutputString
+    sub     rsp, 32
+    call    rax
+    add     rsp, 32
+
+    ; 查询 GOP，取当前模式的帧缓冲信息
+.gop:
+    lea     rcx, [gop_guid]
+    xor     edx, edx
+    lea     r8, [gop]
+    mov     rax, [boot_services]
+    mov     rax, [rax+0x140]            ; BootServices->LocateProtocol
+    sub     rsp, 32
+    call    rax
+    add     rsp, 32
+    test    rax, rax
+    js      .mmap                       ; 无 GOP：仅串口
+    mov     rax, [gop]
+    mov     rax, [rax+24]               ; GOP->Mode
+    mov     rcx, [rax+8]                ; Mode->Info
+    mov     edx, [rcx+4]
+    mov     [fb_width], edx             ; HorizontalResolution
+    mov     edx, [rcx+8]
+    mov     [fb_height], edx            ; VerticalResolution
+    mov     edx, [rcx+12]
+    mov     [fb_format], edx            ; PixelFormat
+    mov     edx, [rcx+32]
+    shl     edx, 2                      ; PixelsPerScanLine*4 → 行距（32bpp）
+    mov     [fb_pitch], edx
+    mov     rdx, [rax+24]               ; Mode->FrameBufferBase
+    mov     [fb_base], rdx
+end if
+
+    ; ---- 取内存映射（先探测大小，再分配，再真正读取）----
+.mmap:
+    mov     qword [mmap_size], 0
+    lea     rcx, [mmap_size]
+    xor     edx, edx
+    lea     r8, [map_key]
+    lea     r9, [desc_size]
+    mov     rax, [boot_services]
+    mov     rax, [rax+0x38]             ; GetMemoryMap
+    sub     rsp, 48
+    mov     qword [rsp+32], 0           ; arg5: DescriptorVersion 占位
+    call    rax
+    add     rsp, 48
+
+    add     qword [mmap_size], 0x2000   ; 留余量，避免映射变化
+    mov     rax, [mmap_size]
+    mov     [mmap_cap], rax
+    mov     rcx, 2                      ; EfiLoaderData
+    mov     rdx, [mmap_size]
+    lea     r8, [mmap_ptr]
+    mov     rax, [boot_services]
+    mov     rax, [rax+0x40]             ; AllocatePool
+    sub     rsp, 32
+    call    rax
+    add     rsp, 32
+    test    rax, rax
+    js      .fail_mmap
+
+    mov     rax, [mmap_cap]
+    mov     [mmap_size], rax
+    lea     rcx, [mmap_size]
+    mov     rdx, [mmap_ptr]
+    lea     r8, [map_key]
+    lea     r9, [desc_size]
+    mov     rax, [boot_services]
+    mov     rax, [rax+0x38]
+    sub     rsp, 48
+    lea     rdx, [desc_ver]
+    mov     [rsp+32], rdx
+    call    rax
+    add     rsp, 48
+    test    rax, rax
+    js      .fail_mmap
+    mov     rax, [mmap_size]
+    mov     [mmap_bytes], rax
+
+    ; ---- 分配内核装载页（固定地址）----
+    mov     rax, [kernel_size]
+    add     rax, 4095
+    shr     rax, 12
+    mov     qword [kern_ptr], KERN_VMA
+    mov     rcx, 2                      ; EfiLoaderData
+    mov     rdx, 2                      ; AllocateAddress
+    mov     r8, rax
+    lea     r9, [kern_ptr]
+    mov     rax, [boot_services]
+    mov     rax, [rax+0x28]             ; AllocatePages
+    sub     rsp, 32
+    call    rax
+    add     rsp, 32
+    test    rax, rax
+    jns     .stack
+    lea     rsi, [msg_fail_kern]
+    call    serial_puts
+    jmp     $
+
+.stack:
+    mov     qword [stack_ptr], 0
+    mov     rcx, 2
+    xor     rdx, rdx                    ; AllocateAnyPages
+    mov     r8, STACK_PAGES
+    lea     r9, [stack_ptr]
+    mov     rax, [boot_services]
+    mov     rax, [rax+0x28]
+    sub     rsp, 32
+    call    rax
+    add     rsp, 32
+    test    rax, rax
+    jns     .pt
+    lea     rsi, [msg_fail_stack]
+    call    serial_puts
+    jmp     $
+
+.pt:
+    mov     qword [pt_ptr], 0
+    mov     rcx, 2
+    xor     rdx, rdx
+    mov     r8, PT_PAGES
+    lea     r9, [pt_ptr]
+    mov     rax, [boot_services]
+    mov     rax, [rax+0x28]
+    sub     rsp, 32
+    call    rax
+    add     rsp, 32
+    test    rax, rax
+    jns     .pt_fill
+    lea     rsi, [msg_fail_pt]
+    call    serial_puts
+    jmp     $
+
+    ; ---- 构建恒等页表：PML4[0]→PDPT→4 个 PD，2MiB 页覆盖 4GiB ----
+.pt_fill:
+    cld
+    mov     rdi, [pt_ptr]
+    mov     rcx, PT_PAGES*4096/8
+    xor     eax, eax
+    rep     stosq
+
+    mov     rax, [pt_ptr]              ; PML4
+    mov     rdx, rax
+    add     rdx, 0x1000                 ; PDPT
+    or      rdx, 3
+    mov     [rax], rdx                  ; PML4[0] = PDPT | P | W
+
+    xor     ecx, ecx
+.pdpt:
+    mov     rax, [pt_ptr]
+    add     rax, 0x2000                 ; 首个 PD
+    mov     rdx, rcx
+    shl     rdx, 12
+    add     rax, rdx                    ; PD_i
+    or      rax, 3
+    mov     rdx, [pt_ptr]
+    add     rdx, 0x1000
+    mov     [rdx+rcx*8], rax            ; PDPT[i] = PD_i | P | W
+    inc     ecx
+    cmp     ecx, 4
+    jb      .pdpt
+
+    xor     ecx, ecx
+.pd:
+    mov     rax, [pt_ptr]
+    add     rax, 0x2000
+    mov     rdx, rcx
+    shl     rdx, 12
+    add     rax, rdx                    ; 当前 PD 基址
+    mov     r8, rcx
+    shl     r8, 30                      ; 1GiB * pd_index
+    xor     edx, edx
+.pe:
+    mov     r9, r8
+    mov     r10, rdx
+    shl     r10, 21                     ; 2MiB * entry_index
+    add     r9, r10
+    or      r9, 0x83                    ; P | W | PS(2MiB)
+    mov     [rax+rdx*8], r9
+    inc     edx
+    cmp     edx, 512
+    jb      .pe
+    inc     ecx
+    cmp     ecx, 4
+    jb      .pd
+
+    ; ---- ExitBootServices（失败则重取映射后重试）----
+    mov     qword [ebs_retry], 5
+.ebs:
+    mov     rax, [mmap_cap]
+    mov     [mmap_size], rax
+    lea     rcx, [mmap_size]
+    mov     rdx, [mmap_ptr]
+    lea     r8, [map_key]
+    lea     r9, [desc_size]
+    mov     rax, [boot_services]
+    mov     rax, [rax+0x38]
+    sub     rsp, 48
+    lea     rdx, [desc_ver]
+    mov     [rsp+32], rdx
+    call    rax
+    add     rsp, 48
+    test    rax, rax
+    jns     .do_ebs
+    lea     rsi, [msg_fail_mmap2]
+    call    serial_puts
+    jmp     $
+.do_ebs:
+    mov     rax, [mmap_size]
+    mov     [mmap_bytes], rax
+    mov     rcx, [image_handle]
+    mov     rdx, [map_key]
+    mov     rax, [boot_services]
+    mov     rax, [rax+0xE8]             ; ExitBootServices
+    sub     rsp, 32
+    call    rax
+    add     rsp, 32
+    test    rax, rax
+    jz      .post_ebs
+    dec     qword [ebs_retry]
+    jnz     .ebs
+    lea     rsi, [msg_fail_ebs]
+    call    serial_puts
+    jmp     $
+
+    ; ---- 退出固件服务后：GDT、页表、栈、内核拷贝、跳转 ----
+.post_ebs:
+    cli
+    lea     rax, [gdt]
+    mov     [gdtr+2], rax
+    lgdt    [gdtr]
+    mov     ax, 0x10
+    mov     ds, ax
+    mov     es, ax
+    mov     ss, ax                      ; CS 保持固件的 64 位代码段（缓存描述符仍有效）
+
+    mov     rax, [pt_ptr]
+    mov     cr3, rax                    ; 切到自建恒等页表
+
+    mov     rax, [stack_ptr]
+    add     rax, STACK_PAGES*4096
+    mov     rsp, rax                    ; 换到专用栈
+
+    lea     rsi, [kernel_blob]          ; 拷贝内核到 KERN_VMA
+    mov     rdi, KERN_VMA
+    mov     rcx, [kernel_size]
+    cld
+    rep     movsb
+
+    ; ---- 填 boot_info（SysV：RDI=首参）----
+    lea     rax, [boot_info]
+    mov     qword [rax+BI_MAGIC], 0x544F4F42534F585A ; "ZXOSBOOT" 小端
+    mov     rdx, [fb_base]
+    mov     [rax+BI_FB_BASE], rdx
+    mov     edx, [fb_width]
+    mov     [rax+BI_FB_W], edx
+    mov     edx, [fb_height]
+    mov     [rax+BI_FB_H], edx
+    mov     edx, [fb_pitch]
+    mov     [rax+BI_FB_PITCH], edx
+    mov     edx, [fb_format]
+    mov     [rax+BI_FB_FMT], edx
+    mov     rdx, [mmap_ptr]
+    mov     [rax+BI_MMAP], rdx
+    mov     rdx, [mmap_bytes]
+    mov     [rax+BI_MMAP_SZ], rdx
+    mov     rdx, [desc_size]
+    mov     [rax+BI_DESC_SZ], rdx
+    mov     rdx, [desc_ver]
+    mov     [rax+BI_DESC_VER], rdx
+    mov     rdx, [kernel_size]
+    mov     [rax+BI_KERN_SZ], rdx
+if HEADLESS = 0
+    mov     qword [rax+BI_HEADLESS], 0
+else
+    mov     qword [rax+BI_HEADLESS], 1
+end if
+
+    lea     rdi, [boot_info]
+    xor     ebp, ebp
+    xor     ebx, ebx
+    mov     rax, KERN_VMA
+    jmp     rax
+
+    ; ---- 错误路径（仍可用串口）----
+.fail_mmap:
+    lea     rsi, [msg_fail_mmap]
+    call    serial_puts
+    jmp     $
+
+; ---- 串口（COM1, 115200 8N1）----
+serial_init:
+    mov     dx, 0x3F9
+    xor     al, al
+    out     dx, al
+    mov     dx, 0x3FB
+    mov     al, 0x80
+    out     dx, al
+    mov     dx, 0x3F8
+    mov     al, 0x01                   ; 除数 1 → 115200
+    out     dx, al
+    mov     dx, 0x3F9
+    xor     al, al
+    out     dx, al
+    mov     dx, 0x3FB
+    mov     al, 0x03                   ; 8N1
+    out     dx, al
+    mov     dx, 0x3FA
+    mov     al, 0xC7                   ; 启用 FIFO
+    out     dx, al
+    mov     dx, 0x3FC
+    mov     al, 0x0B                   ; DTR|RTS|OUT2
+    out     dx, al
+    ret
+
+; AL=字符；破坏 RAX、RDX
+serial_putc:
+    mov     ah, al
+    mov     dx, 0x3FD
+.wait:
+    in      al, dx
+    test    al, 0x20                   ; 发送保持寄存器空
+    jz      .wait
+    mov     dx, 0x3F8
+    mov     al, ah
+    out     dx, al
+    ret
+
+; RSI=NUL 结尾 ASCII；\n 自动转 \r\n；保留 RSI
+serial_puts:
+    push    rsi
+.loop:
+    mov     al, [rsi]
+    test    al, al
+    jz      .done
+    inc     rsi
+    cmp     al, 10
+    jne     .put
+    mov     al, 13
+    call    serial_putc
+    mov     al, 10
+.put:
+    call    serial_putc
+    jmp     .loop
+.done:
+    pop     rsi
+    ret
+
+section '.data' data readable writeable
+
+image_handle    dq 0
+system_table    dq 0
+boot_services   dq 0
+
+gop             dq 0
+fb_base         dq 0
+fb_width        dd 0
+fb_height       dd 0
+fb_pitch        dd 0
+fb_format       dd 0
+
+mmap_ptr        dq 0
+mmap_size       dq 0
+mmap_cap        dq 0
+mmap_bytes      dq 0
+map_key         dq 0
+desc_size       dq 0
+desc_ver        dq 0
+
+kern_ptr        dq 0
+stack_ptr       dq 0
+pt_ptr          dq 0
+ebs_retry       dq 0
+
+boot_info       times BI_SIZE db 0
+
+; flat GDT：NULL / 64 位代码段 / 数据段
+gdt:
+    dq 0
+    dq 0x00AF9A000000FFFF
+    dq 0x00CF92000000FFFF
+gdt_end:
+gdtr:
+    dw gdt_end - gdt - 1
+    dq 0                              ; 运行时填入 GDT 线性地址
+
+; EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID
+gop_guid:
+    db 0xDE,0xA9,0x42,0x90,0xDC,0x23,0x38,0x4A
+    db 0x96,0xFB,0x7A,0xDE,0xD0,0x80,0x51,0x6A
+
+msg_banner:      db 'Zhaoxu OS boot layer (Yuanshuo) - UEFI',10,0
+msg_banner_u16:  dw 'Z','h','a','o','x','u',' ','O','S',' ','U','E','F','I',13,10,0
+msg_fail_mmap:   db '[boot] GetMemoryMap/AllocatePool failed',10,0
+msg_fail_mmap2:  db '[boot] GetMemoryMap retry failed',10,0
+msg_fail_kern:   db '[boot] AllocatePages(kernel) failed',10,0
+msg_fail_stack:  db '[boot] AllocatePages(stack) failed',10,0
+msg_fail_pt:     db '[boot] AllocatePages(page tables) failed',10,0
+msg_fail_ebs:    db '[boot] ExitBootServices failed',10,0
+
+kernel_size      dq kernel_end - kernel_blob
+
+section '.text' readable executable
+
+; ---- 内核映像（由构建系统先产出 out/kernel.bin）----
+kernel_blob:
+    file '../out/kernel.bin'
+kernel_end:
