@@ -86,17 +86,22 @@ USER_CFLAGS := -m64 -std=gnu11 -O2 -ffreestanding -fno-pie -fno-pic \
                -mno-mmx -mno-avx -Wall -Wextra -Wno-unused-parameter
 USER_LDFLAGS := -nostdlib -static -no-pie -Wl,--build-id=none \
                 -Wl,-T,user/user.ld -Wl,-z,max-page-size=0x1000
+RUBY ?= /mnt/c/Ruby40-x64/bin/ruby.exe
 
-$(OUT)/%.elf: user/%.c user/userlib.c user/userlib.h user/user.ld
-	@mkdir -p $(OUT)
+$(BUILD)/%.uelf: user/%.c user/userlib.c user/userlib.h user/user.ld
+	@mkdir -p $(BUILD)
 	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -o $@ user/$*.c user/userlib.c
+
+$(OUT)/%.zxe: $(BUILD)/%.uelf tools/zxe-pack.rb
+	@mkdir -p $(OUT)
+	$(RUBY) tools/zxe-pack.rb $< $@
 
 # ---- initramfs -------------------------------------------------------
 RAMFS := $(BUILD)/initramfs
 RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/etc/motd $(RAMFS)/etc/version \
                $(RAMFS)/mnt
 
-$(RAMFS)/bin/init: $(OUT)/init.elf
+$(RAMFS)/bin/init: $(OUT)/init.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
@@ -123,13 +128,15 @@ $(BUILD)/initramfs.o: $(OUT)/initramfs.tar
 # ---- FAT32 data volume ----------------------------------------------
 DATA_IMG := $(OUT)/data.img
 
-$(DATA_IMG): $(OUT)/hello.elf initramfs/data/hello.txt initramfs/data/info.txt
+$(DATA_IMG): $(OUT)/hello.zxe $(BUILD)/hello.uelf initramfs/data/hello.txt initramfs/data/info.txt initramfs/data/wqy.ttc
 	@mkdir -p $(OUT)
 	dd if=/dev/zero of=$@ bs=1M count=64 status=none
 	mkfs.vfat -F 32 -n ZHAOXUDATA $@ >/dev/null
 	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/DOCS
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/hello.txt ::/HELLO.TXT
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/hello.elf ::/HELLO.ELF
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/hello.zxe ::/HELLO.ZXE
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(BUILD)/hello.uelf ::/HELLO.ELF
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/wqy.ttc ::/WQY.TTC
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/info.txt ::/DOCS/INFO.TXT
 
 $(BUILD)/kernel_blob.inc: $(OUT)/kernel.bin
@@ -168,7 +175,7 @@ $(ESP)/BOOTX64.EFI: $(OUT)/BOOTX64.EFI
 
 clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin $(OUT)/BOOTX64.EFI \
-	       $(OUT)/init.elf $(OUT)/hello.elf $(OUT)/initramfs.tar \
+	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/initramfs.tar \
 	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu-os.iso \
 	       $(ESP)/BOOTX64.EFI
 
