@@ -1,3 +1,10 @@
+# 构建产物
+src/build/
+src/out/
+src/esp/
+src/tools/.fasm-root/
+src/tools/*.deb
+
 CONOUT$
 CONIN$
 

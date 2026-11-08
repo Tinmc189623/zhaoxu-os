@@ -1,1 +1,0 @@
-HEADLESS equ 0
