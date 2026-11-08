@@ -19,6 +19,7 @@ extern "C" {
 #include <shell.h>
 #include <string.h>
 #include <timer.h>
+#include <ttf.h>
 #include <types.h>
 #include <vfs.h>
 }
@@ -53,6 +54,7 @@ void cmd_acpi(int argc, char **argv);
 void cmd_ls(int argc, char **argv);
 void cmd_cat(int argc, char **argv);
 void cmd_run(int argc, char **argv);
+void cmd_fonttest(int argc, char **argv);
 void cmd_mounts(int argc, char **argv);
 void cmd_ps(int argc, char **argv);
 void cmd_bench(int argc, char **argv);
@@ -78,6 +80,7 @@ const command kCommands[] = {
     { "ls",       cmd_ls,       "list a directory (default /)" },
     { "cat",      cmd_cat,      "print a file from ramfs or FAT32" },
     { "run",      cmd_run,      "execute an ELF64 program in ring 3" },
+    { "fonttest", cmd_fonttest, "render a Unicode glyph as ASCII art" },
     { "mounts",   cmd_mounts,   "show mounted filesystems" },
     { "ps",       cmd_ps,       "show ring 3 process state" },
     { "bench",    cmd_bench,    "memory and TSC micro-benchmarks" },
@@ -401,6 +404,69 @@ void cmd_run(int argc, char **argv)
     console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
     kprintf("[shell] %s exited with status %d\n", argv[1], status);
     console_reset_color();
+}
+
+void cmd_fonttest(int argc, char **argv)
+{
+    if (!ttf_available()) {
+        print_error("fonttest: no TrueType font loaded");
+        return;
+    }
+
+    u32 codepoint = 0x4E2D;
+    if (argc >= 2) {
+        const char *cursor = argv[1];
+        if (cursor[0] == '0' && (cursor[1] == 'x' || cursor[1] == 'X'))
+            cursor += 2;
+        u32 value = 0;
+        int digits = 0;
+        for (; *cursor; cursor++) {
+            u32 digit;
+            if (*cursor >= '0' && *cursor <= '9')
+                digit = (u32)(*cursor - '0');
+            else if (*cursor >= 'a' && *cursor <= 'f')
+                digit = (u32)(*cursor - 'a' + 10);
+            else if (*cursor >= 'A' && *cursor <= 'F')
+                digit = (u32)(*cursor - 'A' + 10);
+            else
+                break;
+            value = value * 16u + digit;
+            digits++;
+        }
+        if (digits == 0 || value == 0 || value > 0x10FFFFu) {
+            print_error("fonttest: expected a hex codepoint like 0x4e2d");
+            return;
+        }
+        codepoint = value;
+    }
+
+    struct ttf_glyph glyph;
+    int status = ttf_render(codepoint, &glyph);
+    if (status != 0) {
+        kprintf("fonttest: U+%04X render failed (%d)\n", codepoint, status);
+        return;
+    }
+    kprintf("fonttest U+%04X: bitmap %ux%u at (%d,%d), advance %d cells\n",
+            codepoint, glyph.w, glyph.h, (int)glyph.bx, (int)glyph.by,
+            (int)glyph.adv);
+
+    for (u32 row = 0; row < 16; row++) {
+        char line[18];
+        for (u32 col = 0; col < 16; col++) {
+            u32 alpha = 0;
+            i32 gx = (i32)col - (i32)glyph.bx;
+            i32 gy = (i32)row - (i32)glyph.by;
+            if (gx >= 0 && gy >= 0 && gx < (i32)glyph.w &&
+                gy < (i32)glyph.h)
+                alpha = glyph.alpha[gy * glyph.w + gx];
+            line[col] = alpha >= 200 ? '#'
+                        : alpha >= 70 ? '+'
+                        : alpha >= 8  ? '.'
+                                      : ' ';
+        }
+        line[16] = 0;
+        kprintf("|%s|\n", line);
+    }
 }
 
 void cmd_mounts(int, char **)

@@ -87,6 +87,8 @@ system("wsl", "-d", DISTRO, "--", "pkill", "-f", "qemu-system-x86_64",
 
 if ok
   puts "SMOKE PASS: #{marker.inspect}"
+  puts "--- last 6000 bytes ---"
+  puts out[-6000..] || out if ENV["SMOKE_DUMP"]
   exit 0
 else
   warn "SMOKE FAIL: #{marker.inspect}"
