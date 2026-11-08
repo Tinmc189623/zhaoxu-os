@@ -36,9 +36,14 @@ inner = <<~SH
     -net none -serial stdio -monitor none -display none -no-reboot
 SH
 
-out = String.new
+out = String.new(encoding: Encoding::BINARY)
+$stdout.binmode
+$stderr.binmode
 ok = false
 Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout, stderr, waiter|
+  stdin.binmode
+  stdout.binmode
+  stderr.binmode
   deadline = Time.now + TIMEOUT
   queue = commands + ["shutdown"]
   sent = 0
@@ -70,7 +75,7 @@ Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout,
     break if eof_count >= 2 && sent >= queue.size
     prompts = out.scan("zhaoxu>").size
     if sent < queue.size && prompts > sent && Time.now - last_send > 0.8
-      stdin.puts queue[sent]
+      stdin.write(queue[sent].dup.force_encoding(Encoding::BINARY) + "\n")
       stdin.flush
       sent += 1
       last_send = Time.now

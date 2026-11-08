@@ -65,6 +65,48 @@ package body Gop is
       end loop;
    end Blit_Glyph;
 
+   procedure Blit_Alpha (Fb : Unsigned_64;
+                         Pitch : Unsigned_32;
+                         X : Unsigned_32;
+                         Y : Unsigned_32;
+                         Mask : Address;
+                         Mask_Width : Unsigned_32;
+                         X0 : Unsigned_32;
+                         Y0 : Unsigned_32;
+                         W : Unsigned_32;
+                         H : Unsigned_32;
+                         Fg : Unsigned_32;
+                         Bg : Unsigned_32) is
+      Base : constant Address := To_Addr (Fb);
+      Fr : constant Unsigned_32 := Fg / 65536;
+      Fm : constant Unsigned_32 := (Fg / 256) mod 256;
+      FbL : constant Unsigned_32 := Fg mod 256;
+      Br : constant Unsigned_32 := Bg / 65536;
+      Bm : constant Unsigned_32 := (Bg / 256) mod 256;
+      BbL : constant Unsigned_32 := Bg mod 256;
+      A : Unsigned_32;
+      Color : Unsigned_32;
+   begin
+      if W = 0 or H = 0 then
+         return;
+      end if;
+      for Row in Unsigned_32 range 0 .. H - 1 loop
+         for Col in Unsigned_32 range 0 .. W - 1 loop
+            A := Unsigned_32 (U8_Conv.To_Pointer
+                  (Addr_At (Mask, (Y0 + Row) * Mask_Width + X0 + Col)).all);
+            if A = 0 then
+               null;
+            else
+               Color :=
+                 ((Fr * A + Br * (255 - A)) / 255) * 65536 +
+                 ((Fm * A + Bm * (255 - A)) / 255) * 256 +
+                 ((FbL * A + BbL * (255 - A)) / 255);
+               Put_Pixel (Base, (Y + Row) * Pitch + (X + Col) * 4, Color);
+            end if;
+         end loop;
+      end loop;
+   end Blit_Alpha;
+
    procedure Copy_Rows (Fb : Unsigned_64;
                         Pitch : Unsigned_32;
                         Src_Y : Unsigned_32;

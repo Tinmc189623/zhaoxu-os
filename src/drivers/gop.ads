@@ -20,6 +20,20 @@ package Gop is
                          Bg : Interfaces.Unsigned_32)
      with Export, Convention => C, External_Name => "gop_blit_glyph";
 
+   procedure Blit_Alpha (Fb : Interfaces.Unsigned_64;
+                         Pitch : Interfaces.Unsigned_32;
+                         X : Interfaces.Unsigned_32;
+                         Y : Interfaces.Unsigned_32;
+                         Mask : System.Address;
+                         Mask_Width : Interfaces.Unsigned_32;
+                         X0 : Interfaces.Unsigned_32;
+                         Y0 : Interfaces.Unsigned_32;
+                         W : Interfaces.Unsigned_32;
+                         H : Interfaces.Unsigned_32;
+                         Fg : Interfaces.Unsigned_32;
+                         Bg : Interfaces.Unsigned_32)
+     with Export, Convention => C, External_Name => "gop_blit_alpha";
+
    procedure Copy_Rows (Fb : Interfaces.Unsigned_64;
                         Pitch : Interfaces.Unsigned_32;
                         Src_Y : Interfaces.Unsigned_32;

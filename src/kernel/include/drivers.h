@@ -17,6 +17,9 @@ u8   ps2_read_data(void);
 void gop_fill_rect(u64 fb, u32 pitch, u32 x, u32 y, u32 w, u32 h, u32 color);
 void gop_blit_glyph(u64 fb, u32 pitch, u32 x, u32 y, const u8 *glyph,
                     u32 fg, u32 bg);
+void gop_blit_alpha(u64 fb, u32 pitch, u32 x, u32 y, const u8 *mask,
+                    u32 mask_width, u32 x0, u32 y0, u32 w, u32 h,
+                    u32 fg, u32 bg);
 void gop_copy_rows(u64 fb, u32 pitch, u32 src_y, u32 dst_y, u32 rows,
                    u32 width_bytes);
 void gop_clear(u64 fb, u32 pitch, u32 width, u32 height, u32 color);

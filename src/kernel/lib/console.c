@@ -3,6 +3,7 @@
 #include <drivers.h>
 #include <keyboard.h>
 #include <string.h>
+#include <ttf.h>
 #include <types.h>
 
 #define GLYPH_WIDTH  8
@@ -207,12 +208,91 @@ static void putchar_fb(char c)
         newline();
 }
 
+static u8 utf8_left;    /* continuation bytes still missing */
+static u32 utf8_cp;
+
+static void draw_ttf(u32 codepoint)
+{
+    struct ttf_glyph glyph;
+    if (ttf_render(codepoint, &glyph) != 0 || glyph.w == 0 || glyph.h == 0) {
+        putchar_fb('?');
+        return;
+    }
+
+    u32 cells = glyph.adv ? (u32)glyph.adv : 1;
+    if (cells > columns)
+        cells = 1;
+    if (cursor_x + cells > columns)
+        newline();
+
+    u32 box_width = cells * GLYPH_WIDTH;
+    u32 px = cursor_x * GLYPH_WIDTH;
+    u32 py = cursor_y * GLYPH_HEIGHT;
+    gop_fill_rect(fb_base, fb_pitch, px, py, box_width, GLYPH_HEIGHT,
+                  bg_pixel);
+
+    i32 shift = box_width >= TTF_PIXEL_SIZE
+                    ? 0
+                    : (i32)(box_width - TTF_PIXEL_SIZE) / 2;
+    i32 gx = (i32)px + shift + glyph.bx;
+    i32 gy = (i32)py + glyph.by;
+    i32 x0 = gx > 0 ? gx : 0;
+    i32 y0 = gy > 0 ? gy : 0;
+    i32 x1 = gx + (i32)glyph.w;
+    if (x1 > (i32)fb_width)
+        x1 = (i32)fb_width;
+    i32 y1 = gy + (i32)glyph.h;
+    if (y1 > (i32)fb_height)
+        y1 = (i32)fb_height;
+    if (x1 > x0 && y1 > y0)
+        gop_blit_alpha(fb_base, fb_pitch, (u32)x0, (u32)y0, glyph.alpha,
+                       glyph.w, (u32)(x0 - gx), (u32)(y0 - gy),
+                       (u32)(x1 - x0), (u32)(y1 - y0), fg_pixel, bg_pixel);
+
+    cursor_x += cells;
+    if (cursor_x >= columns)
+        newline();
+}
+
+static void putchar_screen(u8 byte)
+{
+    if (!have_fb)
+        return;
+
+    if (utf8_left) {
+        if ((byte & 0xC0) == 0x80) {
+            utf8_cp = (utf8_cp << 6) | (byte & 0x3F);
+            if (--utf8_left == 0) {
+                draw_ttf(utf8_cp);
+                return;
+            }
+            return;
+        }
+        utf8_left = 0;
+        putchar_fb('?');
+    }
+    if (byte < 0x80) {
+        putchar_fb((char)byte);
+        return;
+    }
+    if ((byte & 0xE0) == 0xC0) {
+        utf8_cp = byte & 0x1F;
+        utf8_left = 1;
+    } else if ((byte & 0xF0) == 0xE0) {
+        utf8_cp = byte & 0x0F;
+        utf8_left = 2;
+    } else if ((byte & 0xF8) == 0xF0) {
+        utf8_cp = byte & 0x07;
+        utf8_left = 3;
+    }
+}
+
 void console_putc(char c)
 {
     if (c == '\n')
         serial_putc('\r');
     serial_putc((u8)c);
-    putchar_fb(c);
+    putchar_screen((u8)c);
 }
 
 void console_write(const char *s)
