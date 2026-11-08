@@ -77,7 +77,7 @@ enum install_phase {
 
 const window *g_install_win;
 int g_install_phase = INSTALL_IDLE;
-u32 g_install_pct = 100;
+u32 g_install_pct = 0;
 char g_install_message[96];
 
 file_entry g_files[kMaxEntries];
@@ -690,7 +690,7 @@ int desktop_run(int argc, char **argv)
     g_prev_buttons = 0;
     g_install_win = nullptr;
     g_install_phase = INSTALL_IDLE;
-    g_install_pct = 100;
+    g_install_pct = 0;
     g_install_message[0] = 0;
     load_files();
 
