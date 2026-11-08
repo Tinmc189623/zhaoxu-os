@@ -292,6 +292,18 @@ int ramfs_read_all(const char *path, u8 **buffer, u64 *size)
     return 0;
 }
 
+int ramfs_read_into(const char *path, u8 *dst, u64 cap, u64 *read_out)
+{
+    struct ram_node *node = ram_lookup(path);
+    if (!node || node->type != RAM_FILE || !dst || node->size > cap)
+        return -1;
+    if (node->size)
+        memcpy(dst, node->data, node->size);
+    if (read_out)
+        *read_out = node->size;
+    return 0;
+}
+
 int ramfs_stat(const char *path, int *is_dir, u64 *size)
 {
     struct ram_node *node = ram_lookup(path);

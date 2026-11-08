@@ -76,6 +76,19 @@ int vfs_read_all(const char *path, u8 **buffer, u64 *size)
     return ramfs_read_all(path, buffer, size);
 }
 
+int vfs_read_into(const char *path, u8 *dst, u64 cap, u64 *read_out)
+{
+    if (!path)
+        return -1;
+    if (g_fat_mounted && path_is_mnt(path)) {
+        const char *inner = path + 4;
+        if (!*inner)
+            inner = "/";
+        return fat32_read_into(inner, dst, cap, read_out);
+    }
+    return ramfs_read_into(path, dst, cap, read_out);
+}
+
 int vfs_stat(const char *path, int *is_dir, u64 *size)
 {
     if (!path)

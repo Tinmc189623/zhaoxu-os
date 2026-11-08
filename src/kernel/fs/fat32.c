@@ -423,27 +423,15 @@ int fat32_list(const char *path, vfs_list_cb callback, void *context)
     return iterate_directory(entry.cluster, list_callback, &state);
 }
 
-int fat32_read_all(const char *path, u8 **buffer, u64 *size)
+static int fat32_read_data(const struct fat_entry *entry, u8 *data, u64 size)
 {
-    struct fat_entry entry;
-    if (fat32_find(path, &entry) != 0 || entry.is_dir)
-        return -1;
-    if (entry.size > FAT32_MAX_FILE_SIZE)
-        return -1;
-
     u32 cluster_bytes = g_fs.sectors_per_cluster * 512;
-    u8 *data = kmalloc(entry.size ? entry.size : 1);
-    if (!data)
-        return -1;
-
     u8 *cluster_buffer = kmalloc(cluster_bytes);
-    if (!cluster_buffer) {
-        kfree(data);
+    if (!cluster_buffer)
         return -1;
-    }
 
-    u32 cluster = entry.cluster;
-    u32 remaining = entry.size;
+    u32 cluster = entry->cluster;
+    u32 remaining = (u32)size;
     u32 guard = g_fs.cluster_count + 2;
     u8 *output = data;
 
@@ -453,7 +441,6 @@ int fat32_read_all(const char *path, u8 **buffer, u64 *size)
         if (ahci_disk_read(g_fs.disk, g_fs.volume_base + lba,
                            g_fs.sectors_per_cluster, cluster_buffer) != 0) {
             kfree(cluster_buffer);
-            kfree(data);
             return -1;
         }
         u32 chunk = remaining > cluster_bytes ? cluster_bytes : remaining;
@@ -467,6 +454,38 @@ int fat32_read_all(const char *path, u8 **buffer, u64 *size)
 
     if (remaining > 0)
         memset(output, 0, remaining);
+    return 0;
+}
+
+int fat32_read_into(const char *path, u8 *dst, u64 cap, u64 *read_out)
+{
+    struct fat_entry entry;
+    if (!dst || fat32_find(path, &entry) != 0 || entry.is_dir)
+        return -1;
+    if (entry.size > cap)
+        return -1;
+    if (fat32_read_data(&entry, dst, entry.size) != 0)
+        return -1;
+    if (read_out)
+        *read_out = entry.size;
+    return 0;
+}
+
+int fat32_read_all(const char *path, u8 **buffer, u64 *size)
+{
+    struct fat_entry entry;
+    if (fat32_find(path, &entry) != 0 || entry.is_dir)
+        return -1;
+    if (entry.size > FAT32_MAX_FILE_SIZE)
+        return -1;
+
+    u8 *data = kmalloc(entry.size ? entry.size : 1);
+    if (!data)
+        return -1;
+    if (fat32_read_data(&entry, data, entry.size) != 0) {
+        kfree(data);
+        return -1;
+    }
 
     *buffer = data;
     if (size)
