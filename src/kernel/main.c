@@ -19,7 +19,7 @@
 #include <types.h>
 #include <vfs.h>
 
-#define ZHAOXU_VERSION "0.3.0"
+#define ZHAOXU_VERSION "0.4.0"
 #define ZHAOXU_CODENAME "Yuanshuo"
 
 static struct boot_info g_boot;
@@ -57,6 +57,7 @@ void kernel_main(struct boot_info *boot)
     kprintf("Zhaoxu OS %s \"%s\"\n", ZHAOXU_VERSION, ZHAOXU_CODENAME);
     console_set_color(COLOR_DARK_GRAY, COLOR_BLACK);
     kprintf("A multi-language operating system: FASM + C + Ada + C++\n");
+    kprintf("欢迎使用兆旭操作系统：源朔内核已启用中文渲染\n");
     console_reset_color();
     kprintf("\n");
 

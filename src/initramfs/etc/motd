@@ -1,7 +1,10 @@
-Welcome to Zhaoxu OS 0.3.0 "Yuanshuo".
+Welcome to Zhaoxu OS 0.4.0 "Yuanshuo".
+欢迎使用兆旭操作系统 0.4.0（源朔内核）：已支持中文显示与自研 .zxe 可执行格式。
 
 This message is served from the initramfs (ustar archive) by the
 in-kernel ramfs.  The kernel, drivers and shell are written in FASM,
-C, Ada and C++; this process runs in ring 3.
+C, Ada and C++; this process runs in ring 3.  Chinese glyphs are
+rasterized from the TrueType font on the data volume (WQY.TTC).
 
-Try: ls /, cat /mnt/HELLO.TXT, run /mnt/HELLO.ELF, mounts
+Try: ls /, cat /mnt/HELLO.TXT, run /mnt/HELLO.ZXE, run /mnt/HELLO.ELF,
+     fonttest 0x4e2d, mounts

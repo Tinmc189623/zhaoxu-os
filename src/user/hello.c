@@ -17,6 +17,7 @@ int user_main(long *stack)
         u_puts(", argv[0]=");
         u_puts(argv[0]);
     }
-    u_puts("\n[hello] returning status 7\n");
+    u_puts("[hello] 你好，兆旭！中文渲染测试：源朔内核。\n");
+    u_puts("[hello] returning status 7\n");
     return 7;
 }

@@ -40,6 +40,15 @@ Based on:
 The binary is bundled only as a build convenience. It is not linked into the
 Zhaoxu OS kernel image.
 
+## WenQuanYi Micro Hei (文泉驿微米黑)
+
+- File: `src/initramfs/data/wqy.ttc` → shipped as `/mnt/WQY.TTC` on the FAT32
+  data image (built by `make out/data.img`)
+- Author: WenQuanYi 社区 (info@wenqiangithub.berlios.de)
+- License: GNU General Public License v3 with the font embedding exception
+  (see the upstream `GPL` text). The font is only redistributed as a data
+  file on the generated volume; it is not linked into the kernel image.
+
 ## UEFI / OVMF / QEMU
 
 UEFI firmware (OVMF) and QEMU are development and test dependencies and are not

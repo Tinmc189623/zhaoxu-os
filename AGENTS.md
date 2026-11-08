@@ -2,18 +2,18 @@
 
 ## 规则（必须遵守）
 
-1. 内核名称：Yuanshuo。
+1. 内核名称：`Yuanshuo Kernel`，操作系统名称：`Zhaoxu OS`，Shell：`Command-Shell`，桌面：`Desktop-Shell`（风格：Aqua），窗口管理器：`DS-WM`。
 2. Github 仓库（main）：https://github.com/Tinmc189623/zhaoxu-os
 3. Gitee 仓库（master）：https://gitee.com/Tinmc189623/zhaoxu-os
 4. GitCode 仓库（main）：https://gitcode.com/2503_94276351/zhaoxu-os
-5. 用 WSL2，可用：C（底层）、C++（上层应用）、FASM（底层）、Ada（驱动）。
+5. 用 WSL2，可用：C（底层）、C++（上层应用）、FASM+GAS（底层）、Ada+SPARK（驱动）。
 6. 脚本必须完全使用 ruby 来编写，必须完全使用 AI 来生成代码。
 
 ## 构建与运行
 
-- 构建在 WSL2 中执行（脚本默认发行版 `Ubuntu-26.04`），工作目录必须是 `src/`；Windows 脚本只做转发。
+- 构建在 WSL2 中执行（脚本默认发行版 `Ubuntu-26.04`），工作目录必须是仓库内的 `src/`（Windows 路径先用 `wslpath` 换算，不要写死盘符）；Windows 脚本只做转发。
   ```bash
-  cd '/mnt/g/Apps/OS/x86/AMD64/Zhaoxu OS/src'
+  cd src                   # 仓库的 src 目录（WSL 内）
   make -j4                 # HEADLESS=0（默认，带 GOP 图形）
   make run                 # 构建 out/data.img 并启动 QEMU
   make run QEMU_DISPLAY="-display gtk"   # WSLg 图形窗口
@@ -21,7 +21,7 @@
   make run-iso             # 从 ISO 启动，并挂载 out/data.img
   ```
   Windows 入口：`./src/build.ps1`、`./src/run.ps1`（PowerShell 7+），默认发行版 `Ubuntu-26.04`。
-- 单个用户程序：`make out/hello.elf`。模式规则会自动编译 `user/hello.c` 并链接 `user/userlib.c`，不需要改 Makefile。程序入口是 `int user_main(long *stack)`，不是 `main`；`userlib.c` 的 `_start` 会把返回值作为退出码。
+- 单个用户程序：`make out/hello.zxe`（内部先链接 `build/hello.uelf`，再由 `tools/zxe-pack.rb` 转成 `.zxe`）。模式规则会自动编译 `user/hello.c` 并链接 `user/userlib.c`，不需要改 Makefile。程序入口是 `int user_main(long *stack)`，不是 `main`；`userlib.c` 的 `_start` 会把返回值作为退出码。ELF→.zxe 转换需要 Ruby：WSL 内没有时通过 Makefile 的 `RUBY` 变量指向 Windows 侧 ruby.exe（按本机位置覆盖，不要写死盘符）。
 - `make`/`make all` 的最终产物是 `out/BOOTX64.EFI` 与 `esp/EFI/BOOT/BOOTX64.EFI`，不会生成 `out/data.img`；测试文件系统时要 `make out/data.img` 或直接 `make run`。
 - `make run` 默认 q35、512 MiB、smp=1、`-display none` + 串口 stdio，并把 `out/data.img` 挂为第二个 IDE 盘（`ide.1`）。带 `-no-reboot`，所以 Shell 的 `reboot` 会直接退出 QEMU。
 - `make iso` 生成 `out/zhaoxu-os.iso`：16 MiB FAT16 ESP（`out/efi.img`）内含 `EFI/BOOT/BOOTX64.EFI`，由 xorriso 以 UEFI El Torito + GPT hybrid 打包；数据盘不会进入 ISO。`make run-iso` 从 ISO 启动并挂载 `out/data.img`。
@@ -35,9 +35,10 @@
 没有自动化测试；改动后至少做一次 QEMU 冒烟：
 
 1. `make clean && make -j4` 干净重建，`nm -u out/kernel.elf` 应无未定义符号。
-2. `make run` 后确认自动运行 ring 3 `/bin/init`，再在 Shell 执行 `ls /mnt`、`cat /mnt/HELLO.TXT`、`run /mnt/HELLO.ELF`（退出码 7）、`shutdown`。
+2. `make run` 后确认自动运行 ring 3 `/bin/init`，再在 Shell 执行 `ls /mnt`、`cat /mnt/HELLO.TXT`、`run /mnt/HELLO.ZXE`（退出码 7）、`run /mnt/HELLO.ELF`（ELF 兼容路径，退出码 7）、`fonttest 0x4e2d`（应打出 `中` 的 ASCII 密度图）、`shutdown`。
 3. 用户态异常只应终止进程并回到 Shell（退出码 `-向量号`，如 `#PF` 为 `-14`）；内核异常才 panic。
-4. ISO 改动：`make iso` 生成 `out/zhaoxu-os.iso`，再用 `make run-iso` 从 ISO 启动并重复上面的 `/mnt` 测试。
+4. ISO 改动：`make iso` 生成 `out/zhaoxu-os.iso`，再用 `make run-iso` 从 ISO 启动并重复上面的 `/mnt` 测试；无数据盘时应打印 `[ttf ] no CJK font`，`run /mnt/...` 与中文回退为 `?`，不崩溃。
+5. 帧缓冲中文/字形效果无法无头验证：需要 `make run QEMU_DISPLAY="-display gtk"` 人工查看。无头回归可用 `ruby src/tools/smoke.rb <marker> [commands]`（Windows Ruby 驱动 WSL QEMU，按提示符逐条送命令）。
 
 ## 架构与不变量
 
@@ -61,8 +62,9 @@
 - 三个远端分支不同：GitHub `main`、Gitee `master`、GitCode `main`。
 - WSL 内没有 Git 凭据，push 会报 `could not read Username`。从 Windows Git 推送：
   ```powershell
-  git -C 'G:\Apps\OS\x86\AMD64\Zhaoxu OS' push github main
-  git -C 'G:\Apps\OS\x86\AMD64\Zhaoxu OS' push gitee main:master
-  git -C 'G:\Apps\OS\x86\AMD64\Zhaoxu OS' push gitcode main
+  # 在仓库根目录执行（PowerShell，PSCommandPath 所在目录）
+  git push github main
+  git push gitee main:master
+  git push gitcode main
   ```
 - 没有 CI；推送后用 `git ls-remote` 核对三个远端指向同一提交。

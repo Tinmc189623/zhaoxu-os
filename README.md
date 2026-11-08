@@ -1,8 +1,18 @@
 # Zhaoxu OS
 
-Zhaoxu OS 是一个面向 x86_64 + UEFI 的多语言操作系统，内核代号 **Yuanshuo**，当前版本 **0.3.0**。引导层用 FASM 直接生成 PE64 EFI 映像，建立恒等映射与 higher-half 页表；退出 UEFI Boot Services 后进入 C 内核，外设驱动用 Ada，交互 Shell 用 C++20 编写，全部链接进同一个内核镜像。0.3.0 引入 ring 3 用户态、`int 0x80` 系统调用、内嵌 initramfs，以及 AHCI + FAT32 只读数据盘。
+Zhaoxu OS 是一个面向 x86_64 + UEFI 的多语言操作系统，内核代号 **Yuanshuo**，当前版本 **0.4.0**。引导层用 FASM 直接生成 PE64 EFI 映像，建立恒等映射与 higher-half 页表；退出 UEFI Boot Services 后进入 C 内核，外设驱动用 Ada，交互 Shell 用 C++20 编写，全部链接进同一个内核镜像。0.4.0 引入 TrueType 中文渲染与自研 `.zxe` 可执行文件格式（继续兼容 ELF64）。
+
+<!-- 就你晒着，就你晒着，你晒最多 -->
 
 ![Zhaoxu OS shell](docs/screenshot.png)
+
+## 0.4.0 新增
+
+- TrueType 中文渲染：内核内置 glyf 字形引擎（TTC/sfnt 解析、cmap format 4/12、整型 26.6 定点扫描线光栅化、256 槽字形缓存），控制台按 UTF-8 解码，西文走 8x8 点阵、中文走 16px 矢量字形
+- 字体分发：文泉驿微米黑（`/mnt/WQY.TTC`，GPL）随 FAT32 数据盘提供，启动时经 `vfs_read_into` 载入常驻内核页，不走 4 MiB 内核堆
+- `.zxe` 自研可执行格式：32 字节头 + 40 字节段表 + 原始数据，页对齐映射、R/W/X 段标志；构建期用纯 Ruby 脚本 `tools/zxe-pack.rb` 把 ELF64 转换为 `.zxe`
+- 加载器双格式：`run` / `/bin/init` 按魔数自动分发 `.zxe` 与 ELF64，ELF 路径完全保留
+- Shell 新增 `fonttest <hex>`：把任意码点的光栅结果以 ASCII 密度图打印到串口
 
 ## 0.3.0 新增
 
@@ -35,7 +45,7 @@ Zhaoxu OS 是一个面向 x86_64 + UEFI 的多语言操作系统，内核代号 
 
 **用户态与文件系统（C）**
 
-- ELF64 用户程序加载到 4 GiB 基址，用户栈位于 8 GiB，进程共享内核页表但页级 `U/S` 隔离
+- ELF64 与 `.zxe` 用户程序加载到 4 GiB 基址，用户栈位于 8 GiB，进程共享内核页表但页级 `U/S` 隔离；`int 0x80` 系统调用入口（IDT DPL=3），用户指针逐页校验
 - `int 0x80` 系统调用入口（IDT DPL=3），用户指针逐页校验
 - 内嵌 ustar initramfs → 只读 ramfs；`/bin/init`、`/etc/motd` 等随内核分发
 - AHCI 块设备（PCI class 01/06/01），FAT32 只读驱动挂载到 `/mnt`
@@ -43,7 +53,7 @@ Zhaoxu OS 是一个面向 x86_64 + UEFI 的多语言操作系统，内核代号 
 
 **驱动（Ada）**
 
-- 16550 UART、PIT、PS/2 控制器、GOP 矩形填充 / 字形绘制 / 行复制
+- 16550 UART、PIT、PS/2 控制器、GOP 矩形填充 / 字形绘制 / Alpha 混合 / 行复制
 - 通过 `pragma Export, Convention => C` 暴露 C 符号，端口 I/O 由 C 侧辅助函数完成
 
 **平台**
@@ -71,7 +81,8 @@ Zhaoxu OS 是一个面向 x86_64 + UEFI 的多语言操作系统，内核代号 
 | `acpi` | ACPI 电源管理信息 |
 | `ls [path]` | 列出 ramfs / FAT32 目录 |
 | `cat <path>` | 输出文件内容 |
-| `run <path> [args...]` | 以 ring 3 运行 ELF64 程序并打印退出码 |
+| `run <path> [args...]` | 以 ring 3 运行 `.zxe`/ELF64 程序并打印退出码 |
+| `fonttest <hex>` | 光栅化指定 Unicode 码点并输出 ASCII 密度图 |
 | `mounts` | 显示已挂载文件系统 |
 | `bench` | memset 带宽与 TSC ALU 基准 |
 | `sleep <ms>` | 休眠指定毫秒 |
@@ -104,7 +115,7 @@ Zhaoxu OS 是一个面向 x86_64 + UEFI 的多语言操作系统，内核代号 
 也可以直接在 WSL 中构建：
 
 ```bash
-cd '/mnt/g/Apps/OS/x86/AMD64/Zhaoxu OS/src'
+cd src                     # 仓库内的 src 目录（WSL 下用 wslpath 换算盘符）
 make -j4
 make run                 # 无头 + 串口
 make run QEMU_DISPLAY="-display gtk"
@@ -116,6 +127,7 @@ make run-iso             # 从 ISO 启动，并挂载 out/data.img
 
 - WSL2 Ubuntu 26.04：`gcc`、`g++`、`gcc-14` + `gnat-14`（提供 `gnat1`）、`ld.lld`、`objcopy`、`qemu-system-x86_64`、`ovmf`、`dosfstools`、`mtools`、`tar`、`xorriso`
 - Flat Assembler 1.73.34：仓库自带 `src/tools/fasm`；缺失时可执行 `src/tools/install-fasm.sh`
+- Ruby：`.zxe` 转换脚本 `src/tools/zxe-pack.rb` 与冒烟脚本 `src/tools/smoke.rb` 需要 Ruby；WSL 内没有 Ruby 时，Makefile 通过 `RUBY` 变量调用 Windows 侧解释器（按本机安装位置用 `make RUBY=<windows-ruby 的 wslpath 路径>` 覆盖）
 
 ## 目录结构
 
@@ -135,15 +147,17 @@ Zhaoxu OS/
     │   ├── int/             IDT 与异常/IRQ/系统调用分发
     │   ├── drivers/         PIT、键盘、RTC、PCI、ACPI、AHCI
     │   ├── fs/              initramfs（ustar/ramfs）、FAT32、VFS
-    │   ├── proc/            ELF64 加载、用户页管理、系统调用
+    │   ├── proc/            ELF64 / .zxe 加载、用户页管理、系统调用
     │   ├── mem/             PMM、VMM、堆
-    │   ├── lib/             字符串、printf、控制台、C++ 运行时
-    │   ├── font/            font8x8 字体数据
+    │   ├── lib/             字符串、printf、UTF-8 控制台、C++ 运行时
+    │   ├── font/            font8x8 字体数据、TrueType glyf 光栅化引擎
     │   └── include/         内核公共头文件
     ├── drivers/             Ada：串口、PIT、PS/2、GOP
     ├── apps/                C++：Shell
     ├── user/                ring 3 程序（init、hello）与用户库/链接脚本
     ├── initramfs/           ramfs 初始内容（motd、version、测试文本）
+    ├── initramfs/data/      生成 FAT32 数据盘的素材（WQY.TTC 字体等）
+    ├── tools/               FASM、zxe-pack.rb（ELF→.zxe）、smoke.rb（无头冒烟）
     ├── esp/                 构建出的 UEFI 引导目录
     └── out/                 构建产物（含 FAT32 数据盘 data.img、启动 ISO）
 ```
@@ -154,10 +168,10 @@ Zhaoxu OS/
 2. 引导层取得 GOP 帧缓冲、ACPI RSDP 与 UEFI 内存映射。
 3. 分配并复制内核 flat binary，建立恒等映射与 higher-half 页表。
 4. 调用 `ExitBootServices`，切换 CR3，跳转到 higher-half 内核入口。
-5. 内核建立 GDT/IDT，初始化 PMM/VMM/堆、CPUID、ACPI、RTC、AHCI 与 VFS（initramfs + FAT32）。
+5. 内核建立 GDT/IDT，初始化 PMM/VMM/堆、CPUID、ACPI、RTC、AHCI 与 VFS（initramfs + FAT32），并从数据盘加载 TrueType 中文字体。
 6. 启用中断，打印启动日志；自动以 ring 3 运行 initramfs 中的 `/bin/init`。
 7. `/bin/init` 通过系统调用读取 `/etc/motd` 与 `/mnt` 下的 FAT32 文件，退出后回到内核。
-8. 内核进入 C++ Shell 提示符；`run` 命令可再次加载并运行 ring 3 ELF64 程序。
+8. 内核进入 C++ Shell 提示符；`run` 命令可再次加载并运行 ring 3 的 `.zxe` 或 ELF64 程序。
 
 内存布局要点：
 

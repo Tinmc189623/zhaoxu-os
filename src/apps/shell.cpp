@@ -26,7 +26,7 @@ extern "C" {
 
 namespace {
 
-constexpr const char *kVersion = "0.3.0";
+constexpr const char *kVersion = "0.4.0";
 constexpr const char *kCodename = "Yuanshuo";
 constexpr usize kMaxLine = 256;
 constexpr int kMaxArgs = 8;
@@ -79,7 +79,7 @@ const command kCommands[] = {
     { "acpi",     cmd_acpi,     "ACPI power management information" },
     { "ls",       cmd_ls,       "list a directory (default /)" },
     { "cat",      cmd_cat,      "print a file from ramfs or FAT32" },
-    { "run",      cmd_run,      "execute an ELF64 program in ring 3" },
+    { "run",      cmd_run,      "execute an .zxe or ELF64 program in ring 3" },
     { "fonttest", cmd_fonttest, "render a Unicode glyph as ASCII art" },
     { "mounts",   cmd_mounts,   "show mounted filesystems" },
     { "ps",       cmd_ps,       "show ring 3 process state" },
@@ -719,6 +719,7 @@ void print_banner()
     console_reset_color();
     console_set_color(COLOR_DARK_GRAY, COLOR_BLACK);
     kprintf("FASM boot | C kernel | Ada drivers | C++ shell\n");
+    kprintf("Command-Shell 已就绪：输入 help 查看命令，支持中文与 .zxe 程序。\n");
     console_reset_color();
     kprintf("Type 'help' for the command list, 'neofetch' for a summary.\n\n");
 }
