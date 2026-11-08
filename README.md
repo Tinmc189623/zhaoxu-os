@@ -86,6 +86,7 @@ Zhaoxu OS 是一个面向 x86_64 + UEFI 的多语言操作系统，内核代号 
 | `mounts` | 显示已挂载文件系统 |
 | `bench` | memset 带宽与 TSC ALU 基准 |
 | `sleep <ms>` | 休眠指定毫秒 |
+| `desktop [seconds]` | 启动 Desktop-Shell 图形桌面，ESC 退出 |
 | `color <fg> <bg>` | 设置控制台颜色（0-15） |
 | `neofetch` | 系统摘要 |
 | `reboot` | ACPI 重启 |

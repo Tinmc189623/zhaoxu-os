@@ -21,13 +21,16 @@ extern "C" {
 #include <timer.h>
 #include <ttf.h>
 #include <types.h>
+#include <version.h>
 #include <vfs.h>
 }
 
+int desktop_run(int argc, char **argv);
+
 namespace {
 
-constexpr const char *kVersion = "0.4.0";
-constexpr const char *kCodename = "Yuanshuo";
+constexpr const char *kVersion = ZHAOXU_VERSION;
+constexpr const char *kCodename = ZHAOXU_CODENAME;
 constexpr usize kMaxLine = 256;
 constexpr int kMaxArgs = 8;
 
@@ -59,6 +62,7 @@ void cmd_mounts(int argc, char **argv);
 void cmd_ps(int argc, char **argv);
 void cmd_bench(int argc, char **argv);
 void cmd_sleep(int argc, char **argv);
+void cmd_desktop(int argc, char **argv);
 void cmd_color(int argc, char **argv);
 void cmd_neofetch(int argc, char **argv);
 void cmd_reboot(int argc, char **argv);
@@ -85,6 +89,7 @@ const command kCommands[] = {
     { "ps",       cmd_ps,       "show ring 3 process state" },
     { "bench",    cmd_bench,    "memory and TSC micro-benchmarks" },
     { "sleep",    cmd_sleep,    "sleep for the given milliseconds" },
+    { "desktop",  cmd_desktop,  "start the graphical Desktop-Shell (ESC exits)" },
     { "color",    cmd_color,    "set console colours (0-15)" },
     { "neofetch", cmd_neofetch, "show a system summary" },
     { "reboot",   cmd_reboot,   "restart the machine through ACPI" },
@@ -569,6 +574,15 @@ void cmd_sleep(int argc, char **argv)
     timer_sleep_ms((u32)requested);
     u64 after = timer_ticks();
     kprintf("Slept %d ms (%llu ticks elapsed)\n", requested, after - before);
+}
+
+void cmd_desktop(int argc, char **argv)
+{
+    if (!console_has_framebuffer()) {
+        print_error("desktop: no framebuffer (boot with GOP graphics)");
+        return;
+    }
+    desktop_run(argc, argv);
 }
 
 void cmd_color(int argc, char **argv)

@@ -18,9 +18,7 @@
 #include <ttf.h>
 #include <types.h>
 #include <vfs.h>
-
-#define ZHAOXU_VERSION "0.4.0"
-#define ZHAOXU_CODENAME "Yuanshuo"
+#include <version.h>
 
 static struct boot_info g_boot;
 

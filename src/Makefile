@@ -61,7 +61,8 @@ ADA_SRCS := drivers/serial.adb \
             drivers/mouse.adb \
             drivers/gop.adb
 CXX_SRCS := kernel/lib/cxx.cpp \
-            apps/shell.cpp
+            apps/shell.cpp \
+            apps/desktop.cpp
 
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(C_SRCS)) \
         $(patsubst %.S,$(BUILD)/%.o,$(ASM_SRCS)) \

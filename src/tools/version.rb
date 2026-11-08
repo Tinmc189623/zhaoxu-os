@@ -33,18 +33,13 @@ def patch(path, pairs)
   puts "updated #{path.sub(ROOT + '/', '')}"
 end
 
-patch(File.join(src, "kernel", "main.c"), [
-  [/#define ZHAOXU_VERSION "[^"]*"/,
-   "#define ZHAOXU_VERSION \"#{VERSION}\""],
-  [/#define ZHAOXU_CODENAME "[^"]*"/,
+patch(File.join(src, "kernel", "include", "version.h"), [
+  [/#define ZHAOXU_VERSION\s+"[^"]*"/,
+   "#define ZHAOXU_VERSION  \"#{VERSION}\""],
+  [/#define ZHAOXU_CODENAME\s+"[^"]*"/,
    "#define ZHAOXU_CODENAME \"#{CODENAME}\""],
-])
-
-patch(File.join(src, "apps", "shell.cpp"), [
-  [/constexpr const char \*kVersion = "[^"]*";/,
-   "constexpr const char *kVersion = \"#{VERSION}\";"],
-  [/constexpr const char \*kCodename = "[^"]*";/,
-   "constexpr const char *kCodename = \"#{CODENAME}\";"],
+  [/#define ZHAOXU_KERNEL\s+"[^"]*"/,
+   "#define ZHAOXU_KERNEL   \"#{KERNEL}\""],
 ])
 
 patch(File.join(src, "initramfs", "etc", "motd"), [

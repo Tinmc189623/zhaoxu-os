@@ -37,10 +37,10 @@
 没有自动化测试；改动后至少做一次 QEMU 冒烟：
 
 1. `make clean && make -j4` 干净重建，`nm -u out/kernel.elf` 应无未定义符号。
-2. `make run` 后确认自动运行 ring 3 `/bin/init`，再在 Shell 执行 `ls /mnt`、`cat /mnt/HELLO.TXT`、`run /mnt/HELLO.ZXE`（退出码 7）、`run /mnt/HELLO.ELF`（ELF 兼容路径，退出码 7）、`fonttest 0x4e2d`（应打出 `中` 的 ASCII 密度图）、`shutdown`。
+2. `make run` 后确认自动运行 ring 3 `/bin/init`，再在 Shell 执行 `ls /mnt`、`cat /mnt/HELLO.TXT`、`run /mnt/HELLO.ZXE`（退出码 7）、`run /mnt/HELLO.ELF`（ELF 兼容路径，退出码 7）、`fonttest 0x4e2d`（应打出 `中` 的 ASCII 密度图）、`desktop 2`（图形桌面 2 秒后自动退出并回到 Shell）、`shutdown`。
 3. 用户态异常只应终止进程并回到 Shell（退出码 `-向量号`，如 `#PF` 为 `-14`）；内核异常才 panic。
 4. ISO 改动：`make iso` 生成 `out/zhaoxu-os.iso`，再用 `make run-iso` 从 ISO 启动并重复上面的 `/mnt` 测试；无数据盘时应打印 `[ttf ] no CJK font`，`run /mnt/...` 与中文回退为 `?`，不崩溃。
-5. 帧缓冲中文/字形效果无法无头验证：需要 `make run QEMU_DISPLAY="-display gtk"` 人工查看。无头回归可用 `ruby src/tools/smoke.rb <marker> [commands]`（Windows Ruby 驱动 WSL QEMU，按提示符逐条送命令）。
+5. 帧缓冲中文/字形与桌面效果：`make run QEMU_DISPLAY="-display gtk"` 人工查看，或 `ruby src/tools/screenshot.rb`（无头进入桌面并经 HMP `screendump` 抓 `out/desk.png`）。无头回归用 `ruby src/tools/smoke.rb <marker> [commands]`（Windows Ruby 驱动 WSL QEMU，按提示符逐条送命令）。
 
 ## 架构与不变量
 
@@ -60,7 +60,7 @@
 
 ## 版本与发布
 
-- 版本号唯一来源是仓库根的 `version.php`。改版本只改这个文件，然后在 `src/` 运行 `make version`（Ruby 脚本 `tools/version.rb` 同步 `README.md`、`src/apps/shell.cpp`、`src/kernel/main.c`、`src/initramfs/etc/motd`、`src/initramfs/etc/version`）；不要手工单独改这些派生文件。
+- 版本号唯一来源是仓库根的 `version.php`。改版本只改这个文件，然后在 `src/` 运行 `make version`（Ruby 脚本 `tools/version.rb` 同步 `src/kernel/include/version.h`、`src/initramfs/etc/motd`、`src/initramfs/etc/version`、`README.md`）；C/C++ 代码统一 include `<version.h>` 使用 `ZHAOXU_VERSION`/`ZHAOXU_CODENAME`，不要手工单独改派生文件。
 - 三个远端分支不同：GitHub `main`、Gitee `master`、GitCode `main`。
 - WSL 内没有 Git 凭据，push 会报 `could not read Username`。从 Windows Git 推送：
   ```powershell
