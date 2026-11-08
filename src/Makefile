@@ -38,6 +38,11 @@ C_SRCS := kernel/main.c \
           kernel/drivers/rtc.c \
           kernel/drivers/pci.c \
           kernel/drivers/acpi.c \
+          kernel/drivers/ahci.c \
+          kernel/fs/initramfs.c \
+          kernel/fs/fat32.c \
+          kernel/fs/vfs.c \
+          kernel/proc/process.c \
           kernel/lib/string.c \
           kernel/lib/printf.c \
           kernel/lib/console.c \
@@ -47,7 +52,8 @@ C_SRCS := kernel/main.c \
           kernel/mem/heap.c
 ASM_SRCS := kernel/arch/x86_64/entry.S \
             kernel/arch/x86_64/gdt_flush.S \
-            kernel/arch/x86_64/isr.S
+            kernel/arch/x86_64/isr.S \
+            kernel/arch/x86_64/user.S
 ADA_SRCS := drivers/serial.adb \
             drivers/pit.adb \
             drivers/ps2.adb \
@@ -58,7 +64,8 @@ CXX_SRCS := kernel/lib/cxx.cpp \
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(C_SRCS)) \
         $(patsubst %.S,$(BUILD)/%.o,$(ASM_SRCS)) \
         $(patsubst %.cpp,$(BUILD)/%.o,$(CXX_SRCS)) \
-        $(patsubst %.adb,$(BUILD)/%.o,$(ADA_SRCS))
+        $(patsubst %.adb,$(BUILD)/%.o,$(ADA_SRCS)) \
+        $(BUILD)/initramfs.o
 
 HEADLESS ?= 0
 
@@ -71,6 +78,59 @@ $(BUILD)/config.inc: FORCE
 	@printf 'HEADLESS equ $(HEADLESS)\n' > $@
 
 FORCE:
+
+# ---- Ring 3 programs -------------------------------------------------
+USER_CFLAGS := -m64 -std=gnu11 -O2 -ffreestanding -fno-pie -fno-pic \
+               -fno-stack-protector -fno-asynchronous-unwind-tables \
+               -mno-red-zone -mcmodel=large -mno-sse -mno-sse2 \
+               -mno-mmx -mno-avx -Wall -Wextra -Wno-unused-parameter
+USER_LDFLAGS := -nostdlib -static -no-pie -Wl,--build-id=none \
+                -Wl,-T,user/user.ld -Wl,-z,max-page-size=0x1000
+
+$(OUT)/%.elf: user/%.c user/userlib.c user/userlib.h user/user.ld
+	@mkdir -p $(OUT)
+	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -o $@ user/$*.c user/userlib.c
+
+# ---- initramfs -------------------------------------------------------
+RAMFS := $(BUILD)/initramfs
+RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/etc/motd $(RAMFS)/etc/version \
+               $(RAMFS)/mnt
+
+$(RAMFS)/bin/init: $(OUT)/init.elf
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/etc/%: initramfs/etc/%
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/mnt:
+	@mkdir -p $@
+
+$(OUT)/initramfs.tar: $(RAMFS_FILES)
+	@mkdir -p $(OUT)
+	tar --format=ustar --owner=0 --group=0 --numeric-owner \
+	    -cf $@ -C $(RAMFS) .
+
+$(BUILD)/initramfs.o: $(OUT)/initramfs.tar
+	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 \
+	  --rename-section .data=.initramfs,alloc,load,readonly,data,contents \
+	  --redefine-sym _binary_out_initramfs_tar_start=initramfs_start \
+	  --redefine-sym _binary_out_initramfs_tar_end=initramfs_end \
+	  --redefine-sym _binary_out_initramfs_tar_size=initramfs_size \
+	  $< $@
+
+# ---- FAT32 data volume ----------------------------------------------
+DATA_IMG := $(OUT)/data.img
+
+$(DATA_IMG): $(OUT)/hello.elf initramfs/data/hello.txt initramfs/data/info.txt
+	@mkdir -p $(OUT)
+	dd if=/dev/zero of=$@ bs=1M count=64 status=none
+	mkfs.vfat -F 32 -n ZHAOXUDATA $@ >/dev/null
+	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/DOCS
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/hello.txt ::/HELLO.TXT
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/hello.elf ::/HELLO.ELF
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/info.txt ::/DOCS/INFO.TXT
 
 $(BUILD)/kernel_blob.inc: $(OUT)/kernel.bin
 	@printf "kernel_blob:\nfile 'out/kernel.bin'\nkernel_blob_end:\n" > $@
@@ -107,7 +167,9 @@ $(ESP)/BOOTX64.EFI: $(OUT)/BOOTX64.EFI
 	cp $< $@
 
 clean:
-	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin $(OUT)/BOOTX64.EFI $(ESP)/BOOTX64.EFI
+	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin $(OUT)/BOOTX64.EFI \
+	       $(OUT)/init.elf $(OUT)/hello.elf $(OUT)/initramfs.tar \
+	       $(OUT)/data.img $(ESP)/BOOTX64.EFI
 
 OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
@@ -116,10 +178,12 @@ QEMU_MEM ?= 512M
 QEMU_SMP ?= 1
 QEMU_DISPLAY ?= -display none
 
-run: all
+run: all $(DATA_IMG)
 	cp $(OVMF_VARS) $(OUT)/OVMF_VARS.fd
 	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
 	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
 	  -drive if=pflash,format=raw,unit=1,file=$(OUT)/OVMF_VARS.fd \
 	  -drive format=raw,file=fat:rw:esp \
+	  -drive if=none,id=zdata,format=raw,file=$(DATA_IMG) \
+	  -device ide-hd,drive=zdata,bus=ide.1 \
 	  -net none -serial stdio -monitor none $(QEMU_DISPLAY) -no-reboot

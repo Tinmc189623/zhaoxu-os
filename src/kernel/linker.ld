@@ -20,6 +20,11 @@ SECTIONS
         *(.rodata .rodata.*)
     }
 
+    .initramfs : ALIGN(4096)
+    {
+        *(.initramfs)
+    }
+
     .data : ALIGN(4096)
     {
         *(.data .data.*)

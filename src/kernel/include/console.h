@@ -27,6 +27,7 @@ void console_init(const struct boot_info *bi);
 void console_clear(void);
 void console_putc(char c);
 void console_write(const char *s);
+void console_write_n(const char *s, usize length);
 void console_set_color(enum console_color fg, enum console_color bg);
 void console_reset_color(void);
 u32 console_columns(void);

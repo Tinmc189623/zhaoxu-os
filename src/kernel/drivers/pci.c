@@ -39,6 +39,17 @@ u32 pci_config_read32(u8 bus, u8 slot, u8 function, u8 offset)
     return inl(0xCFC);
 }
 
+void pci_config_write32(u8 bus, u8 slot, u8 function, u8 offset, u32 value)
+{
+    u32 address = 0x80000000u |
+                  ((u32)bus << 16) |
+                  ((u32)slot << 11) |
+                  ((u32)function << 8) |
+                  (offset & 0xFC);
+    outl(0xCF8, address);
+    outl(0xCFC, value);
+}
+
 u32 pci_enumerate(void)
 {
     u32 found = 0;

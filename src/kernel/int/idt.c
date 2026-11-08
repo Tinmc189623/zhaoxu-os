@@ -3,6 +3,7 @@
 #include <io.h>
 #include <kprintf.h>
 #include <keyboard.h>
+#include <process.h>
 #include <string.h>
 #include <timer.h>
 #include <types.h>
@@ -39,6 +40,7 @@ extern void isr38(void); extern void isr39(void); extern void isr40(void);
 extern void isr41(void); extern void isr42(void); extern void isr43(void);
 extern void isr44(void); extern void isr45(void); extern void isr46(void);
 extern void isr47(void);
+extern void isr128(void);
 
 static struct idt_entry idt[256] __attribute__((aligned(16)));
 static struct idt_ptr idt_pointer;
@@ -87,6 +89,9 @@ void idt_init(void)
     /* Dedicated IST stacks for double fault and NMI. */
     set_gate(8, isr8, 1, 0);
     set_gate(2, isr2, 2, 0);
+
+    /* System call gate, callable from ring 3. */
+    set_gate(0x80, isr128, 0, 3);
 
     idt_pointer.limit = sizeof(idt) - 1;
     idt_pointer.base = (u64)idt;
@@ -142,12 +147,19 @@ static void irq_dispatch(struct interrupt_frame *f)
 
 void interrupt_dispatch(struct interrupt_frame *f)
 {
-    if (f->vector < 32)
+    if (f->vector == 0x80) {
+        syscall_dispatch(f);
+        return;
+    }
+    if (f->vector < 32) {
+        if ((f->cs & 3) == 3 && process_active())
+            process_handle_exception(f);
         exception_panic(f);
-    else if (f->vector < 48)
+    } else if (f->vector < 48) {
         irq_dispatch(f);
-    else
+    } else {
         exception_panic(f);
+    }
 }
 
 void interrupts_enable(void)

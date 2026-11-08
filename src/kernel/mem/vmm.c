@@ -15,18 +15,21 @@ static inline u64 *table_from_entry(u64 entry)
     return (u64 *)(entry & PTE_ADDRESS_MASK);
 }
 
-static u64 *ensure_table(u64 *table, u32 index)
+static u64 *ensure_table(u64 *table, u32 index, int user)
 {
     u64 entry = table[index];
     if (!(entry & VMM_PRESENT)) {
         u64 physical = pmm_alloc_page();
         if (!physical)
             return NULL;
-        table[index] = physical | VMM_PRESENT | VMM_WRITABLE;
+        table[index] = physical | VMM_PRESENT | VMM_WRITABLE |
+                       (user ? VMM_USER : 0);
         return (u64 *)(uintptr_t)physical;
     }
     if (entry & (1ULL << 7))
         return NULL;
+    if (user && !(entry & VMM_USER))
+        table[index] |= VMM_USER;
     return table_from_entry(entry);
 }
 
@@ -36,14 +39,15 @@ int vmm_map_page(u64 virtual_address, u64 physical_address, u64 flags)
     u32 pdpt_index = (u32)((virtual_address >> 30) & 0x1FF);
     u32 pd_index = (u32)((virtual_address >> 21) & 0x1FF);
     u32 pt_index = (u32)((virtual_address >> 12) & 0x1FF);
+    int user = (flags & VMM_USER) != 0;
 
-    u64 *pdpt = ensure_table(pml4, pml4_index);
+    u64 *pdpt = ensure_table(pml4, pml4_index, user);
     if (!pdpt)
         return -1;
-    u64 *pd = ensure_table(pdpt, pdpt_index);
+    u64 *pd = ensure_table(pdpt, pdpt_index, user);
     if (!pd)
         return -1;
-    u64 *pt = ensure_table(pd, pd_index);
+    u64 *pt = ensure_table(pd, pd_index, user);
     if (!pt)
         return -1;
 
@@ -78,6 +82,62 @@ u64 vmm_get_physical(u64 virtual_address)
     if (!(entry & VMM_PRESENT))
         return 0;
     return (entry & PTE_ADDRESS_MASK) + (virtual_address & 0xFFF);
+}
+
+u64 vmm_unmap_page(u64 virtual_address)
+{
+    u32 pml4_index = (u32)((virtual_address >> 39) & 0x1FF);
+    u32 pdpt_index = (u32)((virtual_address >> 30) & 0x1FF);
+    u32 pd_index = (u32)((virtual_address >> 21) & 0x1FF);
+    u32 pt_index = (u32)((virtual_address >> 12) & 0x1FF);
+
+    u64 entry = pml4[pml4_index];
+    if (!(entry & VMM_PRESENT))
+        return 0;
+    u64 *pdpt = table_from_entry(entry);
+    entry = pdpt[pdpt_index];
+    if (!(entry & VMM_PRESENT) || (entry & (1ULL << 7)))
+        return 0;
+    u64 *pd = table_from_entry(entry);
+    entry = pd[pd_index];
+    if (!(entry & VMM_PRESENT) || (entry & (1ULL << 7)))
+        return 0;
+    u64 *pt = table_from_entry(entry);
+    entry = pt[pt_index];
+    if (!(entry & VMM_PRESENT))
+        return 0;
+
+    u64 physical = entry & PTE_ADDRESS_MASK;
+    pt[pt_index] = 0;
+    __asm__ volatile("invlpg (%0)" :: "r"(virtual_address) : "memory");
+    return physical;
+}
+
+int vmm_page_is_user(u64 virtual_address)
+{
+    u32 pml4_index = (u32)((virtual_address >> 39) & 0x1FF);
+    u32 pdpt_index = (u32)((virtual_address >> 30) & 0x1FF);
+    u32 pd_index = (u32)((virtual_address >> 21) & 0x1FF);
+    u32 pt_index = (u32)((virtual_address >> 12) & 0x1FF);
+
+    u64 entry = pml4[pml4_index];
+    if ((entry & (VMM_PRESENT | VMM_USER)) != (VMM_PRESENT | VMM_USER))
+        return 0;
+    u64 *pdpt = table_from_entry(entry);
+    entry = pdpt[pdpt_index];
+    if ((entry & (VMM_PRESENT | VMM_USER)) != (VMM_PRESENT | VMM_USER))
+        return 0;
+    if (entry & (1ULL << 7))
+        return 1;
+    u64 *pd = table_from_entry(entry);
+    entry = pd[pd_index];
+    if ((entry & (VMM_PRESENT | VMM_USER)) != (VMM_PRESENT | VMM_USER))
+        return 0;
+    if (entry & (1ULL << 7))
+        return 1;
+    u64 *pt = table_from_entry(entry);
+    entry = pt[pt_index];
+    return (entry & (VMM_PRESENT | VMM_USER)) == (VMM_PRESENT | VMM_USER);
 }
 
 u64 vmm_alloc_pages(u32 count)

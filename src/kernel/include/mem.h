@@ -24,6 +24,8 @@ void pmm_reserve_range(u64 physical, u64 size);
 
 void vmm_init(const struct boot_info *bi);
 int vmm_map_page(u64 virtual_address, u64 physical_address, u64 flags);
+u64 vmm_unmap_page(u64 virtual_address);
+int vmm_page_is_user(u64 virtual_address);
 u64 vmm_alloc_pages(u32 count);
 u64 vmm_get_physical(u64 virtual_address);
 u64 vmm_heap_cursor(void);

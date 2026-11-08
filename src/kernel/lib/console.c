@@ -221,6 +221,12 @@ void console_write(const char *s)
         console_putc(*s++);
 }
 
+void console_write_n(const char *s, usize length)
+{
+    for (usize i = 0; i < length; i++)
+        console_putc(s[i]);
+}
+
 void console_backspace(void)
 {
     console_putc('\b');

@@ -14,16 +14,18 @@ extern "C" {
 #include <kprintf.h>
 #include <mem.h>
 #include <pci.h>
+#include <process.h>
 #include <rtc.h>
 #include <shell.h>
 #include <string.h>
 #include <timer.h>
 #include <types.h>
+#include <vfs.h>
 }
 
 namespace {
 
-constexpr const char *kVersion = "0.2.0";
+constexpr const char *kVersion = "0.3.0";
 constexpr const char *kCodename = "Yuanshuo";
 constexpr usize kMaxLine = 256;
 constexpr int kMaxArgs = 8;
@@ -48,6 +50,10 @@ void cmd_cpu(int argc, char **argv);
 void cmd_date(int argc, char **argv);
 void cmd_pci(int argc, char **argv);
 void cmd_acpi(int argc, char **argv);
+void cmd_ls(int argc, char **argv);
+void cmd_cat(int argc, char **argv);
+void cmd_run(int argc, char **argv);
+void cmd_mounts(int argc, char **argv);
 void cmd_bench(int argc, char **argv);
 void cmd_sleep(int argc, char **argv);
 void cmd_color(int argc, char **argv);
@@ -68,6 +74,10 @@ const command kCommands[] = {
     { "date",     cmd_date,     "read the CMOS real-time clock" },
     { "pci",      cmd_pci,      "enumerate PCI devices" },
     { "acpi",     cmd_acpi,     "ACPI power management information" },
+    { "ls",       cmd_ls,       "list a directory (default /)" },
+    { "cat",      cmd_cat,      "print a file from ramfs or FAT32" },
+    { "run",      cmd_run,      "execute an ELF64 program in ring 3" },
+    { "mounts",   cmd_mounts,   "show mounted filesystems" },
     { "bench",    cmd_bench,    "memory and TSC micro-benchmarks" },
     { "sleep",    cmd_sleep,    "sleep for the given milliseconds" },
     { "color",    cmd_color,    "set console colours (0-15)" },
@@ -301,6 +311,107 @@ void cmd_acpi(int, char **)
                 acpi->reset_address, acpi->reset_value);
     else
         kprintf("  reset         : legacy fallback\n");
+}
+
+void list_entry(const char *name, u64 size, int is_dir, void *)
+{
+    if (is_dir) {
+        console_set_color(COLOR_LIGHT_BLUE, COLOR_BLACK);
+        kprintf("  %-32s <DIR>\n", name);
+    } else {
+        console_set_color(COLOR_LIGHT_GRAY, COLOR_BLACK);
+        kprintf("  %-32s %llu B\n", name, size);
+    }
+    console_reset_color();
+}
+
+void cmd_ls(int argc, char **argv)
+{
+    const char *path = argc > 1 ? argv[1] : "/";
+
+    int is_dir = 0;
+    u64 size = 0;
+    if (vfs_stat(path, &is_dir, &size) != 0) {
+        console_set_color(COLOR_LIGHT_RED, COLOR_BLACK);
+        kprintf("ls: %s: no such file or directory\n", path);
+        console_reset_color();
+        return;
+    }
+
+    if (!is_dir) {
+        console_set_color(COLOR_LIGHT_GRAY, COLOR_BLACK);
+        kprintf("  %-32s %llu B\n", path, size);
+        console_reset_color();
+        return;
+    }
+
+    console_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
+    kprintf("%s:\n", path);
+    console_reset_color();
+
+    if (vfs_list(path, list_entry, nullptr) != 0) {
+        console_set_color(COLOR_LIGHT_RED, COLOR_BLACK);
+        kprintf("ls: cannot list %s\n", path);
+        console_reset_color();
+    }
+}
+
+void cmd_cat(int argc, char **argv)
+{
+    if (argc < 2) {
+        print_usage("cat <path>");
+        return;
+    }
+
+    u8 *data = nullptr;
+    u64 size = 0;
+    if (vfs_read_all(argv[1], &data, &size) != 0) {
+        console_set_color(COLOR_LIGHT_RED, COLOR_BLACK);
+        kprintf("cat: %s: cannot read file\n", argv[1]);
+        console_reset_color();
+        return;
+    }
+
+    console_write_n((const char *)data, (usize)size);
+    if (size == 0 || data[size - 1] != '\n')
+        console_putc('\n');
+    kfree(data);
+}
+
+void cmd_run(int argc, char **argv)
+{
+    if (argc < 2) {
+        print_usage("run <path> [args...]");
+        return;
+    }
+
+    if (!vfs_fat_mounted() && strncmp(argv[1], "/mnt", 4) == 0) {
+        print_error("run: FAT32 volume is not mounted");
+        return;
+    }
+
+    console_set_color(COLOR_YELLOW, COLOR_BLACK);
+    kprintf("Executing %s in ring 3...\n", argv[1]);
+    console_reset_color();
+
+    int status = process_run(argv[1], argc - 1, &argv[1]);
+
+    console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
+    kprintf("[shell] %s exited with status %d\n", argv[1], status);
+    console_reset_color();
+}
+
+void cmd_mounts(int, char **)
+{
+    console_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
+    kprintf("Mounted filesystems\n");
+    console_reset_color();
+    kprintf("  /    ramfs (initramfs ustar, read-only)\n");
+    if (vfs_fat_mounted())
+        kprintf("  /mnt FAT32 \"%s\" (AHCI, read-only)\n",
+                vfs_fat_label());
+    else
+        kprintf("  /mnt not mounted\n");
 }
 
 void cmd_bench(int, char **)

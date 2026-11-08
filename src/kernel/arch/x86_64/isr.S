@@ -56,6 +56,8 @@ ISR_NOERR 31
     ISR_NOERR \n
 .endr
 
+ISR_NOERR 128
+
 isr_common:
     cld
     pushq   %rax

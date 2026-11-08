@@ -1,0 +1,5 @@
+Zhaoxu OS 0.3.0 "Yuanshuo"
+Initramfs: ustar archive embedded in the kernel image
+Root filesystem: ramfs
+Data volume: FAT32 at /mnt (AHCI, read-only)
+Syscall ABI: int 0x80, ring 3

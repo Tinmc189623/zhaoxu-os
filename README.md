@@ -1,8 +1,19 @@
 # Zhaoxu OS
 
-Zhaoxu OS 是一个面向 x86_64 + UEFI 的多语言操作系统，内核代号 **Yuanshuo**，当前版本 **0.2.0**。引导层用 FASM 直接生成 PE64 EFI 映像，建立恒等映射与 higher-half 页表；退出 UEFI Boot Services 后进入 C 内核，外设驱动用 Ada，交互 Shell 用 C++20 编写，全部链接进同一个内核镜像。
+Zhaoxu OS 是一个面向 x86_64 + UEFI 的多语言操作系统，内核代号 **Yuanshuo**，当前版本 **0.3.0**。引导层用 FASM 直接生成 PE64 EFI 映像，建立恒等映射与 higher-half 页表；退出 UEFI Boot Services 后进入 C 内核，外设驱动用 Ada，交互 Shell 用 C++20 编写，全部链接进同一个内核镜像。0.3.0 引入 ring 3 用户态、`int 0x80` 系统调用、内嵌 initramfs，以及 AHCI + FAT32 只读数据盘。
 
 ![Zhaoxu OS shell](docs/screenshot.png)
+
+## 0.3.0 新增
+
+- ring 3 用户进程：ELF64 加载、用户页映射、16 KiB 进程内核栈与 TSS `rsp0` 切换
+- 系统调用 ABI：`int 0x80`，`rax` 为调用号，`rdi/rsi/rdx` 传参；支持 exit/write/getpid/open/read/close/uptime
+- initramfs：ustar 归档嵌入内核镜像，解析为只读 ramfs 根文件系统
+- 存储：PCI 扫描 → AHCI（SATA）驱动，IDENTIFY / READ DMA EXT，4 KiB bounce buffer
+- FAT32：只读挂载到 `/mnt`，支持 LFN、子目录与簇链读取；按卷标 `ZHAOXUDATA` 选择数据盘
+- VFS：统一 `/`（ramfs）与 `/mnt`（FAT32）路径，提供只读文件描述符
+- 启动时自动以 ring 3 运行 `/bin/init`；Shell 新增 `ls`、`cat`、`run`、`mounts`
+- 用户态缺页/异常只终止当前进程并回到 Shell，内核异常仍然 panic
 
 ## 已实现
 
@@ -17,10 +28,18 @@ Zhaoxu OS 是一个面向 x86_64 + UEFI 的多语言操作系统，内核代号 
 
 - GDT/TSS（双故障与 NMI 使用独立 IST 栈）、IDT、8259 PIC 重映射
 - PIT 100 Hz 节拍、PS/2 键盘 IRQ、COM1 串口轮询输入
-- 异常处理：向量、错误码、CR2、RIP/RSP/寄存器现场，随后停机
+- 异常处理：内核异常打印向量、错误码、CR2、RIP/RSP/寄存器现场后停机；CPL3 异常终止进程并返回 Shell
 - 物理页位图分配器（4 GiB 范围）、4 KiB 粒度虚拟映射、4 MiB 内核堆
 - `kprintf` / `ksnprintf`、字符串库、图形 + 串口双路控制台
 - 8x16 字体渲染、滚动、16 色 VGA 调色板与 ANSI 串口颜色映射
+
+**用户态与文件系统（C）**
+
+- ELF64 用户程序加载到 4 GiB 基址，用户栈位于 8 GiB，进程共享内核页表但页级 `U/S` 隔离
+- `int 0x80` 系统调用入口（IDT DPL=3），用户指针逐页校验
+- 内嵌 ustar initramfs → 只读 ramfs；`/bin/init`、`/etc/motd` 等随内核分发
+- AHCI 块设备（PCI class 01/06/01），FAT32 只读驱动挂载到 `/mnt`
+- VFS 路径分发与只读 fd 表，用户程序通过 open/read/close 访问两个文件系统
 
 **驱动（Ada）**
 
@@ -50,6 +69,10 @@ Zhaoxu OS 是一个面向 x86_64 + UEFI 的多语言操作系统，内核代号 
 | `date` | CMOS 实时时钟 |
 | `pci` | PCI 设备枚举 |
 | `acpi` | ACPI 电源管理信息 |
+| `ls [path]` | 列出 ramfs / FAT32 目录 |
+| `cat <path>` | 输出文件内容 |
+| `run <path> [args...]` | 以 ring 3 运行 ELF64 程序并打印退出码 |
+| `mounts` | 显示已挂载文件系统 |
 | `bench` | memset 带宽与 TSC ALU 基准 |
 | `sleep <ms>` | 休眠指定毫秒 |
 | `color <fg> <bg>` | 设置控制台颜色（0-15） |
@@ -106,17 +129,21 @@ Zhaoxu OS/
     ├── run.ps1              QEMU/OVMF 运行入口
     ├── boot/                FASM：UEFI 引导层与 UEFI 常量
     ├── kernel/
-    │   ├── arch/x86_64/     入口、GDT/TSS、中断桩、PIC、CPUID、端口 I/O
-    │   ├── int/             IDT 与异常/IRQ 分发
-    │   ├── drivers/         PIT、键盘、RTC、PCI、ACPI
+    │   ├── arch/x86_64/     入口、GDT/TSS、中断桩、PIC、CPUID、端口 I/O、ring 3 切换
+    │   ├── int/             IDT 与异常/IRQ/系统调用分发
+    │   ├── drivers/         PIT、键盘、RTC、PCI、ACPI、AHCI
+    │   ├── fs/              initramfs（ustar/ramfs）、FAT32、VFS
+    │   ├── proc/            ELF64 加载、用户页管理、系统调用
     │   ├── mem/             PMM、VMM、堆
     │   ├── lib/             字符串、printf、控制台、C++ 运行时
     │   ├── font/            font8x8 字体数据
     │   └── include/         内核公共头文件
     ├── drivers/             Ada：串口、PIT、PS/2、GOP
     ├── apps/                C++：Shell
+    ├── user/                ring 3 程序（init、hello）与用户库/链接脚本
+    ├── initramfs/           ramfs 初始内容（motd、version、测试文本）
     ├── esp/                 构建出的 UEFI 引导目录
-    └── out/                 构建产物与测试日志
+    └── out/                 构建产物（含 FAT32 数据盘 data.img）
 ```
 
 ## 引导流程
@@ -125,8 +152,10 @@ Zhaoxu OS/
 2. 引导层取得 GOP 帧缓冲、ACPI RSDP 与 UEFI 内存映射。
 3. 分配并复制内核 flat binary，建立恒等映射与 higher-half 页表。
 4. 调用 `ExitBootServices`，切换 CR3，跳转到 higher-half 内核入口。
-5. 内核建立 GDT/IDT，初始化 PMM/VMM/堆、CPUID、ACPI、RTC 与驱动。
-6. 启用中断，打印启动日志，进入 C++ Shell 提示符。
+5. 内核建立 GDT/IDT，初始化 PMM/VMM/堆、CPUID、ACPI、RTC、AHCI 与 VFS（initramfs + FAT32）。
+6. 启用中断，打印启动日志；自动以 ring 3 运行 initramfs 中的 `/bin/init`。
+7. `/bin/init` 通过系统调用读取 `/etc/motd` 与 `/mnt` 下的 FAT32 文件，退出后回到内核。
+8. 内核进入 C++ Shell 提示符；`run` 命令可再次加载并运行 ring 3 ELF64 程序。
 
 内存布局要点：
 
@@ -136,8 +165,10 @@ Zhaoxu OS/
 
 ## 当前限制
 
-- 单核、无调度器、无用户态（Shell 运行在内核态）
-- 无文件系统、网络协议栈与 USB
+- 单核、无调度器；同一时刻只运行一个 ring 3 进程，无 fork/exec 语义
+- 文件系统只读：FAT32 不支持写入/创建，块设备驱动仅覆盖 AHCI（无 NVMe/USB）
+- 用户进程共享内核页表，依靠页级 `U/S` 位隔离，尚无独立地址空间
+- 无网络协议栈
 - 输入仅 PS/2 键盘与 COM1 串口，显示输出依赖 UEFI GOP 帧缓冲
 - ACPI `_S5` 通过 DSDT AML 模式匹配解析，覆盖常见固件；无法匹配时回退探测
 

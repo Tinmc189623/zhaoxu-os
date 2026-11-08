@@ -1,0 +1,7 @@
+Welcome to Zhaoxu OS 0.3.0 "Yuanshuo".
+
+This message is served from the initramfs (ustar archive) by the
+in-kernel ramfs.  The kernel, drivers and shell are written in FASM,
+C, Ada and C++; this process runs in ring 3.
+
+Try: ls /, cat /mnt/HELLO.TXT, run /mnt/HELLO.ELF, mounts

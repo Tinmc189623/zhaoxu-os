@@ -1,4 +1,5 @@
 #include <acpi.h>
+#include <ahci.h>
 #include <boot.h>
 #include <console.h>
 #include <cpu.h>
@@ -9,13 +10,15 @@
 #include <keyboard.h>
 #include <kprintf.h>
 #include <mem.h>
+#include <process.h>
 #include <rtc.h>
 #include <shell.h>
 #include <string.h>
 #include <timer.h>
 #include <types.h>
+#include <vfs.h>
 
-#define ZHAOXU_VERSION "0.2.0"
+#define ZHAOXU_VERSION "0.3.0"
 #define ZHAOXU_CODENAME "Yuanshuo"
 
 static struct boot_info g_boot;
@@ -116,9 +119,23 @@ void kernel_main(struct boot_info *boot)
     timer_sleep_ms(100);
     kprintf("[time] ticks after 100 ms: %llu\n", timer_ticks());
 
+    kprintf("\n[dev ] probing storage and filesystems\n");
+    ahci_init();
+    vfs_init();
+    if (vfs_mount_data() == 0)
+        kprintf("[vfs ] /mnt mounted (FAT32 \"%s\")\n", vfs_fat_label());
+    else
+        kprintf("[vfs ] /mnt unavailable, using ramfs only\n");
+    process_init();
+
     console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
     kprintf("\nBoot complete. Entering Yuanshuo shell.\n\n");
     console_reset_color();
+
+    char *init_argv[] = { (char *)"/bin/init" };
+    kprintf("[init] starting /bin/init in ring 3\n");
+    int init_status = process_run("/bin/init", 1, init_argv);
+    kprintf("[init] /bin/init exited with status %d\n\n", init_status);
 
     shell_run();
 }

@@ -1,0 +1,7 @@
+Hello from the FAT32 data volume!
+
+This text was read through the kernel's AHCI (SATA) block driver and
+the read-only FAT32 filesystem, then delivered to a ring 3 process
+through the open/read syscalls.
+
+Volume label: ZHAOXUDATA

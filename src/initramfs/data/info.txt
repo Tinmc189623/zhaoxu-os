@@ -1,0 +1,11 @@
+Zhaoxu OS data volume
+=====================
+
+Volume label : ZHAOXUDATA
+Filesystem   : FAT32 (read-only driver)
+Block device : AHCI/SATA, second IDE bus (port 1)
+Kernel path  : PCI -> AHCI -> FAT32 -> VFS -> syscall -> ring 3
+
+HELLO.ELF on this volume is a real ELF64 executable.  Run it with:
+
+    run /mnt/HELLO.ELF
