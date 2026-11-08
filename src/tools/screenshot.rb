@@ -4,6 +4,11 @@
 #
 #   usage: ruby tools/screenshot.rb [seconds-before-shot] [out.png]
 #   env:   SMOKE_DISTRO SMOKE_ROOT SMOKE_BOOT SMOKE_TIMEOUT
+#          SHOT_CMD: shell line that starts the GUI (default "desktop")
+#          SHOT_HMP: newline-separated HMP commands (e.g. mouse_move /
+#                    mouse_button) executed before the screendump;
+#                    SHOT_STEP (default 0.2) and SHOT_WAIT (default 0.5)
+#                    control the pause between commands / before the shot.
 #
 # Boots with -display none, drives the serial shell through wsl.exe like
 # smoke.rb, then asks the QEMU HMP monitor (TCP) for a screendump and turns
@@ -141,6 +146,11 @@ Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout,
       response << sock.read_nonblock(4096)
     end
     # HMP splits arguments on whitespace; QEMU's cwd is already the src dir.
+    (ENV["SHOT_HMP"] || "").split("\n").reject(&:empty?).each do |line|
+      sock.write(line.strip + "\n")
+      sleep (ENV["SHOT_STEP"] || 0.2).to_f
+    end
+    sleep (ENV["SHOT_WAIT"] || 0.5).to_f
     sock.write("screendump out/desk.ppm\n")
     sleep 1.5
     sock.write("quit\n")
