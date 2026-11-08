@@ -2,6 +2,7 @@
 #include <io.h>
 #include <kprintf.h>
 #include <mem.h>
+#include <spinlock.h>
 #include <string.h>
 #include <types.h>
 
@@ -20,6 +21,7 @@ struct heap_block {
 static struct heap_block *head;
 static u64 heap_total;
 static u64 heap_used;
+static spinlock_t heap_lock = SPINLOCK_INIT;
 
 void heap_init(void)
 {
@@ -44,10 +46,11 @@ void heap_init(void)
 
 void *kmalloc(usize size)
 {
-    if (size == 0)
+    if (size == 0 || size > HEAP_REGION_SIZE)
         return NULL;
     usize wanted = (usize)ALIGN_UP(size, HEAP_ALIGN);
 
+    u64 flags = spin_lock_irqsave(&heap_lock);
     for (struct heap_block *block = head; block; block = block->next) {
         if (!block->free || block->size < wanted)
             continue;
@@ -68,8 +71,11 @@ void *kmalloc(usize size)
 
         block->free = 0;
         heap_used += block->size;
-        return (void *)(block + 1);
+        void *result = (void *)(block + 1);
+        spin_unlock_irqrestore(&heap_lock, flags);
+        return result;
     }
+    spin_unlock_irqrestore(&heap_lock, flags);
     return NULL;
 }
 
@@ -85,9 +91,13 @@ void kfree(void *pointer)
 {
     if (!pointer)
         return;
+
+    u64 flags = spin_lock_irqsave(&heap_lock);
     struct heap_block *block = (struct heap_block *)pointer - 1;
-    if (block->magic != HEAP_MAGIC || block->free)
+    if (block->magic != HEAP_MAGIC || block->free) {
+        spin_unlock_irqrestore(&heap_lock, flags);
         return;
+    }
 
     block->free = 1;
     if (heap_used >= block->size)
@@ -107,14 +117,17 @@ void kfree(void *pointer)
         if (previous->next)
             previous->next->previous = previous;
     }
+    spin_unlock_irqrestore(&heap_lock, flags);
 }
 
 void heap_get_stats(u64 *total, u64 *used, u64 *free_bytes)
 {
+    u64 flags = spin_lock_irqsave(&heap_lock);
     if (total)
         *total = heap_total;
     if (used)
         *used = heap_used;
     if (free_bytes)
         *free_bytes = heap_total - heap_used;
+    spin_unlock_irqrestore(&heap_lock, flags);
 }

@@ -39,13 +39,19 @@ data_disk = [
   "-drive if=none,id=zdata,format=raw,file=out/data.img",
   "-device ide-hd,drive=zdata,bus=ide.1",
 ]
+# Rule 11: ISO images are named zhaoxu_{version}_installer.iso.
+iso_file = Dir[File.join(win_root, "out", "zhaoxu_*_installer.iso")]
+           .max_by { |f| File.mtime(f) }
 iso_drives = [
   "-drive if=none,id=zcd,format=raw,media=cdrom,readonly=on," \
-  "file=out/zhaoxu-os.iso",
+  "file=out/#{iso_file ? File.basename(iso_file) : "zhaoxu_0.5.0_installer.iso"}",
   "-device ide-cd,drive=zcd,bus=ide.0",
 ]
 boot = ENV["SMOKE_BOOT"] || "esp"
 fw = ENV["SMOKE_FW"] || "uefi"
+if boot.start_with?("iso") && !iso_file
+  abort "out/zhaoxu_*_installer.iso not found; run `make iso` first"
+end
 drives = case boot
          when "esp"
            [
@@ -135,7 +141,7 @@ Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout,
       break
     end
     break if eof_count >= 2 && sent >= queue.size
-    prompts = out.scan("zhaoxu>").size
+    prompts = out.scan(/zhaoxu>|edit>/).size
     if sent < queue.size && prompts > sent && Time.now - last_send > 0.8
       stdin.write(queue[sent].dup.force_encoding(Encoding::BINARY) + "\n")
       stdin.flush

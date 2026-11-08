@@ -332,6 +332,14 @@ vbe_probe:
         test    bx, bx
         jz      .next_mode
 
+        cmp     ax, 1920
+        jne     .try_1280
+        cmp     bx, 1080
+        jne     .try_1280
+        call    adopt_mode
+        jmp     .pick
+
+.try_1280:
         cmp     ax, 1280
         jne     .score
         cmp     bx, 800
@@ -427,23 +435,30 @@ collect_e820:
         ret
 
 ; ------------------------------------------------------------- RSDP search
+; Firmware may place the RSDP anywhere in the first MiB (SeaBIOS keeps it
+; in a low malloc zone), so walk 16 x 64 KiB segments instead of only the
+; EBDA and the 0xE0000..0xFFFFF window (SI wraps at 64 KiB).
 find_rsdp:
-        mov     ax, [0x040E]
-        test    ax, ax
-        jz      .high
-        mov     es, ax
+        push    bx
+        push    dx
+        xor     bx, bx
+        mov     dx, 16
+.seg_loop:
+        mov     es, bx
         xor     si, si
-        mov     cx, 0x40                ; 16-byte slots in the first 1 KiB
+        mov     cx, 0x1000
+        push    bx
         call    scan_area
+        pop     bx
         test    eax, eax
         jnz     .done
-.high:
-        mov     ax, 0xE000
-        mov     es, ax
-        xor     si, si
-        mov     cx, 0x2000              ; 0xE0000..0xFFFFF
-        call    scan_area
+        add     bx, 0x1000
+        dec     dx
+        jnz     .seg_loop
+        xor     eax, eax
 .done:
+        pop     dx
+        pop     bx
         ret
 
 ; ES:SI start, CX slots of 16 bytes.  Returns EAX = physical RSDP or 0.
@@ -452,7 +467,7 @@ scan_area:
         push    si
 .loop:
         mov     eax, [es:si]
-        cmp     eax, 0x20534452         ; 'RSD '
+        cmp     eax, 0x20445352         ; 'RSD '
         jne     .next
         mov     eax, [es:si + 4]
         cmp     eax, 0x20525450         ; 'PTR '

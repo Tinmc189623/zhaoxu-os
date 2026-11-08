@@ -1,5 +1,6 @@
 #include <acpi.h>
 #include <ahci.h>
+#include <apic.h>
 #include <boot.h>
 #include <console.h>
 #include <cpu.h>
@@ -7,12 +8,15 @@
 #include <gdt.h>
 #include <idt.h>
 #include <io.h>
+#include <iommu.h>
 #include <keyboard.h>
 #include <kprintf.h>
 #include <mem.h>
+#include <pci.h>
 #include <process.h>
 #include <rtc.h>
 #include <shell.h>
+#include <smp.h>
 #include <string.h>
 #include <timer.h>
 #include <ttf.h>
@@ -47,6 +51,7 @@ void kernel_main(struct boot_info *boot)
             hlt();
     }
     g_boot = *boot;
+    g_boot.rsdp = apic_locate_rsdp(g_boot.rsdp);
 
     console_init(&g_boot);
     console_clear();
@@ -54,7 +59,7 @@ void kernel_main(struct boot_info *boot)
     console_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
     kprintf("Zhaoxu OS %s \"%s\"\n", ZHAOXU_VERSION, ZHAOXU_CODENAME);
     console_set_color(COLOR_DARK_GRAY, COLOR_BLACK);
-    kprintf("A multi-language operating system: FASM + C + Ada + C++\n");
+    kprintf("A multi-language operating system: FASM + C + GAS + SPARK + C++\n");
     kprintf("欢迎使用兆旭操作系统：源朔内核已启用中文渲染\n");
     console_reset_color();
     kprintf("\n");
@@ -69,6 +74,8 @@ void kernel_main(struct boot_info *boot)
 
     cpu_init();
     acpi_init(g_boot.rsdp);
+    pcie_init(g_boot.rsdp);
+    iommu_init(acpi_dmar_address());
 
     struct rtc_time now;
     if (rtc_read(&now) == 0) {
@@ -77,7 +84,7 @@ void kernel_main(struct boot_info *boot)
                 now.hour, now.minute, now.second);
     }
 
-    timer_init(100);
+    timer_init(1000);
     keyboard_init();
     if (mouse_init((int)g_boot.width, (int)g_boot.height) > 0) {
         pic_unmask(12);
@@ -126,8 +133,13 @@ void kernel_main(struct boot_info *boot)
     timer_sleep_ms(100);
     kprintf("[time] ticks after 100 ms: %llu\n", timer_ticks());
 
+    smp_init(g_boot.rsdp);
+
     kprintf("\n[dev ] probing storage and filesystems\n");
     ahci_init();
+    if (ahci_disk_count() > 0)
+        kprintf("[ahci] disk0 port %d, %llu sectors\n",
+                ahci_disk_port(0), ahci_disk_sectors(0));
     vfs_init();
     if (vfs_mount_data() == 0)
         kprintf("[vfs ] /mnt mounted (FAT32 \"%s\")\n", vfs_fat_label());

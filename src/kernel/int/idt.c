@@ -1,3 +1,4 @@
+#include <apic.h>
 #include <console.h>
 #include <drivers.h>
 #include <idt.h>
@@ -6,6 +7,7 @@
 #include <keyboard.h>
 #include <process.h>
 #include <string.h>
+#include <thread.h>
 #include <timer.h>
 #include <types.h>
 
@@ -41,7 +43,11 @@ extern void isr38(void); extern void isr39(void); extern void isr40(void);
 extern void isr41(void); extern void isr42(void); extern void isr43(void);
 extern void isr44(void); extern void isr45(void); extern void isr46(void);
 extern void isr47(void);
+extern void isr64(void);
+extern void isr65(void);
+extern void isr66(void);
 extern void isr128(void);
+extern void isr255(void);
 
 static struct idt_entry idt[256] __attribute__((aligned(16)));
 static struct idt_ptr idt_pointer;
@@ -94,8 +100,19 @@ void idt_init(void)
     /* System call gate, callable from ring 3. */
     set_gate(0x80, isr128, 0, 3);
 
+    /* Local APIC vectors: timer, reschedule IPI, spurious. */
+    set_gate(APIC_VECTOR_TIMER, isr64, 0, 0);
+    set_gate(APIC_VECTOR_RESCHED, isr65, 0, 0);
+    set_gate(APIC_VECTOR_SPURIOUS, isr66, 0, 0);
+    set_gate(0xFF, isr255, 0, 0);
+
     idt_pointer.limit = sizeof(idt) - 1;
     idt_pointer.base = (u64)idt;
+    idt_load(&idt_pointer);
+}
+
+void idt_reload(void)
+{
     idt_load(&idt_pointer);
 }
 
@@ -147,6 +164,8 @@ static void irq_dispatch(struct interrupt_frame *f)
     if (irq >= 8)
         outb(0xA0, 0x20);
     outb(0x20, 0x20);
+
+    sched_maybe_preempt();
 }
 
 void interrupt_dispatch(struct interrupt_frame *f)
@@ -155,6 +174,20 @@ void interrupt_dispatch(struct interrupt_frame *f)
         syscall_dispatch(f);
         return;
     }
+    if (f->vector == APIC_VECTOR_TIMER) {
+        sched_tick();
+        lapic_eoi();
+        sched_maybe_preempt();
+        return;
+    }
+    if (f->vector == APIC_VECTOR_RESCHED) {
+        lapic_eoi();
+        sched_maybe_preempt();
+        return;
+    }
+    if (f->vector == APIC_VECTOR_SPURIOUS || f->vector == 0xFF)
+        return;
+
     if (f->vector < 32) {
         if ((f->cs & 3) == 3 && process_active())
             process_handle_exception(f);

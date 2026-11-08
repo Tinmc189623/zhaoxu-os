@@ -317,6 +317,22 @@ static u64 ttf_glyph_offset(u32 glyph)
     return ttf.glyf.off + start;
 }
 
+/* Space and other blank glyphs have an empty loca range, not an outline. */
+static int ttf_glyph_is_empty(u32 glyph)
+{
+    if (!ttf.loaded || glyph >= ttf.num_glyphs)
+        return 1;
+    u64 start, end;
+    if (ttf.loca32) {
+        start = ttf_be32(ttf.loca.off + (u64)glyph * 4);
+        end = ttf_be32(ttf.loca.off + (u64)(glyph + 1) * 4);
+    } else {
+        start = (u64)ttf_be16(ttf.loca.off + (u64)glyph * 2) * 2;
+        end = (u64)ttf_be16(ttf.loca.off + (u64)(glyph + 1) * 2) * 2;
+    }
+    return end <= start;
+}
+
 int ttf_glyph_bbox(u32 glyph, i32 box[4])
 {
     u64 glyf = ttf_glyph_offset(glyph);
@@ -352,6 +368,7 @@ int ttf_autoload(const char *path)
         return -1;
 
     u32 pages = (u32)((size + PAGE_SIZE - 1) / PAGE_SIZE);
+    kprintf("[ttf ] %s: %llu bytes, %u pages\n", path, size, pages);
     u64 va = vmm_alloc_pages(pages);
     if (!va)
         return -2;
@@ -381,7 +398,7 @@ int ttf_autoload(const char *path)
 #define TTF_MAX_CONTOURS 64
 #define TTF_MAX_LINES 4096
 #define TTF_MAX_CROSS 256
-#define TTF_CACHE_SLOTS 256
+#define TTF_CACHE_SLOTS 1024
 
 struct ttf_line {
     i32 x0, y0, x1, y1; /* 26.6 pixel space, y down */
@@ -399,9 +416,11 @@ static u32 g_line_count;
 
 static i32 g_box_x0, g_box_y0, g_box_x1, g_box_y1; /* 26.6 */
 
+static u32 g_px = 20; /* active em size, set via ttf_set_pixel_size() */
+
 static i64 scale_font_to266(i64 value)
 {
-    return value * ((i64)TTF_PIXEL_SIZE << 6) / (i64)ttf.upem;
+    return value * ((i64)g_px << 6) / (i64)ttf.upem;
 }
 
 static i64 baseline266(void)
@@ -544,7 +563,12 @@ static void quad_flatten(i32 x0, i32 y0, i32 cx, i32 cy, i32 x1, i32 y1,
     quad_flatten(mx, my, bx, by, x1, y1, depth - 1);
 }
 
-/* Flatten one closed contour. Points are already in 26.6 pixel space. */
+/* Flatten one closed contour. Points are already in 26.6 pixel space.
+ *
+ * Every source point must be consumed exactly once: the previous version
+ * counted an on-curve endpoint twice when it followed a control point,
+ * which exhausted the point budget early and silently dropped the tail of
+ * the contour (e.g. the right stem of 'u' and 'd'). */
 static void flatten_contour(const i32 *xs, const i32 *ys, const u8 *on,
                             u32 n)
 {
@@ -556,52 +580,55 @@ static void flatten_contour(const i32 *xs, const i32 *ys, const u8 *on,
 
     i32 start_x, start_y, cx, cy;
     u32 idx;
-    u32 consumed;
+    u32 done;
     if (first_on == n) {
         /* every point is a control point: implicit on-curve midpoint */
         cx = (xs[n - 1] + xs[0]) / 2;
         cy = (ys[n - 1] + ys[0]) / 2;
-        idx = 0;
-        consumed = 0;
+        idx = n - 1;
+        done = 0;
     } else {
         cx = xs[first_on];
         cy = ys[first_on];
-        idx = first_on + 1;
-        if (idx >= n)
-            idx = 0;
-        consumed = 1;
+        idx = first_on;
+        done = 1;
     }
     start_x = cx;
     start_y = cy;
 
-    u32 guard = n * 2 + 4;
-    while (consumed < n && guard--) {
-        if (on[idx]) {
-            add_line(cx, cy, xs[idx], ys[idx]);
-            cx = xs[idx];
-            cy = ys[idx];
-            consumed++;
+    while (done < n) {
+        u32 next = idx + 1;
+        if (next >= n)
+            next = 0;
+        if (on[next]) {
+            add_line(cx, cy, xs[next], ys[next]);
+            cx = xs[next];
+            cy = ys[next];
+            idx = next;
+            done++;
         } else {
-            u32 next = idx + 1;
-            if (next >= n)
-                next = 0;
-            if (on[next]) {
-                quad_flatten(cx, cy, xs[idx], ys[idx], xs[next], ys[next], 4);
-                cx = xs[next];
-                cy = ys[next];
-                consumed += 2;
+            u32 after = next + 1;
+            if (after >= n)
+                after = 0;
+            if (on[after]) {
+                quad_flatten(cx, cy, xs[next], ys[next], xs[after],
+                             ys[after], 4);
+                cx = xs[after];
+                cy = ys[after];
+                idx = after;
+                done += 2;
             } else {
-                i32 mx = (xs[idx] + xs[next]) / 2;
-                i32 my = (ys[idx] + ys[next]) / 2;
-                quad_flatten(cx, cy, xs[idx], ys[idx], mx, my, 4);
+                i32 mx = (xs[next] + xs[after]) / 2;
+                i32 my = (ys[next] + ys[after]) / 2;
+                quad_flatten(cx, cy, xs[next], ys[next], mx, my, 4);
                 cx = mx;
                 cy = my;
-                consumed++;
+                idx = next;
+                done++;
             }
         }
-        idx++;
-        if (idx >= n)
-            idx = 0;
+        if (idx == first_on && done < n)
+            break; /* malformed contour wrapped early */
     }
     if (cx != start_x || cy != start_y)
         add_line(cx, cy, start_x, start_y);
@@ -695,7 +722,7 @@ static int extract_glyph(u32 gid, const struct ttf_aff *aff, u32 depth)
     if (contours > 0) {
         if (extract_simple(glyf) != 0)
             return -1;
-        i64 scale_num = (i64)TTF_PIXEL_SIZE << 6;
+        i64 scale_num = (i64)g_px << 6;
         i64 baseline = baseline266();
         u32 base = 0;
         for (u32 c = 0; c < g_contour_count; c++) {
@@ -723,9 +750,9 @@ static int extract_glyph(u32 gid, const struct ttf_aff *aff, u32 depth)
 /* scanline rasterizer                                                 */
 /* ------------------------------------------------------------------ */
 
-#define TTF_ROWS 20 /* cell height in pixels: 16 + descender slack */
+#define TTF_ROWS (TTF_MAX_PX + 6) /* cell height: ascender + descender */
 
-static u32 g_cov[TTF_ROWS][TTF_PIXEL_SIZE];
+static u32 g_cov[TTF_ROWS][TTF_MAX_PX];
 static i32 g_cross_x[TTF_MAX_CROSS];
 static i8 g_cross_w[TTF_MAX_CROSS];
 
@@ -737,8 +764,8 @@ static void accumulate_span(i32 row, i32 xa, i32 xb, u32 weight)
     if (col < 0)
         col = 0;
     i32 last = (xb + 63) >> 6;
-    if (last > TTF_PIXEL_SIZE)
-        last = TTF_PIXEL_SIZE;
+    if (last > (i32)g_px)
+        last = (i32)g_px;
     for (; col < last; col++) {
         i32 lo = xa > col * 64 ? xa : col * 64;
         i32 hi = xb < col * 64 + 64 ? xb : col * 64 + 64;
@@ -765,20 +792,20 @@ static void rasterize(struct ttf_glyph *out)
         cx0 = 0;
     if (cy0 < 0)
         cy0 = 0;
-    if (cx1 > TTF_PIXEL_SIZE)
-        cx1 = TTF_PIXEL_SIZE;
+    if (cx1 > (i32)g_px)
+        cx1 = (i32)g_px;
     if (cy1 > TTF_ROWS)
         cy1 = TTF_ROWS;
     if (cx1 <= cx0 || cy1 <= cy0)
         return;
 
     for (u32 i = 0; i < TTF_ROWS; i++)
-        for (u32 j = 0; j < TTF_PIXEL_SIZE; j++)
+        for (u32 j = 0; j < TTF_MAX_PX; j++)
             g_cov[i][j] = 0;
 
     for (i32 row = cy0; row < cy1; row++) {
-        for (u32 sub = 0; sub < 4; sub++) {
-            i32 sy = row * 64 + (i32)(sub * 16 + 8);
+        for (u32 sub = 0; sub < 8; sub++) {
+            i32 sy = row * 64 + (i32)(sub * 8 + 4);
             u32 count = 0;
             for (u32 l = 0; l < g_line_count; l++) {
                 const struct ttf_line *line = &g_lines[l];
@@ -819,7 +846,7 @@ static void rasterize(struct ttf_glyph *out)
                     span_start = g_cross_x[i];
                     in_span = 1;
                 } else if (in_span && winding == 0) {
-                    accumulate_span(row, span_start, g_cross_x[i], 16);
+                    accumulate_span(row, span_start, g_cross_x[i], 8);
                     in_span = 0;
                 }
             }
@@ -834,10 +861,16 @@ static void rasterize(struct ttf_glyph *out)
         for (i32 col = cx0; col < cx1; col++) {
             u32 cov = g_cov[row][col];
             u8 alpha = 0;
-            if (cov >= 4096)
+            if (cov >= 512) {
                 alpha = 255;
-            else if (cov)
-                alpha = (u8)((cov * 255 + 4095) / 4096);
+            } else if (cov) {
+                /* 8x vertical supersampling plus a gamma-2.0 coverage
+                 * curve; linear coverage makes thin CJK strokes break up
+                 * into gray dots at small sizes. */
+                u32 value = (cov * 255 + 256) / 512;
+                value = 255 - ((255 - value) * (255 - value) + 127) / 255;
+                alpha = (u8)value;
+            }
             out->alpha[(row - cy0) * out->w + (col - cx0)] = alpha;
         }
     }
@@ -855,9 +888,30 @@ struct ttf_cache_entry {
 
 static struct ttf_cache_entry g_cache[TTF_CACHE_SLOTS];
 
+int ttf_set_pixel_size(int px)
+{
+    if (px < 12)
+        px = 12;
+    if (px > TTF_MAX_PX)
+        px = TTF_MAX_PX;
+    g_px = (u32)px;
+    memset(g_cache, 0, sizeof(g_cache));
+    return px;
+}
+
+int ttf_pixel_size(void)
+{
+    return (int)g_px;
+}
+
+int ttf_line_height(void)
+{
+    return (int)g_px + 4;
+}
+
 static u32 cache_hash(u32 codepoint)
 {
-    return (codepoint * 2654435761u) >> 24;
+    return (codepoint * 2654435761u) >> 22;
 }
 
 int ttf_render(u32 codepoint, struct ttf_glyph *out)
@@ -866,13 +920,16 @@ int ttf_render(u32 codepoint, struct ttf_glyph *out)
         return -1;
 
     u32 slot = cache_hash(codepoint);
-    for (u32 i = 0; i < 4; i++) {
+    int free_slot = -1;
+    for (u32 i = 0; i < 8; i++) {
         struct ttf_cache_entry *entry =
             &g_cache[(slot + i) % TTF_CACHE_SLOTS];
         if (entry->used && entry->codepoint == codepoint) {
             *out = entry->glyph;
             return 0;
         }
+        if (!entry->used && free_slot < 0)
+            free_slot = (int)((slot + i) % TTF_CACHE_SLOTS);
     }
 
     u32 gid;
@@ -881,18 +938,29 @@ int ttf_render(u32 codepoint, struct ttf_glyph *out)
 
     g_line_count = 0;
     g_box_valid = 0;
-    struct ttf_aff identity = {16384, 16384, 0, 0};
-    if (extract_glyph(gid, &identity, 0) < 0)
-        return -3;
-
-    rasterize(out);
+    if (ttf_glyph_is_empty(gid)) {
+        memset(out->alpha, 0, sizeof(out->alpha));
+        out->w = 0;
+        out->h = 0;
+        out->bx = 0;
+        out->by = 0;
+    } else {
+        struct ttf_aff identity = {16384, 16384, 0, 0};
+        if (extract_glyph(gid, &identity, 0) < 0)
+            return -3;
+        rasterize(out);
+    }
 
     u32 advance_units = ttf_glyph_advance(gid);
-    i32 advance_px =
-        (i32)(((i64)advance_units * TTF_PIXEL_SIZE) / (i64)ttf.upem);
-    out->adv = (u8)(advance_px > 10 ? 2 : 1);
+    i32 advance_px = (i32)(((i64)advance_units * g_px) / (i64)ttf.upem);
+    if (advance_px < 1)
+        advance_px = 1;
+    if (advance_px > 255)
+        advance_px = 255;
+    out->adv = (u8)advance_px;
 
-    struct ttf_cache_entry *entry = &g_cache[slot];
+    struct ttf_cache_entry *entry =
+        &g_cache[free_slot >= 0 ? (u32)free_slot : slot];
     entry->used = 1;
     entry->codepoint = codepoint;
     entry->glyph = *out;

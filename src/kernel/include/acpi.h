@@ -22,6 +22,7 @@ struct acpi_info {
 
 void acpi_init(u64 rsdp_physical);
 const struct acpi_info *acpi_get_info(void);
+u64 acpi_dmar_address(void);
 void acpi_poweroff(void) __attribute__((noreturn));
 void acpi_reboot(void) __attribute__((noreturn));
 

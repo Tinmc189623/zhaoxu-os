@@ -34,6 +34,13 @@ installer_disks = [
   "-device ide-hd,drive=zdst,bus=ide.3",
 ]
 boot = ENV["SMOKE_BOOT"] || "esp"
+# Rule 11: ISO images are named zhaoxu_{version}_installer.iso.
+iso_file = Dir[File.join(win_root, "out", "zhaoxu_*_installer.iso")]
+           .max_by { |f| File.mtime(f) }
+if boot.start_with?("iso") && !iso_file
+  abort "out/zhaoxu_*_installer.iso not found; run `make iso` first"
+end
+iso_drive = "-cdrom out/#{iso_file ? File.basename(iso_file) : "zhaoxu_0.5.0_installer.iso"}"
 drives = case boot
          when "esp"
            [
@@ -44,13 +51,13 @@ drives = case boot
            ]
          when "iso"
            [
-             "-cdrom out/zhaoxu-os.iso",
+             iso_drive,
              "-drive if=none,id=zdata,format=raw,file=out/data.img",
              "-device ide-hd,drive=zdata,bus=ide.1",
              *installer_disks,
            ]
          when "iso-nodata"
-           ["-cdrom out/zhaoxu-os.iso"]
+           [iso_drive]
          when "installed"
            [
              "-drive if=none,id=zdst,format=raw,file=out/target.img",
@@ -112,6 +119,7 @@ Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout,
   prompt_seen = false
   desktop_sent = false
   desktop_at = nil
+  typed = false
   loop do
     left = deadline - Time.now
     break if left <= 0
@@ -134,6 +142,12 @@ Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout,
       stdin.flush
       desktop_sent = true
       desktop_at = Time.now
+    end
+    if desktop_sent && !typed && ENV["SHOT_TYPE"] &&
+       Time.now - desktop_at >= (ENV["SHOT_TYPE_AT"] || 1.5).to_f
+      stdin.write(ENV["SHOT_TYPE"].gsub("\\n", "\n"))
+      stdin.flush
+      typed = true
     end
     break if desktop_sent && Time.now - desktop_at >= DELAY
   end

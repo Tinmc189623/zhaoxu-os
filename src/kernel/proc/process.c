@@ -15,8 +15,11 @@
 #include <types.h>
 #include <vfs.h>
 
-#define USER_LOAD_BASE      0x0000000100000000ULL   /* 4 GiB   */
-#define USER_STACK_TOP      0x0000000200000000ULL   /* 8 GiB   */
+/* Keep the user window above the kernel's identity map (0..64 GiB): the
+ * identity map fills the PDPT entries right above 4 GiB with 2 MiB pages,
+ * so a user program linked at 4 GiB could never get 4 KiB mappings there. */
+#define USER_LOAD_BASE      0x0000010000000000ULL   /* 1 TiB   */
+#define USER_STACK_TOP      0x0000010100000000ULL   /* 1 TiB + 4 GiB */
 #define USER_STACK_PAGES    32
 #define USER_MAX_PAGES      1024
 #define USER_KERNEL_STACK   (16 * 1024)
@@ -312,24 +315,14 @@ void process_init(void)
     tss_set_rsp0(BOOT_STACK_TOP);
 }
 
-int process_run(const char *path, int argc, char **argv)
+static int run_image(const u8 *image, u64 image_size, const char *name,
+                     int argc, char **argv)
 {
-    if (g_active || !path)
-        return -1;
-
-    u8 *image = NULL;
-    u64 image_size = 0;
-    if (vfs_read_all(path, &image, &image_size) != 0) {
-        kprintf("[proc] cannot read %s\n", path);
-        return -1;
-    }
-
     g_mapping_count = 0;
     u64 entry = 0;
     int status = image_load(image, image_size, &entry);
-    kfree(image);
     if (status != 0) {
-        kprintf("[proc] %s is not a valid ZXE/ELF64 executable\n", path);
+        kprintf("[proc] %s is not a valid ZXE/ELF64 executable\n", name);
         release_user_pages();
         return -1;
     }
@@ -348,7 +341,7 @@ int process_run(const char *path, int argc, char **argv)
         return -1;
     }
 
-    const char *default_argv[1] = { path };
+    const char *default_argv[1] = { name };
     const char **stack_argv = (argc > 0) ? (const char **)argv
                                          : default_argv;
     if (argc <= 0)
@@ -365,7 +358,7 @@ int process_run(const char *path, int argc, char **argv)
     tss_set_rsp0(kernel_stack_top);
 
     kprintf("[proc] pid %llu: %s, entry 0x%llx, stack 0x%llx, CPL 3\n",
-            g_pid, path, entry, user_stack);
+            g_pid, name, entry, user_stack);
 
     user_enter(entry, user_stack);
 
@@ -378,6 +371,31 @@ int process_run(const char *path, int argc, char **argv)
     kfree(kernel_stack);
 
     return g_exit_code;
+}
+
+int process_run(const char *path, int argc, char **argv)
+{
+    if (g_active || !path)
+        return -1;
+
+    u8 *image = NULL;
+    u64 image_size = 0;
+    if (vfs_read_all(path, &image, &image_size) != 0) {
+        kprintf("[proc] cannot read %s\n", path);
+        return -1;
+    }
+
+    int status = run_image(image, image_size, path, argc, argv);
+    kfree(image);
+    return status;
+}
+
+int process_run_image(const u8 *image, u64 size, const char *name,
+                      int argc, char **argv)
+{
+    if (g_active || !image || size < 32)
+        return -1;
+    return run_image(image, size, name ? name : "<memory>", argc, argv);
 }
 
 int process_active(void)

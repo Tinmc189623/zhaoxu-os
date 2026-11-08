@@ -30,6 +30,7 @@ void console_write(const char *s);
 void console_write_n(const char *s, usize length);
 void console_set_color(enum console_color fg, enum console_color bg);
 void console_reset_color(void);
+void console_set_sink(void (*sink)(char c));
 u32 console_columns(void);
 u32 console_rows(void);
 int console_has_framebuffer(void);

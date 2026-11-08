@@ -6,6 +6,8 @@ ADA     ?= gcc-14
 LD      := ld.lld
 OBJCOPY ?= objcopy
 FASM    ?= tools/fasm
+BOOT_CC ?= clang
+BOOT_LD ?= lld-link
 
 BUILD   := build
 OUT     := out
@@ -26,24 +28,36 @@ ADAFLAGS := -c -gnatp -gnat2022 -O2 -g -fno-pie \
             -Idrivers
 LDFLAGS := -m elf_x86_64 -T kernel/linker.ld -nostdlib -static \
            --build-id=none -z max-page-size=0x1000
+# ZhaoxuBootloader UEFI: C loader built as a PE32+ EFI application.
+BOOT_CFLAGS = -target x86_64-pc-win32 -m64 -O2 -ffreestanding -fno-builtin \
+              -fno-stack-protector -mno-stack-arg-probe -mno-red-zone \
+              -fno-asynchronous-unwind-tables -Wall -Wextra \
+              -Wno-unused-parameter -DHEADLESS=$(HEADLESS)
+BOOT_LDFLAGS := /subsystem:efi_application /entry:efi_start /nodefaultlib \
+                /debug:none
 
 C_SRCS := kernel/main.c \
           kernel/arch/x86_64/io.c \
           kernel/arch/x86_64/gdt.c \
           kernel/arch/x86_64/pic.c \
           kernel/arch/x86_64/cpu.c \
+          kernel/arch/x86_64/percpu.c \
+          kernel/arch/x86_64/apic.c \
+          kernel/arch/x86_64/smp.c \
           kernel/int/idt.c \
           kernel/drivers/timer.c \
           kernel/drivers/keyboard.c \
           kernel/drivers/rtc.c \
-          kernel/drivers/pci.c \
-          kernel/drivers/acpi.c \
-          kernel/drivers/ahci.c \
+          kernel/drivers/pci_ui.c \
+          kernel/drivers/acpi_glue.c \
+          kernel/drivers/iommu_glue.c \
+          kernel/drivers/ahci_log.c \
           kernel/fs/initramfs.c \
           kernel/fs/fat32.c \
           kernel/fs/vfs.c \
           kernel/fs/install.c \
           kernel/proc/process.c \
+          kernel/proc/thread.c \
           kernel/lib/string.c \
           kernel/lib/printf.c \
           kernel/lib/console.c \
@@ -55,15 +69,33 @@ C_SRCS := kernel/main.c \
 ASM_SRCS := kernel/arch/x86_64/entry.S \
             kernel/arch/x86_64/gdt_flush.S \
             kernel/arch/x86_64/isr.S \
-            kernel/arch/x86_64/user.S
-ADA_SRCS := drivers/serial.adb \
+            kernel/arch/x86_64/user.S \
+            kernel/arch/x86_64/switch.S \
+            kernel/arch/x86_64/ap_trampoline.S
+ADA_SRCS := drivers/acpi.adb \
+            drivers/iommu.adb \
+            drivers/serial.adb \
             drivers/pit.adb \
             drivers/ps2.adb \
             drivers/mouse.adb \
-            drivers/gop.adb
+            drivers/gop.adb \
+            drivers/pcie.adb \
+            drivers/pci.adb \
+            drivers/ahci.adb \
+            drivers/ide.adb \
+            drivers/scsi.adb \
+            drivers/sata.adb
 CXX_SRCS := kernel/lib/cxx.cpp \
             apps/shell.cpp \
-            apps/desktop.cpp
+            apps/shell/cmd_sys.cpp \
+            apps/shell/cmd_fs.cpp \
+            apps/shell/cmd_hw.cpp \
+            apps/shell/cmd_ui.cpp \
+            apps/shell/cmd_power.cpp \
+            apps/shell/cmd_exec.cpp \
+            apps/edit.cpp \
+            apps/desktop.cpp \
+            apps/zcc.cpp
 
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(C_SRCS)) \
         $(patsubst %.S,$(BUILD)/%.o,$(ASM_SRCS)) \
@@ -75,19 +107,13 @@ OBJS := $(patsubst %.c,$(BUILD)/%.o,$(C_SRCS)) \
 
 HEADLESS ?= 0
 
-.PHONY: all clean run iso run-iso run-bios version FORCE
+.PHONY: all clean run iso run-iso run-bios version
 
 all: $(OUT)/BOOTX64.EFI $(ESP)/BOOTX64.EFI
 
 # Sync the version from version.php (repo root) into all surfaces.
 version:
 	$(RUBY) tools/version.rb
-
-$(BUILD)/config.inc: FORCE
-	@mkdir -p $(BUILD)
-	@printf 'HEADLESS equ $(HEADLESS)\n' > $@
-
-FORCE:
 
 # ---- Ring 3 programs -------------------------------------------------
 USER_CFLAGS := -m64 -std=gnu11 -O2 -ffreestanding -fno-pie -fno-pic \
@@ -173,8 +199,18 @@ $(DATA_IMG): $(OUT)/hello.zxe $(BUILD)/hello.uelf initramfs/data/hello.txt initr
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/wqy.ttc ::/WQY.TTC
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/info.txt ::/DOCS/INFO.TXT
 
-$(BUILD)/kernel_blob.inc: $(OUT)/kernel.bin
-	@printf "kernel_blob:\nfile 'out/kernel.bin'\nkernel_blob_end:\n" > $@
+$(BUILD)/efi_main.o: boot/efi_main.c boot/uefi.h
+	@mkdir -p $(BUILD)
+	$(BOOT_CC) $(BOOT_CFLAGS) -c $< -o $@
+
+$(BUILD)/kernel_blob.o: boot/kernel_blob.S $(OUT)/kernel.bin
+	@mkdir -p $(BUILD)
+	$(BOOT_CC) -target x86_64-pc-win32 -c $< -o $@
+
+$(OUT)/BOOTX64.EFI: $(BUILD)/efi_main.o $(BUILD)/kernel_blob.o
+	@mkdir -p $(OUT)
+	$(BOOT_LD) $(BOOT_LDFLAGS) $(BUILD)/efi_main.o $(BUILD)/kernel_blob.o \
+	  /out:$@
 
 # ---- ZhaoxuBootloader legacy BIOS chain ------------------------------
 # stage1 (512-byte MBR / El Torito boot sector) loads stage2 from LBA 1;
@@ -217,6 +253,21 @@ $(BUILD)/bios_stage2.o: $(BIOS_S2)
 	  --redefine-sym _binary_out_bios_stage2_bin_size=bios_stage2_size \
 	  $< $@
 
+# stb_truetype needs scalar float math (SSE2); the rest of the kernel is
+# built -mgeneral-regs-only. cpu_init() clears CR0.EM/TS and sets
+# CR4.OSFXSR/OSXMMEXCPT before the font engine runs.
+FONT_CFLAGS := $(filter-out -mgeneral-regs-only -mno-sse -mno-sse2 \
+                 -mno-mmx -mno-avx,$(CFLAGS)) \
+               -msse2 -mno-avx -fno-math-errno
+
+$(BUILD)/kernel/font/ttf.o: kernel/font/ttf.c
+	@mkdir -p $(dir $@)
+	$(CC) $(FONT_CFLAGS) -c $< -o $@
+
+$(BUILD)/kernel/font/stbtt.o: kernel/font/stbtt.c
+	@mkdir -p $(dir $@)
+	$(CC) $(FONT_CFLAGS) -c $< -o $@
+
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -240,10 +291,6 @@ $(OUT)/kernel.elf: $(OBJS) kernel/linker.ld
 $(OUT)/kernel.bin: $(OUT)/kernel.elf
 	$(OBJCOPY) -O binary $< $@
 
-$(OUT)/BOOTX64.EFI: boot/main.asm boot/uefi.inc $(BUILD)/config.inc $(BUILD)/kernel_blob.inc
-	@mkdir -p $(OUT)
-	$(FASM) boot/main.asm $@
-
 $(ESP)/BOOTX64.EFI: $(OUT)/BOOTX64.EFI
 	@mkdir -p $(ESP)
 	cp $< $@
@@ -251,7 +298,7 @@ $(ESP)/BOOTX64.EFI: $(OUT)/BOOTX64.EFI
 clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin $(OUT)/BOOTX64.EFI \
 	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/initramfs.tar \
-	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu-os.iso \
+	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu_*_installer.iso \
 	       $(OUT)/bios_stage1.bin $(OUT)/bios_stage2.bin $(OUT)/bios.img \
 	       $(OUT)/target.img $(ESP)/BOOTX64.EFI
 
@@ -259,8 +306,10 @@ OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
 QEMU_MACHINE ?= q35
 QEMU_MEM ?= 512M
-QEMU_SMP ?= 1
+QEMU_SMP ?= 4
 QEMU_DISPLAY ?= -display none
+# VT-d IOMMU for the q35/OVMF runs; QEMU then exposes an ACPI DMAR table.
+QEMU_IOMMU ?= -device intel-iommu
 
 # Installer plumbing: out/efi.img is the read-only "installation media"
 # (16 MiB FAT16 ESP labelled ZHAOXUEFI); out/target.img is the blank disk the
@@ -284,10 +333,13 @@ run: all $(DATA_IMG) $(EFI_IMG) $(TARGET_IMG)
 	  -device ide-hd,drive=zsrc,bus=ide.2 \
 	  -drive if=none,id=zdst,format=raw,file=$(TARGET_IMG) \
 	  -device ide-hd,drive=zdst,bus=ide.3 \
+	  $(QEMU_IOMMU) \
 	  -net none -serial stdio -monitor none $(QEMU_DISPLAY) -no-reboot
 
 # ---- UEFI ISO --------------------------------------------------------
-ISO := $(OUT)/zhaoxu-os.iso
+# Rule 11: ISO files are named zhaoxu_{version}_installer.iso.
+ZHAOXU_VERSION := $(shell $(RUBY) -e 'v=File.read("kernel/include/version.h")[/ZHAOXU_VERSION\s+"([^"]+)"/,1]; print v')
+ISO := $(OUT)/zhaoxu_$(ZHAOXU_VERSION)_installer.iso
 ISO_ROOT := $(BUILD)/iso
 ISO_ESP_MB ?= 16
 

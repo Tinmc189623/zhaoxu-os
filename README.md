@@ -1,222 +1,344 @@
-# Zhaoxu OS
+<div align="center">
 
-Zhaoxu OS 是一个面向 x86_64 的多语言操作系统，内核代号 **Yuanshuo**，当前版本 **0.5.0**。引导加载器 **ZhaoxuBootloader** 同时支持 UEFI 与 legacy BIOS 两种启动模式：UEFI 层用 FASM 直接生成 PE64 EFI 映像，BIOS 层由 MBR 引导扇区与 stage 2 组成；两者建立恒等映射与 higher-half 页表，进入 C 内核，外设驱动用 Ada，交互 Shell 用 C++20 编写，全部链接进同一个内核镜像。0.5.0 引入 Desktop-Shell 图形桌面与图形安装器（AHCI 写入），0.4.0 引入 TrueType 中文渲染与自研 `.zxe` 可执行文件格式（继续兼容 ELF64）。
+# 🖥️ Zhaoxu OS
 
-<!-- 就你晒着，就你晒着，你晒最多 -->
+### Yuanshuo Kernel · Aqua Desktop · x86_64
 
-![Zhaoxu OS shell](docs/screenshot.png)
+<kbd>🧩 宏内核</kbd> <kbd>🧵 Ring 3 用户态</kbd> <kbd>💾 FAT32</kbd> <kbd>💿 UEFI + Legacy BIOS</kbd> <kbd>🧬 MBR + GPT(ISO)</kbd> <kbd>🎨 Aqua</kbd>
 
-## 0.5.0 新增
+**C** 内核与 UEFI 引导 · **FASM** BIOS 引导 · **GAS** 底层汇编 · **SPARK/Ada** 驱动 · **C++20** 上层应用 · **Ruby** 工具链
 
-- Desktop-Shell / DS-WM（Aqua 风格）：渐变菜单栏与 RTC 时钟、可拖动/关闭/层叠窗口、Dock、软件光标，标题与正文走 TrueType 中文字形
-- PS/2 鼠标：IRQ12 三字节包解析、溢出与符号位处理，桌面窗口拖动/关闭与安装器按钮均可点击
-- 图形安装器：桌面「安装」窗口或 Shell `install` 启动，把只读安装介质（`ZHAOXUEFI` FAT16 ESP 镜像）按原始扇区复制进目标盘的新 MBR 分区（类型 0x0E，起始 LBA 2048）
-- 安装安全校验：目标盘必须是空白盘或旧 Zhaoxu MBR，安装介质与 `ZHAOXUDATA` 数据盘永不作为目标；写入后校验分区起始扇区并 flush
-- AHCI 写入路径：WRITE DMA EXT / FLUSH CACHE EXT，PRDTL 仅在有数据时置位
-- Shell 新增 `disks`（磁盘、卷标与角色）与 `install [disk]`；`tools/screenshot.rb` 无头抓取桌面 PNG
+[🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) · [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) · [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) · [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
-## 0.4.0 新增
+**当前版本：0.5.0 「Yuanshuo」** · 历史版本见 [CHANGELOG.md](CHANGELOG.md)
 
-- TrueType 中文渲染：内核内置 glyf 字形引擎（TTC/sfnt 解析、cmap format 4/12、整型 26.6 定点扫描线光栅化、256 槽字形缓存），控制台按 UTF-8 解码，西文走 8x8 点阵、中文走 16px 矢量字形
-- 字体分发：文泉驿微米黑（`/mnt/WQY.TTC`，GPL）随 FAT32 数据盘提供，启动时经 `vfs_read_into` 载入常驻内核页，不走 4 MiB 内核堆
-- `.zxe` 自研可执行格式：32 字节头 + 40 字节段表 + 原始数据，页对齐映射、R/W/X 段标志；构建期用纯 Ruby 脚本 `tools/zxe-pack.rb` 把 ELF64 转换为 `.zxe`
-- 加载器双格式：`run` / `/bin/init` 按魔数自动分发 `.zxe` 与 ELF64，ELF 路径完全保留
-- Shell 新增 `fonttest <hex>`：把任意码点的光栅结果以 ASCII 密度图打印到串口
+</div>
 
-## 0.3.0 新增
+---
 
-- ring 3 用户进程：ELF64 加载、用户页映射、16 KiB 进程内核栈与 TSS `rsp0` 切换
-- 系统调用 ABI：`int 0x80`，`rax` 为调用号，`rdi/rsi/rdx` 传参；支持 exit/write/getpid/open/read/close/uptime
-- initramfs：ustar 归档嵌入内核镜像，解析为只读 ramfs 根文件系统
-- 存储：PCI 扫描 → AHCI（SATA）驱动，IDENTIFY / READ DMA EXT，4 KiB bounce buffer
-- FAT32：只读挂载到 `/mnt`，支持 LFN、子目录与簇链读取；按卷标 `ZHAOXUDATA` 选择数据盘
-- VFS：统一 `/`（ramfs）与 `/mnt`（FAT32）路径，提供只读文件描述符
-- 启动时自动以 ring 3 运行 `/bin/init`；Shell 新增 `ls`、`cat`、`run`、`mounts`
-- 用户态缺页/异常只终止当前进程并回到 Shell，内核异常仍然 panic
+> 🧭 **一句话介绍**：Zhaoxu OS 是一个完全从零编写的 x86_64 操作系统。引导加载器 **ZhaoxuBootloader** 同时支持 UEFI 与 legacy BIOS；**Yuanshuo Kernel** 是 C 编写的宏内核；驱动全部由 **SPARK/Ada** 实现；Shell 与桌面由 **C++20** 编写并运行在 ring 3 之上；系统内部还带有一个 C 子集编译器 **zcc**，可以直接在操作系统里写程序、编译成 `.zxe` 并运行。
 
-## 已实现
+---
 
-**引导（FASM）**
+## ✨ 0.5.0 亮点
 
-- PE64 EFI 应用，位置无关代码，GOP 帧缓冲探测（1280x800 / BGRX）
-- 传递 ACPI RSDP 与 UEFI 内存映射
-- 前 4 GiB 恒等映射（2 MiB 大页）+ 16 MiB higher-half 内核窗口
-- 复制内核镜像到页对齐物理内存，`ExitBootServices` 后切换 CR3，跳转 `0xffffffff80000000`
+<table>
+<tr>
+<td width="50%" valign="top">
 
-**内核（C）**
+### 🖼️ Desktop-Shell
+- Aqua 风格图形桌面：渐变菜单栏、RTC 时钟、Dock
+- `DS-WM` 窗口管理器：拖动、关闭、层叠、焦点
+- 原生应用：终端、文件、计算器、便签、监视器
+- 软件光标 + PS/2 鼠标，窗口内可直接运行 Shell 命令
 
-- GDT/TSS（双故障与 NMI 使用独立 IST 栈）、IDT、8259 PIC 重映射
-- PIT 100 Hz 节拍、PS/2 键盘 IRQ、COM1 串口轮询输入
-- 异常处理：内核异常打印向量、错误码、CR2、RIP/RSP/寄存器现场后停机；CPL3 异常终止进程并返回 Shell
-- 物理页位图分配器（4 GiB 范围）、4 KiB 粒度虚拟映射、4 MiB 内核堆
-- `kprintf` / `ksnprintf`、字符串库、图形 + 串口双路控制台
-- 8x16 字体渲染、滚动、16 色 VGA 调色板与 ANSI 串口颜色映射
+</td>
+<td width="50%" valign="top">
 
-**用户态与文件系统（C）**
+### 🛠️ 系统内开发
+- `edit`：系统内 C 编辑器（带示例程序）
+- `cc`：把编辑缓冲区交给内置编译器 **zcc**
+- **zcc** 直接生成 `.zxe` 机器码镜像，在 ring 3 执行
+- 自研 `.zxe` 格式，同时保留完整 ELF64 兼容路径
 
-- ELF64 与 `.zxe` 用户程序加载到 4 GiB 基址，用户栈位于 8 GiB，进程共享内核页表但页级 `U/S` 隔离；`int 0x80` 系统调用入口（IDT DPL=3），用户指针逐页校验
-- `int 0x80` 系统调用入口（IDT DPL=3），用户指针逐页校验
-- 内嵌 ustar initramfs → 只读 ramfs；`/bin/init`、`/etc/motd` 等随内核分发
-- AHCI 块设备（PCI class 01/06/01），FAT32 只读驱动挂载到 `/mnt`
-- VFS 路径分发与只读 fd 表，用户程序通过 open/read/close 访问两个文件系统；无数据盘时 `/mnt` 自动回退到 initramfs 内嵌数据镜像 `/data`（无中文字体，CJK 回退 `?`）
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
 
-**驱动（Ada）**
+### 💿 双启动 + 图形安装器
+- UEFI（C 引导层）与 legacy BIOS（FASM stage1/2）
+- ISO 采用 GPT hybrid（UEFI + El Torito 双入口），安装盘写入 MBR 分区表
+- 桌面「安装」窗口或 Shell `install`
+- AHCI 写入、扇区校验、安装后可直接启动
 
-- 16550 UART、PIT、PS/2 控制器、GOP 矩形填充 / 字形绘制 / Alpha 混合 / 行复制
-- 通过 `pragma Export, Convention => C` 暴露 C 符号，端口 I/O 由 C 侧辅助函数完成
+</td>
+<td width="50%" valign="top">
 
-**平台**
+### 🔌 完整驱动栈（SPARK/Ada）
+- ACPI：RSDP/XSDT/FADT/DSDT、`_S5` 解析、关机与重启
+- PCI / PCIe 枚举、AHCI、IDE、SATA、SCSI（ATAPI）
+- PIT、PS/2 键盘与鼠标、GOP 帧缓冲、16550 UART
+- TrueType 中文渲染：文泉驿微米黑，UTF-8 控制台
 
-- CPUID：厂商、品牌、家族/型号/步进、逻辑 CPU 数与特性位
-- CMOS RTC：BCD/二进制、12/24 小时制处理
-- PCI：配置空间扫描与设备分类
-- ACPI：RSDP 校验、RSDT/XSDT 遍历、FADT 解析、DSDT 中 `_S5` AML 解析
-- ACPI 关机 / 重启，并为 QEMU q35、i440fx 与键盘控制器提供回退路径
+</td>
+</tr>
+</table>
 
-**Shell（C++20）**
+---
 
-| 命令 | 说明 |
-| --- | --- |
-| `help` | 命令列表 |
-| `clear` | 清屏 |
-| `echo <text>` | 输出文本 |
-| `version` | 版本、构建时间、工具链 |
-| `uname` | 系统标识 |
-| `mem` | 物理内存与内核堆统计 |
-| `uptime` | 运行时间与节拍数 |
-| `cpu` | CPUID 详情与特性 |
-| `date` | CMOS 实时时钟 |
-| `pci` | PCI 设备枚举 |
-| `acpi` | ACPI 电源管理信息 |
-| `ls [path]` | 列出 ramfs / FAT32 目录 |
-| `cat <path>` | 输出文件内容 |
-| `run <path> [args...]` | 以 ring 3 运行 `.zxe`/ELF64 程序并打印退出码 |
-| `fonttest <hex>` | 光栅化指定 Unicode 码点并输出 ASCII 密度图 |
-| `mounts` | 显示已挂载文件系统 |
-| `bench` | memset 带宽与 TSC ALU 基准 |
-| `sleep <ms>` | 休眠指定毫秒 |
-| `desktop [seconds]` | 启动 Desktop-Shell 图形桌面，ESC 退出 |
-| `disks` | 列出 AHCI 磁盘、卷标与角色（媒体/数据/目标） |
-| `install [disk]` | 把安装介质复制到空白目标盘（缺省自动选择） |
-| `color <fg> <bg>` | 设置控制台颜色（0-15） |
-| `neofetch` | 系统摘要 |
-| `reboot` | ACPI 重启 |
-| `shutdown` | ACPI 关机 |
-| `panic` | 触发页故障，验证异常处理 |
+## 📸 实机截图
+
+> 以下十张图片全部由 `tools/screenshot.rb` 在 QEMU + OVMF 实机启动后抓取帧缓冲得到，**1920×1080**，非绘制示意图。
+
+<table>
+<tr>
+<td width="50%" align="center">
+<img src="docs/shot-shell.png" width="100%" alt="Command-Shell neofetch">
+<br><b>🖥️ Command-Shell</b><br>
+<sub>neofetch：0.5.0 内核摘要与语言构成</sub>
+</td>
+<td width="50%" align="center">
+<img src="docs/shot-files.png" width="100%" alt="FAT32 文件读取">
+<br><b>💾 FAT32 数据盘</b><br>
+<sub><code>ls /mnt</code> 与 <code>cat</code>，AHCI → FAT32 → VFS → 系统调用</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" align="center">
+<img src="docs/shot-run.png" width="100%" alt="运行 .zxe 与 ELF">
+<br><b>🧵 Ring 3 程序</b><br>
+<sub>同一份 hello 程序分别以 <code>.zxe</code> 与 ELF64 运行，退出码 7</sub>
+</td>
+<td width="50%" align="center">
+<img src="docs/shot-editor.png" width="100%" alt="系统内编译器">
+<br><b>🛠️ 系统内开发</b><br>
+<sub><code>edit</code> 写代码 → <code>.run</code> → zcc 生成 605 字节 .zxe → ring 3 输出</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" align="center">
+<img src="docs/shot-disks.png" width="100%" alt="磁盘角色">
+<br><b>🗄️ 磁盘与角色</b><br>
+<sub><code>disks</code>：数据盘 ZHAOXUDATA / 安装介质 ZHAOXUEFI / 空白目标盘</sub>
+</td>
+<td width="50%" align="center">
+<img src="docs/shot-install.png" width="100%" alt="Shell 安装">
+<br><b>📥 Shell 安装</b><br>
+<sub><code>install</code>：MBR + FAT16 ESP 写入目标盘并校验</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" align="center">
+<img src="docs/shot-desktop.png" width="100%" alt="Aqua 桌面与终端">
+<br><b>🎨 Desktop-Shell · Aqua</b><br>
+<sub>菜单栏、窗口、Dock、软件光标；终端里运行真实的 neofetch</sub>
+</td>
+<td width="50%" align="center">
+<img src="docs/shot-desktop-apps.png" width="100%" alt="桌面应用">
+<br><b>🧮 原生桌面应用</b><br>
+<sub>欢迎、便签、监视器、计算器；TrueType 中文排版</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" align="center">
+<img src="docs/shot-desktop-install.png" width="100%" alt="图形安装器">
+<br><b>💿 图形安装器</b><br>
+<sub>识别安装源与目标盘，确认后开始写入，支持 UEFI/BIOS 启动</sub>
+</td>
+<td width="50%" align="center">
+<img src="docs/shot-fonttest.png" width="100%" alt="TrueType 字形">
+<br><b>🔤 TrueType 字形</b><br>
+<sub><code>fonttest 0x4e2d</code>：20×23 位图、24 px em，中文字形光栅输出</sub>
+</td>
+</tr>
+</table>
+
+---
+
+## 🧠 架构
+
+**单镜像宏内核**：引导层、C 内核、Ada 驱动、C++ Shell/桌面全部链接进同一份 `kernel.bin`；只有 ring 3 用户程序是独立的 `.zxe`/ELF 文件。
+
+<table>
+<tr><th>层</th><th>语言</th><th>实现</th></tr>
+<tr><td>UEFI 引导</td><td>🧩 C + GAS</td><td><code>boot/efi_main.c</code>：GOP、RSDP、内存映射、页表、<code>ExitBootServices</code></td></tr>
+<tr><td>Legacy BIOS 引导</td><td>⚙️ FASM</td><td><code>bios_stage1.asm</code> → <code>bios_stage2.asm</code>：VBE、E820、长模式</td></tr>
+<tr><td>内核</td><td>🔧 C</td><td><code>kernel/</code>：GDT/TSS、IDT、PMM/VMM、堆、进程、VFS、FAT32、TTF</td></tr>
+<tr><td>底层汇编</td><td>🧱 GAS</td><td>入口、ISR 桩、用户态切换、内核镜像嵌入</td></tr>
+<tr><td>驱动</td><td>✨ SPARK/Ada</td><td><code>src/drivers/*.adb</code>：ACPI、PCI/PCIe、AHCI、IDE、SATA、SCSI、PIT、PS/2、GOP、UART</td></tr>
+<tr><td>Shell / 桌面 / 应用</td><td>🚀 C++20</td><td><code>apps/shell.cpp</code>、<code>apps/desktop.cpp</code>、<code>apps/edit.cpp</code>、<code>apps/zcc.cpp</code></td></tr>
+<tr><td>用户程序</td><td>🧵 C</td><td><code>user/</code>：<code>init</code>、<code>hello</code>，链接到 <code>0x10000000000</code>（1 TiB），运行在 ring 3</td></tr>
+<tr><td>工具链</td><td>💎 Ruby</td><td><code>tools/</code>：ELF→.zxe、BIOS 镜像、冒烟测试、实机截图、版本同步</td></tr>
+</table>
+
+**内存布局**
+
+```
+0xffffffff80000000  内核虚拟基址（higher-half）
+0xffffffff80f00000  内核栈顶
+0xffffffff90000000  4 MiB 内核堆
+0x0000000100000000  ring 3 程序加载基址
+0x0000000200000000  ring 3 用户栈顶（32 页）
+```
+
+**系统调用 ABI**：`int 0x80`，`rax` = 调用号，`rdi/rsi/rdx` = 参数。
+
+| # | 调用 | # | 调用 |
+| :---: | --- | :---: | --- |
+| 0 | `exit` | 4 | `read` |
+| 1 | `write` | 5 | `close` |
+| 2 | `getpid` | 6 | `uptime` |
+| 3 | `open` | | |
+
+---
+
+## 🚀 引导流程
+
+**UEFI 路径**
+
+1. 固件加载 `EFI/BOOT/BOOTX64.EFI`（C 引导层，`lld-link` 生成 PE64）。
+2. 取得 GOP 帧缓冲、ACPI RSDP 与 UEFI 内存映射。
+3. 复制内核镜像到 4 GiB 以下的页对齐物理内存，建立低端恒等映射与 higher-half 页表；内核启动后把恒等映射扩展到内存映射覆盖的 64 GiB。
+4. `ExitBootServices` → 切换 CR3 → 跳转 `0xffffffff80000000`。
+
+**Legacy BIOS 路径**
+
+1. SeaBIOS 从 El Torito 或 MBR 加载 512 字节 stage 1。
+2. stage 1 用 INT 13h 把 stage 2 读入 `0x8000`。
+3. stage 2 选择 32bpp VBE LFB、收集 E820、扫描 RSDP，把内核读入低端缓冲。
+4. 建立页表、清零 16 MiB 内核窗口、写 `boot_info`，进入长模式。
+
+**内核公共路径**
+
+5. GDT/IDT/PIC → PMM/VMM/堆 → CPUID/ACPI/RTC → AHCI/VFS → TrueType 字体。
+6. 挂载 initramfs（`/`）与 FAT32（`/mnt`，卷标 `ZHAOXUDATA`）。
+7. 自动以 ring 3 运行 `/bin/init`，随后进入 **Command-Shell**。
+
+---
+
+## 💻 Command-Shell 命令
+
+<table>
+<tr><th>命令</th><th>说明</th><th>命令</th><th>说明</th></tr>
+<tr><td><code>help</code></td><td>命令列表</td><td><code>neofetch</code></td><td>系统摘要</td></tr>
+<tr><td><code>clear</code></td><td>清屏</td><td><code>version</code></td><td>版本与构建信息</td></tr>
+<tr><td><code>echo</code></td><td>输出文本</td><td><code>uname</code></td><td>系统标识</td></tr>
+<tr><td><code>ls [path]</code></td><td>列目录</td><td><code>cat &lt;path&gt;</code></td><td>输出文件内容</td></tr>
+<tr><td><code>./&lt;file&gt;</code> 或 <code>/目录/&lt;file&gt;</code></td><td>以 ring 3 运行 .zxe / ELF64</td><td><code>ps</code></td><td>进程状态</td></tr>
+<tr><td><code>mounts</code></td><td>挂载点</td><td><code>mem</code></td><td>物理内存与堆统计</td></tr>
+<tr><td><code>cpu</code></td><td>CPUID 详情</td><td><code>date</code></td><td>CMOS 实时时钟</td></tr>
+<tr><td><code>pci</code></td><td>PCI 设备枚举</td><td><code>acpi</code></td><td>ACPI 电源信息</td></tr>
+<tr><td><code>ata</code></td><td>IDE/ATAPI PIO 探测</td><td><code>sata</code></td><td>SATA 链路与代际</td></tr>
+<tr><td><code>scsi</code></td><td>ATAPI/SCSI 设备</td><td><code>disks</code></td><td>磁盘卷标与角色</td></tr>
+<tr><td><code>install [disk]</code></td><td>安装到目标盘</td><td><code>desktop [秒]</code></td><td>启动 Desktop-Shell，ESC 退出</td></tr>
+<tr><td><code>edit [name]</code></td><td>系统内 C 编辑器</td><td><code>cc</code></td><td>编译并运行编辑缓冲区</td></tr>
+<tr><td><code>fonttest &lt;hex&gt;</code></td><td>字形 ASCII 密度图</td><td><code>bench</code></td><td>内存与 TSC 基准</td></tr>
+<tr><td><code>sleep &lt;ms&gt;</code></td><td>休眠</td><td><code>color &lt;fg&gt; &lt;bg&gt;</code></td><td>控制台颜色</td></tr>
+<tr><td><code>uptime</code></td><td>运行时间</td><td><code>panic</code></td><td>触发页故障（测试）</td></tr>
+<tr><td><code>reboot</code></td><td>ACPI 重启</td><td><code>shutdown</code></td><td>ACPI 关机</td></tr>
+</table>
 
 行编辑支持退格、`Ctrl+L` 清屏、`Ctrl+C` 取消当前行。
 
-## 构建与运行
+---
 
-构建链运行在 WSL2（Ubuntu 26.04）中，Windows 侧脚本只做转发。需要 PowerShell 7+。
+## 🧪 系统内开发：edit → cc → zcc
+
+```text
+zhaoxu> edit
+edit: untitled.zc
+ 1 int main() {
+ 2     print("Hello from zcc inside Zhaoxu OS!\n");
+ 3     int i = 1;
+ 4     while (i <= 5) { printnum(i); ... }
+ 5     return 0;
+ 6 }
+zhaoxu> .run
+zcc: 605 bytes of .zxe, running in ring 3...
+Hello from zcc inside Zhaoxu OS!
+1 squared = 1
+...
+[zcc] exit code 0
+```
+
+- **zcc** 支持：`int` 变量、赋值、`print` / `printnum`、`if` / `else`、`while`、比较与四则运算、`return`
+- 输出格式为自研 `.zxe` v1：112 字节头 + 段表 + 代码段 + 只读段
+- 编译器与编辑器都是内核镜像里的 C++20 代码，不依赖任何外部工具
+
+---
+
+## 📦 构建与运行
+
+构建在 **WSL2**（Ubuntu 26.04）中完成，Windows 脚本只做转发。
 
 ```powershell
-# 构建并部署到 esp/EFI/BOOT/BOOTX64.EFI
-./src/build.ps1
-
-# 仅串口输出（无图形）的构建变体
-./src/build.ps1 -Headless
-
-# QEMU + OVMF 启动，串口接到当前终端
-./src/run.ps1
-
-# 使用 WSLg 打开 QEMU 图形窗口
-./src/run.ps1 -Display gtk
+# Windows（PowerShell 7+）
+./src/build.ps1                  # 构建 UEFI 引导
+./src/build.ps1 -Headless        # 仅串口输出
+./src/run.ps1                    # QEMU + OVMF
+./src/run.ps1 -Display gtk       # WSLg 图形窗口
 ```
-
-也可以直接在 WSL 中构建：
 
 ```bash
-cd src                     # 仓库内的 src 目录（WSL 下用 wslpath 换算盘符）
-make -j4
-make run                 # 无头 + 串口
+# 或者直接在 WSL 中
+cd src
+make -j4                         # 构建 out/BOOTX64.EFI
+make run                         # 构建 out/data.img 并启动 QEMU
 make run QEMU_DISPLAY="-display gtk"
-make iso                 # 生成 UEFI + legacy BIOS 双启动 ISO：out/zhaoxu-os.iso
-make run-iso             # 从 ISO 启动（UEFI），并挂载 out/data.img
-make run-bios            # 从 ISO 启动（SeaBIOS，走 MBR 引导链），并挂载安装盘
+make iso                         # 生成 out/zhaoxu-os.iso（UEFI + BIOS）
+make run-iso                     # 从 ISO 启动（UEFI）
+make run-bios                    # 从 ISO 启动（SeaBIOS）
 ```
 
-依赖：
+**依赖**：`gcc`、`g++`、`gcc-14` + `gnat-14`、`ld.lld`、`objcopy`、`clang`、`qemu-system-x86_64`、OVMF、`mkfs.vfat`、`mtools`、`tar`、`xorriso`；FASM 已随仓库提供（`src/tools/fasm`）。
 
-- WSL2 Ubuntu 26.04：`gcc`、`g++`、`gcc-14` + `gnat-14`（提供 `gnat1`）、`ld.lld`、`objcopy`、`qemu-system-x86_64`、`ovmf`、`dosfstools`、`mtools`、`tar`、`xorriso`
-- Flat Assembler 1.73.34：仓库自带 `src/tools/fasm`；缺失时可执行 `src/tools/install-fasm.sh`
-- Ruby：`.zxe` 转换脚本 `src/tools/zxe-pack.rb` 与冒烟脚本 `src/tools/smoke.rb` 需要 Ruby；WSL 内没有 Ruby 时，Makefile 通过 `RUBY` 变量调用 Windows 侧解释器（按本机安装位置用 `make RUBY=<windows-ruby 的 wslpath 路径>` 覆盖）
+**验证工具**（Ruby）：
 
-## 目录结构
+```bash
+ruby tools/smoke.rb <marker> [commands]     # 无头冒烟，逐条发送 Shell 命令
+ruby tools/screenshot.rb 3.0 out/shot.png   # 实机启动并抓取帧缓冲
+SMOKE_BOOT=iso-nodata ruby tools/smoke.rb ... # ISO 无数据盘启动
+```
+
+---
+
+## 🗂️ 目录结构
 
 ```
 Zhaoxu OS/
-├── LICENSE                  Apache License 2.0 全文
-├── THIRD_PARTY_NOTICES.md   第三方代码与字体声明
-├── AGENTS.md                仓库约定
-├── docs/                    截图
+├── README.md                 当前版本说明（历史见 CHANGELOG.md）
+├── CHANGELOG.md              全部版本记录
+├── LICENSE                   Apache License 2.0
+├── THIRD_PARTY_NOTICES.md    第三方代码与字体声明
+├── version.php               版本号唯一来源（make version 同步）
+├── docs/                     十张实机截图
 └── src/
-    ├── Makefile             WSL2 内的编译、链接与 QEMU 规则
-    ├── build.ps1            构建入口（转发 WSL2 make）
-    ├── run.ps1              QEMU/OVMF 运行入口
-    ├── boot/                FASM：UEFI 引导层、legacy BIOS stage 1/2 与 UEFI 常量
+    ├── Makefile              WSL2 构建规则
+    ├── boot/
+    │   ├── efi_main.c        UEFI 引导层（C）
+    │   ├── bios_stage1.asm   MBR 引导扇区（FASM）
+    │   └── bios_stage2.asm   实模式 → 长模式（FASM）
     ├── kernel/
-    │   ├── arch/x86_64/     入口、GDT/TSS、中断桩、PIC、CPUID、端口 I/O、ring 3 切换
-    │   ├── int/             IDT 与异常/IRQ/系统调用分发
-    │   ├── drivers/         PIT、键盘、RTC、PCI、ACPI、AHCI
-    │   ├── fs/              initramfs（ustar/ramfs）、FAT32、VFS、安装器
-    │   ├── proc/            ELF64 / .zxe 加载、用户页管理、系统调用
-    │   ├── mem/             PMM、VMM、堆
-    │   ├── lib/             字符串、printf、UTF-8 控制台、C++ 运行时
-    │   ├── font/            font8x8 字体数据、TrueType glyf 光栅化引擎
-    │   └── include/         内核公共头文件
-    ├── drivers/             Ada：串口、PIT、PS/2 键盘与鼠标、GOP
-    ├── apps/                C++：Shell、Desktop-Shell
-    ├── user/                ring 3 程序（init、hello）与用户库/链接脚本
-    ├── initramfs/           ramfs 初始内容（motd、version、测试文本）
-    ├── initramfs/data/      生成 FAT32 数据盘的素材（WQY.TTC 字体等）
-    ├── tools/               FASM、zxe-pack.rb（ELF→.zxe）、bios-img.rb、smoke.rb、screenshot.rb
-    ├── esp/                 构建出的 UEFI 引导目录
-    └── out/                 构建产物（含 FAT32 数据盘 data.img、启动 ISO）
+    │   ├── arch/x86_64/      入口、GDT/TSS、ISR、PIC、ring 3 切换
+    │   ├── int/              IDT 与异常/IRQ/系统调用
+    │   ├── drivers/          PIT、键盘、RTC、ACPI 胶水、AHCI 日志
+    │   ├── fs/               initramfs、FAT32、VFS、安装器
+    │   ├── proc/             .zxe / ELF64 加载与系统调用
+    │   ├── mem/              PMM、VMM、堆
+    │   ├── lib/              字符串、printf、UTF-8 控制台、C++ 运行时
+    │   ├── font/             8x8 点阵 + TrueType glyf 光栅化
+    │   └── include/          内核公共头文件
+    ├── drivers/              SPARK/Ada 驱动（ACPI、PCI/PCIe、AHCI、IDE、SATA、SCSI…）
+    ├── apps/                 C++20：Shell、Desktop-Shell、编辑器、zcc
+    ├── user/                 ring 3 程序与用户库
+    ├── initramfs/            ramfs 初始内容与数据盘素材
+    ├── tools/                Ruby：zxe-pack、bios-img、smoke、screenshot
+    └── out/                  构建产物（kernel.bin、data.img、ISO）
 ```
 
-## 引导流程
+---
 
-ZhaoxuBootloader 有两套引导层，共用同一份内核镜像与 `boot_info` 契约。
+## ⚠️ 当前限制
 
-UEFI：
+- 🧵 单核、无调度器；同一时刻只运行一个 ring 3 进程，尚无 fork/exec
+- 💾 文件系统只读：FAT32 不支持写入、创建与删除；ext4 尚未接入
+- 🧠 用户进程共享内核页表，依靠页级 `U/S` 位隔离
+- 🌐 无网络协议栈
+- ⌨️ 输入为 PS/2 键盘/鼠标与 COM1 串口
+- 🖼️ 显示依赖 UEFI GOP 或 VBE LFB 帧缓冲
+- 🔌 存储驱动覆盖 AHCI/IDE/SATA/SCSI（ATAPI），暂无 NVMe 与 USB 存储
 
-1. UEFI 固件加载 `esp/EFI/BOOT/BOOTX64.EFI`（FASM 生成的 PE64 EFI 映像）。
-2. 引导层取得 GOP 帧缓冲、ACPI RSDP 与 UEFI 内存映射。
-3. 分配并复制内核 flat binary，建立恒等映射与 higher-half 页表。
-4. 调用 `ExitBootServices`，切换 CR3，跳转到 higher-half 内核入口。
+---
 
-legacy BIOS：
+## 📜 许可证
 
-1. SeaBIOS 从 ISO 的 El Torito 入口或安装盘的 MBR 加载 stage 1（512 字节引导扇区）。
-2. stage 1 用 INT 13h CHS 读把 stage 2 载入 0x8000。
-3. stage 2 选择 32bpp VBE LFB、收集 E820 内存图、扫描 ACPI RSDP，并把内核整块读入 0x10000。
-4. stage 2 把内核复制到 32 MiB 物理窗口、清零整个窗口、建立恒等映射与 higher-half 页表，写入 `boot_info` 后进入长模式。
+本项目采用 [Apache License 2.0](LICENSE)。第三方组件与字体声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-公共：
+<div align="center">
 
-5. 内核建立 GDT/IDT，初始化 PMM/VMM/堆、CPUID、ACPI、RTC、AHCI 与 VFS（initramfs + FAT32），并从数据盘加载 TrueType 中文字体。
-6. 启用中断，打印启动日志；自动以 ring 3 运行 initramfs 中的 `/bin/init`。
-7. `/bin/init` 通过系统调用读取 `/etc/motd` 与 `/mnt` 下的 FAT32 文件，退出后回到内核。
-8. 内核进入 C++ Shell 提示符；`run` 命令可再次加载并运行 ring 3 的 `.zxe` 或 ELF64 程序。
+**Zhaoxu OS · Yuanshuo Kernel** · 用 C / FASM / GAS / SPARK / C++ 从零构建
 
-内存布局要点：
+Copyright © 2026 Nexsteaduser. All Rights Reserved. · admin@nexsteaduser.com
 
-- 内核虚拟基址：`0xffffffff80000000`，内核栈顶 `0xffffffff80f00000`
-- 内核堆虚拟基址：`0xffffffff90000000`
-- 物理内存管理范围：前 4 GiB，4 KiB 页
-
-## 当前限制
-
-- 单核、无调度器；同一时刻只运行一个 ring 3 进程，无 fork/exec 语义
-- 文件系统只读：FAT32 不支持写入/创建，块设备驱动仅覆盖 AHCI（无 NVMe/USB）
-- 用户进程共享内核页表，依靠页级 `U/S` 位隔离，尚无独立地址空间
-- 无网络协议栈
-- 输入仅 PS/2 键盘与 COM1 串口，显示输出依赖 UEFI GOP 或 VBE LFB 帧缓冲
-- ACPI `_S5` 通过 DSDT AML 模式匹配解析，覆盖常见固件；无法匹配时回退探测
-
-## 许可证
-
-本项目采用 [Apache License 2.0](LICENSE)。第三方组件声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
-
-Copyright © 2026 Nexsteaduser. All Rights Reserved. 联系邮箱：admin@nexsteaduser.com
+</div>

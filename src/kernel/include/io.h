@@ -57,4 +57,14 @@ u16 inw_port(u16 port);
 void outl_port(u16 port, u32 value);
 u32 inl_port(u16 port);
 
+/* Volatile MMIO primitives for the Ada drivers. */
+u8 mmio_read8(u64 address);
+u16 mmio_read16(u64 address);
+u32 mmio_read32(u64 address);
+u64 mmio_read64(u64 address);
+void mmio_write8(u64 address, u8 value);
+void mmio_write16(u64 address, u16 value);
+void mmio_write32(u64 address, u32 value);
+void mmio_write64(u64 address, u64 value);
+
 #endif

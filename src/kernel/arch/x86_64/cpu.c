@@ -65,6 +65,17 @@ void cpu_init(void)
 {
     u32 a, b, c, d;
 
+    /* SSE2 is used by the stb_truetype-backed font engine. Clear CR0.EM/TS
+     * and advertise FXSAVE/XMM exception support before any float code. */
+    __asm__ volatile(
+        "mov %%cr0, %%rax\n\t"
+        "and $~((1 << 2) | (1 << 3)), %%rax\n\t"
+        "mov %%rax, %%cr0\n\t"
+        "mov %%cr4, %%rax\n\t"
+        "or $((1 << 9) | (1 << 10)), %%rax\n\t"
+        "mov %%rax, %%cr4"
+        ::: "rax", "memory");
+
     memset(&info, 0, sizeof(info));
 
     cpuid(0, 0, &a, &b, &c, &d);

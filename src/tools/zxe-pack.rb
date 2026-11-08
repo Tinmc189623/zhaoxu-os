@@ -41,7 +41,7 @@ e_phnum.to_i.times do |i|
   memsz = data[ph + 40, 8].unpack1("Q<")
   next if memsz.zero?
   abort format("segment vaddr 0x%x below USER_LOAD_BASE", vaddr) if
-    vaddr < 0x1_0000_0000
+    vaddr < 0x100_0000_0000
   abort format("segment vaddr 0x%x not page aligned", vaddr) unless
     (vaddr & 0xFFF).zero?
   abort "segment file range out of bounds" if off + filesz > data.bytesize

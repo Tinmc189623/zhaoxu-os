@@ -56,7 +56,11 @@ ISR_NOERR 31
     ISR_NOERR \n
 .endr
 
+ISR_NOERR 64
+ISR_NOERR 65
+ISR_NOERR 66
 ISR_NOERR 128
+ISR_NOERR 255
 
 isr_common:
     cld

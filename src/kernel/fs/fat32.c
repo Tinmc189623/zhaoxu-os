@@ -547,8 +547,14 @@ int fat32_mount(void)
 
     for (int disk = 0; disk < disk_count; disk++) {
         u64 sectors = ahci_disk_sectors(disk);
-        if (sectors < 2 || ahci_disk_read(disk, 0, 1, sector) != 0)
+        if (sectors < 2) {
+            kprintf("[fat32] disk %d: only %llu sectors\n", disk, sectors);
             continue;
+        }
+        if (ahci_disk_read(disk, 0, 1, sector) != 0) {
+            kprintf("[fat32] disk %d: sector 0 read failed\n", disk);
+            continue;
+        }
 
         u64 candidates[8];
         char labels[8][FAT32_LABEL_MAX];
@@ -585,6 +591,11 @@ int fat32_mount(void)
                     break;
             }
         }
+
+        kprintf("[fat32] disk %d: %d FAT candidate(s)", disk, candidate_count);
+        if (candidate_count > 0)
+            kprintf(", first \"%s\"", labels[0]);
+        kprintf("\n");
 
         for (int i = 0; i < candidate_count; i++) {
             int score = name_equal(labels[i], "ZHAOXUDATA") ? 2 : 1;

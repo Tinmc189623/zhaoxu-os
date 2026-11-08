@@ -1,4 +1,5 @@
 #include <gdt.h>
+#include <percpu.h>
 #include <string.h>
 #include <types.h>
 
@@ -28,12 +29,16 @@ struct tss {
     u16 iomap_base;
 } __attribute__((packed));
 
-static u64 gdt[7];
-static struct tss tss;
-static u8 double_fault_stack[8192] __attribute__((aligned(16)));
-static u8 nmi_stack[8192] __attribute__((aligned(16)));
+#define GDT_BASE_ENTRIES 5
+#define GDT_ENTRY_COUNT  (GDT_BASE_ENTRIES + 2 * MAX_CPUS)
+
+static u64 gdt[GDT_ENTRY_COUNT];
+static struct tss tss_table[MAX_CPUS];
+static u8 double_fault_stacks[MAX_CPUS][8192] __attribute__((aligned(16)));
+static u8 nmi_stacks[MAX_CPUS][8192] __attribute__((aligned(16)));
 
 extern void gdt_flush(const struct gdt_ptr *ptr);
+extern void gdt_load_ap(const struct gdt_ptr *ptr, u16 tss_selector);
 extern void tss_flush(void);
 
 static u64 make_descriptor(u32 base, u32 limit, u8 access, u8 flags)
@@ -48,33 +53,71 @@ static u64 make_descriptor(u32 base, u32 limit, u8 access, u8 flags)
     return desc;
 }
 
-void tss_set_rsp0(u64 rsp0)
+static u16 tss_selector(u32 cpu)
 {
-    tss.rsp0 = rsp0;
+    return (u16)((GDT_BASE_ENTRIES + 2 * cpu) * 8);
 }
 
-void gdt_init(void)
+static void build_tss_entry(u32 cpu)
 {
-    struct gdt_ptr ptr;
+    struct tss *state = &tss_table[cpu];
+    memset(state, 0, sizeof(*state));
+    state->ist[0] = (u64)double_fault_stacks[cpu] +
+                    sizeof(double_fault_stacks[cpu]);
+    state->ist[1] = (u64)nmi_stacks[cpu] + sizeof(nmi_stacks[cpu]);
+    state->iomap_base = (u16)sizeof(*state);
 
-    memset(&tss, 0, sizeof(tss));
-    tss.rsp0 = 0xffffffff80f00000ULL;
-    tss.ist[0] = (u64)double_fault_stack + sizeof(double_fault_stack);
-    tss.ist[1] = (u64)nmi_stack + sizeof(nmi_stack);
-    tss.iomap_base = (u16)sizeof(tss);
+    u64 base = (u64)state;
+    u32 index = GDT_BASE_ENTRIES + 2 * cpu;
+    gdt[index] = make_descriptor((u32)base, sizeof(*state) - 1, 0x89, 0x00);
+    gdt[index + 1] = base >> 32;
+}
 
+static void build_gdt(void)
+{
+    memset(gdt, 0, sizeof(gdt));
     gdt[0] = 0;
     gdt[1] = make_descriptor(0, 0xFFFFF, 0x9A, 0xA0); /* kernel code, L=1 */
     gdt[2] = make_descriptor(0, 0xFFFFF, 0x92, 0xC0); /* kernel data */
     gdt[3] = make_descriptor(0, 0xFFFFF, 0xFA, 0xA0); /* user code, L=1 */
     gdt[4] = make_descriptor(0, 0xFFFFF, 0xF2, 0xC0); /* user data */
 
-    u64 tss_base = (u64)&tss;
-    gdt[5] = make_descriptor((u32)tss_base, sizeof(tss) - 1, 0x89, 0x00);
-    gdt[6] = tss_base >> 32;
+    for (u32 cpu = 0; cpu < MAX_CPUS; cpu++)
+        build_tss_entry(cpu);
+}
+
+void tss_set_rsp0_cpu(u32 cpu, u64 rsp0)
+{
+    if (cpu >= MAX_CPUS)
+        return;
+    tss_table[cpu].rsp0 = rsp0;
+}
+
+void tss_set_rsp0(u64 rsp0)
+{
+    tss_set_rsp0_cpu(cpu_index(), rsp0);
+}
+
+void gdt_init(void)
+{
+    struct gdt_ptr ptr;
+
+    build_gdt();
 
     ptr.limit = sizeof(gdt) - 1;
     ptr.base = (u64)gdt;
     gdt_flush(&ptr);
     tss_flush();
+}
+
+void gdt_ap_init(u32 cpu)
+{
+    struct gdt_ptr ptr;
+
+    if (cpu >= MAX_CPUS)
+        return;
+
+    ptr.limit = sizeof(gdt) - 1;
+    ptr.base = (u64)gdt;
+    gdt_load_ap(&ptr, tss_selector(cpu));
 }

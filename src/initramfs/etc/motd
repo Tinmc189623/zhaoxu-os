@@ -6,5 +6,5 @@ in-kernel ramfs.  The kernel, drivers and shell are written in FASM,
 C, Ada and C++; this process runs in ring 3.  Chinese glyphs are
 rasterized from the TrueType font on the data volume (WQY.TTC).
 
-Try: ls /, cat /mnt/HELLO.TXT, run /mnt/HELLO.ZXE, run /mnt/HELLO.ELF,
-     fonttest 0x4e2d, mounts
+Try: ls /, cat /mnt/HELLO.TXT, /mnt/HELLO.ZXE, /mnt/HELLO.ELF,
+     ./mnt/HELLO.ZXE, fonttest 0x4e2d, mounts

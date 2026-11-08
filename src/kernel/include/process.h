@@ -14,6 +14,8 @@ struct process_info {
 
 void process_init(void);
 int process_run(const char *path, int argc, char **argv);
+int process_run_image(const u8 *image, u64 size, const char *name,
+                      int argc, char **argv);
 int process_active(void);
 const struct process_info *process_get_info(void);
 

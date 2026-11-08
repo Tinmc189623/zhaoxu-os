@@ -1,5 +1,6 @@
 #include <drivers.h>
 #include <io.h>
+#include <thread.h>
 #include <timer.h>
 #include <types.h>
 
@@ -18,6 +19,8 @@ void timer_init(u32 hz)
 void timer_irq(void)
 {
     ticks++;
+    sched_tick();
+    sched_wake_expired(ticks);
 }
 
 u64 timer_ticks(void)

@@ -11,6 +11,7 @@ struct interrupt_frame {
 };
 
 void idt_init(void);
+void idt_reload(void);
 void pic_init(void);
 void pic_unmask(u8 irq);
 void pic_mask(u8 irq);
