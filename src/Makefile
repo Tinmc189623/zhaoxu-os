@@ -193,10 +193,17 @@ $(BUILD)/welcome_client.uelf: $(WELCOME_SRCS) $(WELCOME_HDRS) user/user.ld
 	$(CC) $(USER_CFLAGS) -Iuser -Iuser/lib/include -Ikernel/include \
 	  $(USER_LDFLAGS) -o $@ $(WELCOME_SRCS)
 
+CALC_SRCS := user/calc_client.c user/lib/ade_client.c user/userlib.c
+
+$(BUILD)/calc_client.uelf: $(CALC_SRCS) $(WELCOME_HDRS) user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -Iuser -Iuser/lib/include -Ikernel/include \
+	  $(USER_LDFLAGS) -o $@ $(CALC_SRCS)
+
 # ---- initramfs -------------------------------------------------------
 RAMFS := $(BUILD)/initramfs
 RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/ade \
-               $(RAMFS)/bin/apps/welcome.zxe \
+               $(RAMFS)/bin/apps/welcome.zxe $(RAMFS)/bin/apps/calc.zxe \
                $(RAMFS)/etc/motd $(RAMFS)/etc/version \
                $(RAMFS)/mnt \
                $(RAMFS)/data/HELLO.TXT $(RAMFS)/data/HELLO.ZXE \
@@ -213,6 +220,10 @@ $(RAMFS)/bin/ade: $(OUT)/ade.zxe
 	cp $< $@
 
 $(RAMFS)/bin/apps/welcome.zxe: $(OUT)/welcome_client.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/bin/apps/calc.zxe: $(OUT)/calc_client.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 

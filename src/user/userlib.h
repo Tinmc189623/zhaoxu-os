@@ -34,6 +34,7 @@ typedef unsigned long long u64;
 #define SYS_READ_PATH   25
 #define SYS_PORT_TRY_ACCEPT 26
 #define SYS_PORT_TRY_RECV   27
+#define SYS_SERIAL_WRITE    28
 
 struct zos_fb_info {
     unsigned long address;
@@ -202,6 +203,11 @@ static inline long sys_port_try_recv(long channel, unsigned long *type,
 {
     return syscall4(SYS_PORT_TRY_RECV, channel, (long)type, (long)data,
                     capacity);
+}
+
+static inline long sys_serial_write(const void *data, unsigned long length)
+{
+    return syscall3(SYS_SERIAL_WRITE, (long)data, (long)length, 0);
 }
 
 static inline void sys_exit(int status)

@@ -6,6 +6,10 @@
 #define ADE_PORT_NAME "ade"
 #define ADE_TEXT_MAX 32
 
+#define ADE_TEXT_CENTER 1u
+#define ADE_TEXT_RIGHT  2u
+#define ADE_TEXT_SCALE2 4u
+
 struct ade_message {
     u32 type;
     i32 x, y, w, h;

@@ -59,6 +59,7 @@
 #define SYS_READ_PATH   25
 #define SYS_PORT_TRY_ACCEPT 26
 #define SYS_PORT_TRY_RECV   27
+#define SYS_SERIAL_WRITE    28
 
 #define FB_USER_BASE    0x0000010040000000ULL
 #define FB_MAX_PAGES    8192
@@ -843,6 +844,20 @@ static long syscall_mouse(struct process *process, u64 state_pointer)
     return mouse_ready() ? 1 : 0;
 }
 
+static long syscall_serial_write(struct process *process, u64 buffer,
+                                 u64 length)
+{
+    if (length > 65536)
+        length = 65536;
+    if (user_range_ok(process, buffer, length) != 1)
+        return -1;
+
+    const u8 *data = (const u8 *)(uintptr_t)buffer;
+    for (u64 i = 0; i < length; i++)
+        serial_putc(data[i]);
+    return (long)length;
+}
+
 static long syscall_read_path(struct process *process, u64 path_pointer,
                               u64 buffer_pointer, u64 capacity)
 {
@@ -1028,6 +1043,9 @@ void syscall_dispatch(struct interrupt_frame *frame)
     case SYS_PORT_TRY_RECV:
         result = syscall_port_try_recv(process, frame->rdi, frame->rsi,
                                        frame->rdx, frame->r10);
+        break;
+    case SYS_SERIAL_WRITE:
+        result = syscall_serial_write(process, frame->rdi, frame->rsi);
         break;
     default:
         result = -1;

@@ -154,7 +154,7 @@ void kprintf(const char *format, ...)
     va_end(arguments);
 
     if (length > 0)
-        sys_write(2, buffer, (u64)length);
+        sys_serial_write(buffer, (u64)length);
 }
 
 static int g_mouse_x;

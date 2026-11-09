@@ -51,7 +51,7 @@ Yuanshuo Kernel：地址空间、进程、IPC、IRQ/MMIO 授权、帧缓冲映�
 | P0 | 构建修复、可启动基线 | 干净构建；QEMU 直入 ADE | 完成 |
 | P1 | 每进程地址空间、spawn/wait、命名端口、共享内存 | 两个 .zxe 进程通信；SMP=4 稳定 | 完成 |
 | P2 | Ring3 ADE 显示服务器、窗口协议、输入路由、系统渲染库 | 一个 .zxe 客户端窗口可交互 | 完成 |
-| P3 | 应用迁移、`.desk` 启动器、init/打包 | Dock 启动全部应用并回收进程 | 进行中 |
+| P3 | 应用迁移、`.desk` 启动器、init/打包 | Dock 启动全部应用并回收进程 | 进行中（Welcome/Calculator 已迁移） |
 | P4 | 驱动外移：存储/输入/显示/总线服务 | 内核二进制不含驱动符号 | 未开始 |
 | P5 | 桌面完善：面板、启动器、窗口特效 | Aqua 交互与视觉回归 | 未开始 |
 
@@ -77,6 +77,16 @@ Yuanshuo Kernel：地址空间、进程、IPC、IRQ/MMIO 授权、帧缓冲映�
   关闭。
 - `user/welcome_client.c` + `user/lib/ade_client.c` 是首个独立 `.zxe` 客户端；
   点击按钮后客户端重绘并提交新的 damage。
+
+### P3 已落地（部分）
+
+- Welcome 与 Calculator 都是独立 `.zxe` 客户端，经 `ade` 端口提交命令流；
+  Calculator 支持点击与键盘输入（已验证 `7 + 5 = 12`）。
+- `TEXT` 命令支持 `CENTER`/`RIGHT`/`SCALE2` 标志；`CREATE` 携带客户端
+  glyph 与 accent，Dock 直接显示客户端图标。
+- 关闭窗口后客户端进程退出，ADE 检测通道断开、注销应用并强制重绘 Dock。
+- ADE 运行期日志走 `serial_write` 系统调用，不再写入内核 FB 控制台。
+- 待办：Files/Monitor 客户端、`.desk` 启动器按需 spawn、自动 spawn 移除。
 
 ## 驱动外移约束
 

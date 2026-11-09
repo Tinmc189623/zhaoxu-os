@@ -35,6 +35,7 @@ struct client {
     int used;
     u64 channel;
     char title[ADE_TEXT_MAX];
+    char glyph[2];
     char id[16];
     struct ade_app app;
     struct client_command commands[kMaxCommands];
@@ -156,9 +157,17 @@ void client_paint(int index, const struct ade_view *view)
                                                : 8,
                                 command->color, 255);
             break;
-        case ADE_OP_TEXT:
-            render_text(command->text, x, y, command->color, 1);
+        case ADE_OP_TEXT: {
+            int scale = (command->extra & ADE_TEXT_SCALE2) ? 2 : 1;
+            int width = render_text_width(command->text, scale);
+            int draw_x = x;
+            if (command->extra & ADE_TEXT_CENTER)
+                draw_x = x - width / 2;
+            else if (command->extra & ADE_TEXT_RIGHT)
+                draw_x = x - width;
+            render_text(command->text, draw_x, y, command->color, scale);
             break;
+        }
         default:
             break;
         }
@@ -188,7 +197,9 @@ void release_client(int index)
         return;
     dwm_close_app(&client->app);
     ade_unregister_app(&client->app);
+    kprintf("[ade ] client %d disconnected\n", index);
     memset(client, 0, sizeof(*client));
+    dwm_invalidate_all();
 }
 
 void handle_create(int index, const struct ade_message *message)
@@ -199,14 +210,16 @@ void handle_create(int index, const struct ade_message *message)
 
     strncpy(client->title, message->text, ADE_TEXT_MAX - 1);
     client->title[ADE_TEXT_MAX - 1] = 0;
+    client->glyph[0] = message->extra ? (char)message->extra : 'A';
+    client->glyph[1] = 0;
     ksnprintf(client->id, sizeof(client->id), "client%d", index);
 
     struct ade_app *app = &client->app;
     memset(app, 0, sizeof(*app));
     app->id = client->id;
     app->name = client->title;
-    app->glyph = "W";
-    app->accent = 0x1E6FB8;
+    app->glyph = client->glyph;
+    app->accent = message->color ? message->color : 0x1E6FB8;
     app->default_w = message->x > 0 ? message->x : 640;
     app->default_h = message->y > 0 ? message->y : 460;
     app->unscaled = 1;
@@ -250,8 +263,10 @@ void ade_display_init(void)
         return;
     }
 
-    long pid = sys_spawn("/bin/apps/welcome.zxe");
-    kprintf("[ade ] display server listening, welcome pid %ld\n", pid);
+    long welcome = sys_spawn("/bin/apps/welcome.zxe");
+    long calc = sys_spawn("/bin/apps/calc.zxe");
+    kprintf("[ade ] display server listening, welcome %ld, calc %ld\n",
+            welcome, calc);
 }
 
 void ade_display_poll(void)

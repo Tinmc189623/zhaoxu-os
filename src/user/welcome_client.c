@@ -30,7 +30,7 @@ int user_main(long *stack)
         return 1;
     }
 
-    if (ade_create_window(channel, 640, 460, "欢迎") != 0) {
+    if (ade_create_window(channel, 640, 460, "欢迎", 'W', 0x1E6FB8) != 0) {
         u_puts("[welcome] create window failed\n");
         return 2;
     }

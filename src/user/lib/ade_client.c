@@ -30,7 +30,8 @@ long ade_connect(void)
     return 0;
 }
 
-int ade_create_window(long channel, int width, int height, const char *title)
+int ade_create_window(long channel, int width, int height, const char *title,
+                      char glyph, u32 accent)
 {
     struct ade_message message;
     for (u32 i = 0; i < sizeof(message); i++)
@@ -38,6 +39,8 @@ int ade_create_window(long channel, int width, int height, const char *title)
     message.type = ADE_OP_CREATE;
     message.x = width;
     message.y = height;
+    message.extra = (u32)(u8)glyph;
+    message.color = accent;
     copy_text(message.text, title);
     return send_message(channel, &message);
 }
@@ -74,7 +77,8 @@ int ade_round(long channel, int x, int y, int w, int h, u32 radius,
     return send_rect(channel, ADE_OP_ROUND, x, y, w, h, radius, color);
 }
 
-int ade_text(long channel, int x, int y, u32 color, const char *text)
+int ade_text_flags(long channel, int x, int y, u32 color, u32 flags,
+                   const char *text)
 {
     struct ade_message message;
     for (u32 i = 0; i < sizeof(message); i++)
@@ -83,8 +87,14 @@ int ade_text(long channel, int x, int y, u32 color, const char *text)
     message.x = x;
     message.y = y;
     message.color = color;
+    message.extra = flags;
     copy_text(message.text, text);
     return send_message(channel, &message);
+}
+
+int ade_text(long channel, int x, int y, u32 color, const char *text)
+{
+    return ade_text_flags(channel, x, y, color, 0, text);
 }
 
 int ade_commit(long channel)

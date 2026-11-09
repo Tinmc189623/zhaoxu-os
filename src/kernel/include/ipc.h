@@ -4,7 +4,7 @@
 #include <types.h>
 
 #define IPC_MSG_MAX 64
-#define IPC_QUEUE_DEPTH 64
+#define IPC_QUEUE_DEPTH 128
 #define IPC_NAME_MAX 32
 
 u64 ipc_listen(const char *name);
