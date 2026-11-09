@@ -17,7 +17,6 @@ int ttf_line_height(void);
 
 u32 ttf_upem(void);
 u32 ttf_num_glyphs(void);
-int ttf_cmap_fmt(void);
 
 int ttf_glyph_for(u32 codepoint, u32 *glyph);
 u32 ttf_glyph_advance(u32 glyph);

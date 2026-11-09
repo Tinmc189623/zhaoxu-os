@@ -78,9 +78,8 @@ static int load_system_font(void)
 
     for (u32 i = 0; i < ARRAY_SIZE(candidates); i++) {
         if (ttf_autoload(candidates[i]) == 0) {
-            kprintf("[ttf ] %s loaded: upem %u, %u glyphs, cmap fmt %d\n",
-                    candidates[i], ttf_upem(), ttf_num_glyphs(),
-                    ttf_cmap_fmt());
+            kprintf("[ttf ] %s loaded: upem %u, %u glyphs (stb_truetype)\n",
+                    candidates[i], ttf_upem(), ttf_num_glyphs());
             return 0;
         }
     }

@@ -153,7 +153,7 @@ ADE_FONT_CFLAGS := $(filter-out -mno-sse -mno-sse2 -mno-mmx -mno-avx,\
                   $(ADE_CFLAGS)) -msse2 -mno-avx -fno-math-errno
 ADE_C_SRCS := user/lib/shim.c user/lib/string_extra.c user/userlib.c \
               kernel/gfx/render.c kernel/gfx/svg.c kernel/font/font.c
-ADE_FONT_SRCS := kernel/font/ttf.c user/lib/stbtt_user.c
+ADE_FONT_SRCS := kernel/font/ttf.c kernel/font/stbtt.c
 ADE_CXX_SRCS := apps/ADE/main.cpp apps/ADE/wallpaper.cpp \
                 apps/ADE/menubar.cpp apps/ADE/dock.cpp \
                 apps/ADE/display/server.cpp \
@@ -175,7 +175,7 @@ $(ADE_BUILD)/kernel/font/ttf.o: kernel/font/ttf.c
 	@mkdir -p $(dir $@)
 	$(CC) $(ADE_FONT_CFLAGS) -c $< -o $@
 
-$(ADE_BUILD)/user/lib/stbtt_user.o: user/lib/stbtt_user.c
+$(ADE_BUILD)/kernel/font/stbtt.o: kernel/font/stbtt.c
 	@mkdir -p $(dir $@)
 	$(CC) $(ADE_FONT_CFLAGS) -c $< -o $@
 

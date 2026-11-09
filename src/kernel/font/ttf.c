@@ -134,11 +134,6 @@ u32 ttf_num_glyphs(void)
     return g_glyphs;
 }
 
-int ttf_cmap_fmt(void)
-{
-    return g_ready ? 4 : 0;
-}
-
 int ttf_glyph_for(u32 codepoint, u32 *glyph)
 {
     if (!g_ready || !glyph)

@@ -1,16 +1,32 @@
 /*
- * Zhaoxu OS - stb_truetype integration.
+ * Zhaoxu OS - single stb_truetype integration shared by kernel and ring 3.
  *
- * The font engine is stb_truetype.h v1.26, unmodified, from
- * third_party/stb.  This file only supplies the freestanding hooks: heap,
- * assertions and the handful of math routines stb needs.
+ * The parser and rasterizer are stb_truetype.h v1.26, unmodified, from
+ * third_party/stb.  This file only supplies the freestanding hooks (heap and
+ * math); the exact same source is compiled into the kernel and into libzos.
  */
-#include <kprintf.h>
-#include <mem.h>
 #include <stddef.h>
 #include <string.h>
 #include <stbtt.h>
 #include <types.h>
+
+#ifdef ZOS_USER
+#define STB_ARENA_BYTES (256u * 1024u)
+static u8 g_arena[STB_ARENA_BYTES];
+static usize g_arena_used;
+
+static void *stb_alloc(usize size)
+{
+    usize aligned = (size + 15) & ~(usize)15;
+    if (g_arena_used + aligned > STB_ARENA_BYTES)
+        return NULL;
+    void *pointer = g_arena + g_arena_used;
+    g_arena_used += aligned;
+    return pointer;
+}
+#else
+#include <mem.h>
+#endif
 
 static double z_fabs(double x)
 {
@@ -84,8 +100,8 @@ static double z_acos(double x)
     return z_atan2(z_sqrt(1.0 - x * x), x);
 }
 
-/* stb only calls pow() for the signed-distance path, which the desktop does
- * not use; supplying the cube root keeps that code path well-defined. */
+/* stb only calls pow() on the signed-distance path, which the desktop does
+ * not use; the cube root keeps that path well-defined without libm. */
 static double z_pow(double x, double y)
 {
     if (y == 1.0 / 3.0) {
@@ -113,8 +129,13 @@ static double z_pow(double x, double y)
 #define STBTT_cos(x)        z_cos(x)
 #define STBTT_acos(x)       z_acos(x)
 #define STBTT_fabs(x)       z_fabs(x)
+#ifdef ZOS_USER
+#define STBTT_malloc(x, u)  ((void)(u), stb_alloc((usize)(x)))
+#define STBTT_free(x, u)    ((void)(u), (void)(x))
+#else
 #define STBTT_malloc(x, u)  ((void)(u), kmalloc((usize)(x)))
 #define STBTT_free(x, u)    ((void)(u), kfree((void *)(x)))
+#endif
 #define STBTT_assert(x)     ((void)0)
 
 #define STB_TRUETYPE_IMPLEMENTATION
@@ -128,6 +149,10 @@ int zstb_load(const u8 *data, u64 size)
     (void)size;
     if (!data)
         return 0;
+
+#ifdef ZOS_USER
+    g_arena_used = 0;
+#endif
 
     int offset = stbtt_GetFontOffsetForIndex((const unsigned char *)data, 0);
     if (offset < 0)
@@ -200,6 +225,9 @@ void zstb_render(int glyph, float scale, u8 *out, int width, int height,
 {
     if (!g_ready)
         return;
+#ifdef ZOS_USER
+    g_arena_used = 0;
+#endif
     stbtt_MakeGlyphBitmap(&g_font, out, width, height, stride, scale, scale,
                           glyph);
 }
