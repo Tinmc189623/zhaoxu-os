@@ -19,9 +19,12 @@ CFLAGS  := -m64 -std=gnu11 -O2 -g -ffreestanding -fno-pie -fno-pic \
            -mno-sse -mno-sse2 -mno-mmx -mno-avx \
            -Wall -Wextra -Wno-unused-parameter \
            -Ikernel/include -Ikernel -Ikernel/font
+CFLAGS += -MMD -MP
 CXXFLAGS := $(filter-out -std=gnu11,$(CFLAGS)) -std=gnu++20 \
             -fno-exceptions -fno-rtti -fno-threadsafe-statics \
             -fno-use-cxa-atexit
+PROC_SELFTEST ?= 0
+CFLAGS += -DPROC_SELFTEST=$(PROC_SELFTEST)
 ADAFLAGS := -c -gnatp -gnat2022 -O2 -g -fno-pie \
             -fno-stack-protector -mno-red-zone -mcmodel=kernel \
             -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -mno-avx \
@@ -58,11 +61,16 @@ C_SRCS := kernel/main.c \
           kernel/fs/install.c \
           kernel/proc/process.c \
           kernel/proc/thread.c \
+          kernel/ipc/port.c \
+          kernel/ipc/shm.c \
+          kernel/gfx/render.c \
+          kernel/gfx/svg.c \
           kernel/lib/string.c \
           kernel/lib/printf.c \
           kernel/lib/console.c \
           kernel/font/font.c \
           kernel/font/ttf.c \
+          kernel/font/stbtt.c \
           kernel/mem/pmm.c \
           kernel/mem/vmm.c \
           kernel/mem/heap.c
@@ -86,16 +94,16 @@ ADA_SRCS := drivers/acpi.adb \
             drivers/scsi.adb \
             drivers/sata.adb
 CXX_SRCS := kernel/lib/cxx.cpp \
-            apps/shell.cpp \
-            apps/shell/cmd_sys.cpp \
-            apps/shell/cmd_fs.cpp \
-            apps/shell/cmd_hw.cpp \
-            apps/shell/cmd_ui.cpp \
-            apps/shell/cmd_power.cpp \
-            apps/shell/cmd_exec.cpp \
-            apps/edit.cpp \
-            apps/desktop.cpp \
-            apps/zcc.cpp
+            apps/ADE/main.cpp \
+            apps/ADE/wallpaper.cpp \
+            apps/ADE/menubar.cpp \
+            apps/ADE/dock.cpp \
+            apps/ADE/winmgr/dwm.cpp \
+            apps/deskapps/registry/main.cpp \
+            apps/deskapps/welcome/main.cpp \
+            apps/deskapps/files/main.cpp \
+            apps/deskapps/monitor/main.cpp \
+            apps/deskapps/calc/main.cpp
 
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(C_SRCS)) \
         $(patsubst %.S,$(BUILD)/%.o,$(ASM_SRCS)) \
@@ -104,12 +112,13 @@ OBJS := $(patsubst %.c,$(BUILD)/%.o,$(C_SRCS)) \
         $(BUILD)/initramfs.o \
         $(BUILD)/bios_stage1.o \
         $(BUILD)/bios_stage2.o
+DEPS := $(OBJS:.o=.d)
 
 HEADLESS ?= 0
 
 .PHONY: all clean run iso run-iso run-bios version
 
-all: $(OUT)/BOOTX64.EFI $(ESP)/BOOTX64.EFI
+all: $(OUT)/BOOTX64.EFI $(ESP)/BOOTX64.EFI $(ESP)/KERNEL.ELF
 
 # Sync the version from version.php (repo root) into all surfaces.
 version:
@@ -132,15 +141,78 @@ $(OUT)/%.zxe: $(BUILD)/%.uelf tools/zxe-pack.rb
 	@mkdir -p $(OUT)
 	$(RUBY) tools/zxe-pack.rb $< $@
 
+# ---- ADE ring 3 display server --------------------------------------
+ADE_BUILD := $(BUILD)/ade
+ADE_INCLUDES := -Iuser -Iuser/lib/include -Ikernel/include -Ikernel \
+                -Ikernel/font
+ADE_CFLAGS := $(USER_CFLAGS) $(ADE_INCLUDES) -DZOS_USER -MMD -MP
+ADE_CXXFLAGS := $(filter-out -std=gnu11,$(ADE_CFLAGS)) -std=gnu++20 \
+                -fno-exceptions -fno-rtti -fno-threadsafe-statics \
+                -fno-use-cxa-atexit
+ADE_FONT_CFLAGS := $(filter-out -mno-sse -mno-sse2 -mno-mmx -mno-avx,\
+                  $(ADE_CFLAGS)) -msse2 -mno-avx -fno-math-errno
+ADE_C_SRCS := user/lib/shim.c user/lib/string_extra.c user/userlib.c \
+              kernel/gfx/render.c kernel/gfx/svg.c kernel/font/font.c
+ADE_FONT_SRCS := kernel/font/ttf.c user/lib/stbtt_user.c
+ADE_CXX_SRCS := apps/ADE/main.cpp apps/ADE/wallpaper.cpp \
+                apps/ADE/menubar.cpp apps/ADE/dock.cpp \
+                apps/ADE/display/server.cpp \
+                apps/ADE/winmgr/dwm.cpp
+ADE_OBJS := $(patsubst %.c,$(ADE_BUILD)/%.o,$(ADE_C_SRCS)) \
+            $(patsubst %.c,$(ADE_BUILD)/%.o,$(ADE_FONT_SRCS)) \
+            $(patsubst %.cpp,$(ADE_BUILD)/%.o,$(ADE_CXX_SRCS))
+ADE_DEPS := $(ADE_OBJS:.o=.d)
+
+$(ADE_BUILD)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(ADE_CFLAGS) -c $< -o $@
+
+$(ADE_BUILD)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(ADE_CXXFLAGS) -c $< -o $@
+
+$(ADE_BUILD)/kernel/font/ttf.o: kernel/font/ttf.c
+	@mkdir -p $(dir $@)
+	$(CC) $(ADE_FONT_CFLAGS) -c $< -o $@
+
+$(ADE_BUILD)/user/lib/stbtt_user.o: user/lib/stbtt_user.c
+	@mkdir -p $(dir $@)
+	$(CC) $(ADE_FONT_CFLAGS) -c $< -o $@
+
+$(BUILD)/ade.uelf: $(ADE_OBJS) user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_LDFLAGS) -o $@ $(ADE_OBJS)
+
+# ---- ADE client (welcome window) ------------------------------------
+WELCOME_SRCS := user/welcome_client.c user/lib/ade_client.c user/userlib.c
+WELCOME_HDRS := user/userlib.h user/lib/include/ade_protocol.h \
+                user/lib/include/ade_client.h
+
+$(BUILD)/welcome_client.uelf: $(WELCOME_SRCS) $(WELCOME_HDRS) user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -Iuser -Iuser/lib/include -Ikernel/include \
+	  $(USER_LDFLAGS) -o $@ $(WELCOME_SRCS)
+
 # ---- initramfs -------------------------------------------------------
 RAMFS := $(BUILD)/initramfs
-RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/etc/motd $(RAMFS)/etc/version \
+RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/ade \
+               $(RAMFS)/bin/apps/welcome.zxe \
+               $(RAMFS)/etc/motd $(RAMFS)/etc/version \
                $(RAMFS)/mnt \
                $(RAMFS)/data/HELLO.TXT $(RAMFS)/data/HELLO.ZXE \
                $(RAMFS)/data/HELLO.ELF \
-               $(RAMFS)/data/DOCS/INFO.TXT
+               $(RAMFS)/data/DOCS/INFO.TXT \
+               $(RAMFS)/data/PING.ZXE $(RAMFS)/data/PONG.ZXE
 
 $(RAMFS)/bin/init: $(OUT)/init.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/bin/ade: $(OUT)/ade.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/bin/apps/welcome.zxe: $(OUT)/welcome_client.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
@@ -165,6 +237,14 @@ $(RAMFS)/data/HELLO.ZXE: $(OUT)/hello.zxe
 	cp $< $@
 
 $(RAMFS)/data/HELLO.ELF: $(BUILD)/hello.uelf
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/data/PING.ZXE: $(OUT)/ping.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/data/PONG.ZXE: $(OUT)/pong.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
@@ -203,14 +283,9 @@ $(BUILD)/efi_main.o: boot/efi_main.c boot/uefi.h
 	@mkdir -p $(BUILD)
 	$(BOOT_CC) $(BOOT_CFLAGS) -c $< -o $@
 
-$(BUILD)/kernel_blob.o: boot/kernel_blob.S $(OUT)/kernel.bin
-	@mkdir -p $(BUILD)
-	$(BOOT_CC) -target x86_64-pc-win32 -c $< -o $@
-
-$(OUT)/BOOTX64.EFI: $(BUILD)/efi_main.o $(BUILD)/kernel_blob.o
+$(OUT)/BOOTX64.EFI: $(BUILD)/efi_main.o
 	@mkdir -p $(OUT)
-	$(BOOT_LD) $(BOOT_LDFLAGS) $(BUILD)/efi_main.o $(BUILD)/kernel_blob.o \
-	  /out:$@
+	$(BOOT_LD) $(BOOT_LDFLAGS) $(BUILD)/efi_main.o /out:$@
 
 # ---- ZhaoxuBootloader legacy BIOS chain ------------------------------
 # stage1 (512-byte MBR / El Torito boot sector) loads stage2 from LBA 1;
@@ -295,12 +370,18 @@ $(ESP)/BOOTX64.EFI: $(OUT)/BOOTX64.EFI
 	@mkdir -p $(ESP)
 	cp $< $@
 
+# Rule 25/26: the kernel is a separate ELF on the boot volume, never part of
+# BOOTX64.EFI.  The UEFI loader reads it through the Simple File System.
+$(ESP)/KERNEL.ELF: $(OUT)/kernel.elf
+	@mkdir -p $(dir $@)
+	cp $< $@
+
 clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin $(OUT)/BOOTX64.EFI \
 	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/initramfs.tar \
 	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu_*_installer.iso \
 	       $(OUT)/bios_stage1.bin $(OUT)/bios_stage2.bin $(OUT)/bios.img \
-	       $(OUT)/target.img $(ESP)/BOOTX64.EFI
+	       $(OUT)/target.img $(ESP)/BOOTX64.EFI $(ESP)/KERNEL.ELF
 
 OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
@@ -308,6 +389,7 @@ QEMU_MACHINE ?= q35
 QEMU_MEM ?= 512M
 QEMU_SMP ?= 4
 QEMU_DISPLAY ?= -display none
+QEMU_MONITOR ?= none
 # VT-d IOMMU for the q35/OVMF runs; QEMU then exposes an ACPI DMAR table.
 QEMU_IOMMU ?= -device intel-iommu
 
@@ -334,27 +416,29 @@ run: all $(DATA_IMG) $(EFI_IMG) $(TARGET_IMG)
 	  -drive if=none,id=zdst,format=raw,file=$(TARGET_IMG) \
 	  -device ide-hd,drive=zdst,bus=ide.3 \
 	  $(QEMU_IOMMU) \
-	  -net none -serial stdio -monitor none $(QEMU_DISPLAY) -no-reboot
+	  -net none -serial stdio -monitor $(QEMU_MONITOR) $(QEMU_DISPLAY) -no-reboot
 
 # ---- UEFI ISO --------------------------------------------------------
 # Rule 11: ISO files are named zhaoxu_{version}_installer.iso.
 ZHAOXU_VERSION := $(shell $(RUBY) -e 'v=File.read("kernel/include/version.h")[/ZHAOXU_VERSION\s+"([^"]+)"/,1]; print v')
 ISO := $(OUT)/zhaoxu_$(ZHAOXU_VERSION)_installer.iso
 ISO_ROOT := $(BUILD)/iso
-ISO_ESP_MB ?= 16
+ISO_ESP_MB ?= 64
 
-$(EFI_IMG): $(OUT)/BOOTX64.EFI
+$(EFI_IMG): $(OUT)/BOOTX64.EFI $(OUT)/kernel.elf
 	@mkdir -p $(OUT)
 	dd if=/dev/zero of=$@ bs=1M count=$(ISO_ESP_MB) status=none
-	mkfs.vfat -F 16 -n ZHAOXUEFI $@ >/dev/null
+	mkfs.vfat -F 32 -n ZHAOXUEFI $@ >/dev/null
 	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/EFI
 	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/EFI/BOOT
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $< ::/EFI/BOOT/BOOTX64.EFI
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/kernel.elf ::/EFI/BOOT/KERNEL.ELF
 
-$(ISO): $(OUT)/BOOTX64.EFI $(EFI_IMG) $(BIOS_IMG)
+$(ISO): $(OUT)/BOOTX64.EFI $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG)
 	@rm -rf $(ISO_ROOT)
 	@mkdir -p $(ISO_ROOT)/EFI/BOOT
 	cp $(OUT)/BOOTX64.EFI $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
+	cp $(OUT)/kernel.elf $(ISO_ROOT)/EFI/BOOT/KERNEL.ELF
 	cp $(EFI_IMG) $(ISO_ROOT)/efi.img
 	cp $(BIOS_IMG) $(ISO_ROOT)/bios.img
 	xorriso -as mkisofs -o $@ -V ZHAOXU_OS -J -R \
@@ -380,10 +464,13 @@ run-iso: $(ISO) $(DATA_IMG) $(EFI_IMG) $(TARGET_IMG)
 	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
 	  -drive if=pflash,format=raw,unit=1,file=$(OUT)/OVMF_VARS.fd \
 	  $(QEMU_CD) $(QEMU_INSTALL_DISKS) -boot order=d \
-	  -net none -serial stdio -monitor none $(QEMU_DISPLAY) -no-reboot
+	  -net none -serial stdio -monitor $(QEMU_MONITOR) $(QEMU_DISPLAY) -no-reboot
 
 # Legacy BIOS: SeaBIOS boots the El Torito image (ZhaoxuBootloader stage 1).
 run-bios: $(ISO) $(DATA_IMG) $(EFI_IMG) $(TARGET_IMG)
 	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
 	  $(QEMU_CD) $(QEMU_INSTALL_DISKS) -boot order=d \
-	  -net none -serial stdio -monitor none $(QEMU_DISPLAY) -no-reboot
+	  -net none -serial stdio -monitor $(QEMU_MONITOR) $(QEMU_DISPLAY) -no-reboot
+
+-include $(DEPS)
+-include $(ADE_DEPS)

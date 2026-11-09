@@ -15,9 +15,9 @@
 #include <pci.h>
 #include <process.h>
 #include <rtc.h>
-#include <shell.h>
 #include <smp.h>
 #include <string.h>
+#include <thread.h>
 #include <timer.h>
 #include <ttf.h>
 #include <types.h>
@@ -25,6 +25,68 @@
 #include <version.h>
 
 static struct boot_info g_boot;
+
+#ifndef PROC_SELFTEST
+#define PROC_SELFTEST 0
+#endif
+
+extern void ade_run(void) __attribute__((noreturn));
+
+#if PROC_SELFTEST == 1
+static void process_selftest(void)
+{
+    u64 first = process_spawn("/data/HELLO.ZXE", 0, NULL);
+    u64 second = process_spawn("/data/HELLO.ZXE", 0, NULL);
+    int first_status = -1;
+    int second_status = -1;
+
+    if (first)
+        process_wait(first, &first_status);
+    if (second)
+        process_wait(second, &second_status);
+
+    kprintf("[test] pid %llu status %d, pid %llu status %d\n",
+            first, first_status, second, second_status);
+}
+#elif PROC_SELFTEST == 2
+static void ipc_selftest(void)
+{
+    u64 pong = process_spawn("/data/PONG.ZXE", 0, NULL);
+    thread_sleep_ms(20);
+    u64 ping = process_spawn("/data/PING.ZXE", 0, NULL);
+    int pong_status = -1;
+    int ping_status = -1;
+
+    if (ping)
+        process_wait(ping, &ping_status);
+    if (pong)
+        process_wait(pong, &pong_status);
+
+    kprintf("[test] ipc pong=%d ping=%d\n", pong_status, ping_status);
+}
+#endif
+
+static int load_system_font(void)
+{
+    /* Fonts belong to the system: MiSans / MiSans Global / Inter are
+     * preferred, with the bundled CJK fallback for disk-less boots. */
+    static const char *const candidates[] = {
+        "/mnt/MiSans.ttf", "/mnt/MiSans-Regular.ttf",
+        "/mnt/MiSansGlobal.ttf", "/mnt/Inter.ttf",
+        "/mnt/Inter-Regular.ttf", "/mnt/WQY.TTC"
+    };
+
+    for (u32 i = 0; i < ARRAY_SIZE(candidates); i++) {
+        if (ttf_autoload(candidates[i]) == 0) {
+            kprintf("[ttf ] %s loaded: upem %u, %u glyphs, cmap fmt %d\n",
+                    candidates[i], ttf_upem(), ttf_num_glyphs(),
+                    ttf_cmap_fmt());
+            return 0;
+        }
+    }
+    kprintf("[ttf ] no MiSans/Inter/WQY font available\n");
+    return -1;
+}
 
 const struct boot_info *boot_get_info(void)
 {
@@ -149,25 +211,43 @@ void kernel_main(struct boot_info *boot)
         kprintf("[vfs ] /mnt unavailable, using ramfs only\n");
 
     if (vfs_fat_mounted()) {
-        int font_status = ttf_autoload("/mnt/WQY.TTC");
-        if (font_status == 0)
-            kprintf("[ttf ] WQY.TTC loaded: upem %u, %u glyphs, cmap fmt %d\n",
-                    ttf_upem(), ttf_num_glyphs(), ttf_cmap_fmt());
-        else
-            kprintf("[ttf ] CJK font unavailable (%d)\n", font_status);
+        if (load_system_font() == 0) {
+            struct ttf_glyph glyph;
+            if (ttf_render(0x4E2D, &glyph) == 0 && glyph.w && glyph.h)
+                kprintf("[ttf ] glyph U+4E2D %ux%u adv %u\n",
+                        glyph.w, glyph.h, glyph.adv);
+            else
+                kprintf("[ttf ] glyph U+4E2D raster failed\n");
+        }
     } else {
-        kprintf("[ttf ] no CJK font (no data volume)\n");
+        kprintf("[ttf ] no system font volume\n");
     }
     process_init();
+#if PROC_SELFTEST == 1
+    process_selftest();
+#elif PROC_SELFTEST == 2
+    ipc_selftest();
+#endif
 
-    console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
-    kprintf("\nBoot complete. Entering Yuanshuo shell.\n\n");
+    if (g_boot.framebuffer_base) {
+        console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
+        kprintf("\nBoot complete. Starting ADE desktop.\n\n");
+        console_reset_color();
+
+        u64 ade_pid = process_spawn("/bin/ade", 0, NULL);
+        if (ade_pid) {
+            int status = -1;
+            process_wait(ade_pid, &status);
+            kprintf("[ade ] ring3 desktop exited with %d\n", status);
+        } else {
+            kprintf("[ade ] /bin/ade unavailable, using in-kernel fallback\n");
+        }
+        ade_run();
+    }
+
+    console_set_color(COLOR_LIGHT_RED, COLOR_BLACK);
+    kprintf("\nNo framebuffer. ADE requires GOP graphics; halting.\n");
     console_reset_color();
-
-    char *init_argv[] = { (char *)"/bin/init" };
-    kprintf("[init] starting /bin/init in ring 3\n");
-    int init_status = process_run("/bin/init", 1, init_argv);
-    kprintf("[init] /bin/init exited with status %d\n\n", init_status);
-
-    shell_run();
+    for (;;)
+        hlt();
 }

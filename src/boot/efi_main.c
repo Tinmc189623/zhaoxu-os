@@ -20,9 +20,10 @@
 #define KERNEL_ALLOC     0x01200000ULL
 #define PAGE_TABLE_PAGES (32ULL)
 #define BOOT_MAGIC       0x5A4F5331u
-
-extern const UINT8 kernel_blob[];
-extern const UINT8 kernel_blob_end[];
+/* Rule 25: BOOTX64.EFI must not embed the kernel.  The loader reads
+ * \EFI\BOOT\KERNEL.BIN from the boot volume instead.  The staging area is
+ * 16 MiB, with the memory map at +12 MiB and boot_info at +14 MiB. */
+#define KERNEL_FILE_MAX  0x00B00000ULL
 
 static EFI_SYSTEM_TABLE *g_st;
 static EFI_BOOT_SERVICES *g_bs;
@@ -326,6 +327,135 @@ static EFI_STATUS alloc_below_4g(UINTN pages, EFI_PHYSICAL_ADDRESS *out)
     return EFI_BUFFER_TOO_SMALL;
 }
 
+struct elf64_ehdr {
+    UINT8 ident[16];
+    UINT16 type;
+    UINT16 machine;
+    UINT32 version;
+    UINT64 entry;
+    UINT64 phoff;
+    UINT64 shoff;
+    UINT32 flags;
+    UINT16 ehsize;
+    UINT16 phentsize;
+    UINT16 phnum;
+    UINT16 shentsize;
+    UINT16 shnum;
+    UINT16 shstrndx;
+} __attribute__((packed));
+
+struct elf64_phdr {
+    UINT32 type;
+    UINT32 flags;
+    UINT64 offset;
+    UINT64 vaddr;
+    UINT64 paddr;
+    UINT64 filesz;
+    UINT64 memsz;
+    UINT64 align;
+} __attribute__((packed));
+
+#define ELF_PT_LOAD 1
+
+static UINT64 load_kernel_elf(EFI_HANDLE image_handle, UINT64 staging)
+{
+    static const EFI_GUID loaded_guid = ZHAOXU_LOADED_IMAGE_GUID;
+    static const EFI_GUID fs_guid = ZHAOXU_SIMPLE_FS_GUID;
+    EFI_LOADED_IMAGE_PROTOCOL *image = 0;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = 0;
+    EFI_FILE_PROTOCOL *root = 0;
+    EFI_FILE_PROTOCOL *file = 0;
+    EFI_STATUS status;
+    void *buffer = 0;
+
+    status = g_bs->HandleProtocol(image_handle, &loaded_guid, (void **)&image);
+    if (EFI_ERROR(status) || !image || !image->DeviceHandle)
+        return 0;
+    status = g_bs->HandleProtocol(image->DeviceHandle, &fs_guid,
+                                  (void **)&fs);
+    if (EFI_ERROR(status) || !fs)
+        return 0;
+    status = fs->OpenVolume(fs, &root);
+    if (EFI_ERROR(status) || !root)
+        return 0;
+
+    static CHAR16 esp_path[] = L"\\EFI\\BOOT\\KERNEL.ELF";
+    static CHAR16 root_path[] = L"\\KERNEL.ELF";
+    CHAR16 *paths[2] = { esp_path, root_path };
+    for (int i = 0; i < 2 && !file; i++) {
+        status = root->Open(root, &file, paths[i], EFI_FILE_MODE_READ, 0);
+        if (EFI_ERROR(status))
+            file = 0;
+    }
+    if (!file) {
+        root->Close(root);
+        return 0;
+    }
+
+    status = g_bs->AllocatePool(EFI_LOADER_DATA, KERNEL_FILE_MAX, &buffer);
+    if (EFI_ERROR(status) || !buffer) {
+        file->Close(file);
+        root->Close(root);
+        return 0;
+    }
+
+    UINT64 file_size = 0;
+    for (;;) {
+        if (file_size >= KERNEL_FILE_MAX)
+            break;
+        UINTN chunk = 0x100000;
+        if (file_size + chunk > KERNEL_FILE_MAX)
+            chunk = (UINTN)(KERNEL_FILE_MAX - file_size);
+        status = file->Read(file, &chunk,
+                            (void *)(UINTN)((UINT64)(UINTN)buffer + file_size));
+        if (EFI_ERROR(status)) {
+            file_size = 0;
+            break;
+        }
+        if (chunk == 0)
+            break;
+        file_size += chunk;
+    }
+    file->Close(file);
+    root->Close(root);
+
+    const struct elf64_ehdr *ehdr = (const struct elf64_ehdr *)buffer;
+    if (!file_size || file_size < sizeof(*ehdr) ||
+        ehdr->ident[0] != 0x7F || ehdr->ident[1] != 'E' ||
+        ehdr->ident[2] != 'L' || ehdr->ident[3] != 'F' ||
+        ehdr->ident[4] != 2 || ehdr->type != 2 || ehdr->machine != 62 ||
+        ehdr->phentsize < sizeof(struct elf64_phdr) || !ehdr->phnum ||
+        ehdr->entry != KERNEL_VMA) {
+        g_bs->FreePool(buffer);
+        return 0;
+    }
+
+    UINT64 span = 0;
+    for (UINT16 i = 0; i < ehdr->phnum; i++) {
+        const struct elf64_phdr *ph = (const struct elf64_phdr *)
+            ((UINT64)(UINTN)buffer + ehdr->phoff +
+             (UINT64)i * ehdr->phentsize);
+        if (ph->type != ELF_PT_LOAD || ph->memsz == 0)
+            continue;
+        if (ph->vaddr < KERNEL_VMA || ph->filesz > ph->memsz ||
+            ph->offset + ph->filesz > file_size)
+            continue;
+        UINT64 offset = ph->vaddr - KERNEL_VMA;
+        if (offset + ph->memsz > KERNEL_MAP_SIZE)
+            continue;
+        memcpy((void *)(UINTN)(staging + offset),
+               (const void *)(UINTN)((UINT64)(UINTN)buffer + ph->offset),
+               ph->filesz);
+        memset((void *)(UINTN)(staging + offset + ph->filesz), 0,
+               ph->memsz - ph->filesz);
+        if (offset + ph->memsz > span)
+            span = offset + ph->memsz;
+    }
+
+    g_bs->FreePool(buffer);
+    return span;
+}
+
 EFI_STATUS EFIAPI efi_start(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 {
     g_st = st;
@@ -366,11 +496,14 @@ EFI_STATUS EFIAPI efi_start(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         halt();
     }
     UINT64 kernel_phys = (kernel_alloc + 0x1FFFFFULL) & ~0x1FFFFFULL;
-    UINT64 blob_size = (UINT64)(kernel_blob_end - kernel_blob);
 
-    boot_print("Loading Yuanshuo kernel...\r\n");
+    boot_print("Loading \\EFI\\BOOT\\KERNEL.ELF...\r\n");
     memset((void *)kernel_phys, 0, KERNEL_MAP_SIZE);
-    memcpy((void *)kernel_phys, kernel_blob, blob_size);
+    UINT64 kernel_size = load_kernel_elf(image_handle, kernel_phys);
+    if (!kernel_size) {
+        boot_print("Cannot load KERNEL.ELF from the boot volume.\r\n");
+        halt();
+    }
 
     EFI_PHYSICAL_ADDRESS pt_alloc = 0;
     status = alloc_below_4g(PAGE_TABLE_PAGES, &pt_alloc);
@@ -421,7 +554,7 @@ EFI_STATUS EFIAPI efi_start(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     bi->rsdp = rsdp;
     bi->kernel_phys_base = kernel_phys;
     bi->kernel_virt_base = KERNEL_VMA;
-    bi->kernel_size = blob_size;
+    bi->kernel_size = kernel_size;
     bi->kernel_map_size = KERNEL_MAP_SIZE;
     bi->page_table_root = pt_alloc;
     bi->flags = 1;

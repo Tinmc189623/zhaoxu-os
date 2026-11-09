@@ -19,6 +19,7 @@ struct percpu {
     u32 preempt_count;
     u32 lapic_hz;
     struct thread *reap_list;
+    struct thread *switch_from;
 };
 
 extern struct percpu g_percpu[MAX_CPUS];

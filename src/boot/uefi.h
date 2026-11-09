@@ -214,4 +214,43 @@ typedef struct {
     void *Unload;
 } EFI_LOADED_IMAGE_PROTOCOL;
 
+/* Simple File System: rule 25 keeps the kernel out of BOOTX64.EFI, so the
+ * loader reads \EFI\BOOT\KERNEL.BIN from the boot volume at runtime. */
+typedef struct EFI_FILE_PROTOCOL {
+    UINT64 Revision;
+    EFI_STATUS (EFIAPI *Open)(struct EFI_FILE_PROTOCOL *This,
+                              struct EFI_FILE_PROTOCOL **NewHandle,
+                              CHAR16 *FileName, UINT64 OpenMode,
+                              UINT64 Attributes);
+    EFI_STATUS (EFIAPI *Close)(struct EFI_FILE_PROTOCOL *This);
+    EFI_STATUS (EFIAPI *Delete)(struct EFI_FILE_PROTOCOL *This);
+    EFI_STATUS (EFIAPI *Read)(struct EFI_FILE_PROTOCOL *This,
+                              UINTN *BufferSize, void *Buffer);
+    EFI_STATUS (EFIAPI *Write)(struct EFI_FILE_PROTOCOL *This,
+                               UINTN *BufferSize, void *Buffer);
+    EFI_STATUS (EFIAPI *GetPosition)(struct EFI_FILE_PROTOCOL *This,
+                                     UINT64 *Position);
+    EFI_STATUS (EFIAPI *SetPosition)(struct EFI_FILE_PROTOCOL *This,
+                                     UINT64 Position);
+    EFI_STATUS (EFIAPI *GetInfo)(struct EFI_FILE_PROTOCOL *This,
+                                 EFI_GUID *InformationType,
+                                 UINTN *BufferSize, void *Buffer);
+    EFI_STATUS (EFIAPI *SetInfo)(struct EFI_FILE_PROTOCOL *This,
+                                 EFI_GUID *InformationType,
+                                 UINTN *BufferSize, void *Buffer);
+    EFI_STATUS (EFIAPI *Flush)(struct EFI_FILE_PROTOCOL *This);
+} EFI_FILE_PROTOCOL;
+
+typedef struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
+    UINT64 Revision;
+    EFI_STATUS (EFIAPI *OpenVolume)(
+        struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *This,
+        EFI_FILE_PROTOCOL **Root);
+} EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
+
+#define ZHAOXU_SIMPLE_FS_GUID \
+    { 0x964E5B22, 0x6459, 0x11D2, { 0x8E, 0x39, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B } }
+
+#define EFI_FILE_MODE_READ 0x0000000000000001ULL
+
 #endif

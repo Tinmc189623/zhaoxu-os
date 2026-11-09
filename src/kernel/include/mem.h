@@ -16,6 +16,13 @@ struct pmm_stats {
     u64 used_pages;
 };
 
+/* One per-process page table.  Kernel entries are shared with the boot
+ * address space; the user window (PML4 slot 2, 1 TiB..1.5 TiB) is private. */
+struct address_space {
+    u64 *pml4;
+    u64 cr3;
+};
+
 void pmm_init(const struct boot_info *bi);
 void pmm_extend(u64 limit);
 u64 pmm_alloc_page(void);
@@ -30,6 +37,19 @@ int vmm_page_is_user(u64 virtual_address);
 u64 vmm_alloc_pages(u32 count);
 u64 vmm_get_physical(u64 virtual_address);
 u64 vmm_heap_cursor(void);
+
+struct address_space *vmm_space_create(void);
+void vmm_space_destroy(struct address_space *space);
+int vmm_space_map_page(struct address_space *space, u64 virtual_address,
+                       u64 physical_address, u64 flags);
+u64 vmm_space_unmap_page(struct address_space *space, u64 virtual_address);
+u64 vmm_space_get_physical(struct address_space *space, u64 virtual_address);
+int vmm_space_page_is_user(struct address_space *space, u64 virtual_address);
+void vmm_space_activate(struct address_space *space);
+void vmm_activate_cr3(u64 cr3);
+struct address_space *vmm_kernel_space(void);
+u64 vmm_kernel_cr3(void);
+u64 vmm_current_cr3(void);
 
 void heap_init(void);
 void *kmalloc(usize size);

@@ -12,6 +12,7 @@
 #include <kprintf.h>
 #include <mem.h>
 #include <percpu.h>
+#include <process.h>
 #include <smp.h>
 #include <spinlock.h>
 #include <string.h>
@@ -28,6 +29,7 @@ static u32 g_next_tid = 1;
 
 static void thread_start(void);
 static void idle_entry(void *arg);
+static void sched_finish_switch(void);
 
 static struct thread *pick_next_locked(struct percpu *pc)
 {
@@ -38,6 +40,8 @@ static struct thread *pick_next_locked(struct percpu *pc)
         struct thread *thread = &g_threads[(start + i) % MAX_THREADS];
         if (thread->state != THREAD_READY)
             continue;
+        if (thread->on_cpu)
+            continue;   /* still executing (or mid-switch) on another CPU */
         if (thread->affinity >= 0 && (u32)thread->affinity != pc->index)
             continue;
         if (thread->is_idle)
@@ -82,25 +86,53 @@ static void schedule(void)
     next->state = THREAD_RUNNING;
     next->cpu = (i32)pc->index;
     next->quantum = SCHED_QUANTUM_TICKS;
+    next->on_cpu = 1;
     pc->current = next;
 
-    if (previous->state == THREAD_DEAD) {
-        previous->reap_next = pc->reap_list;
-        pc->reap_list = previous;
-    }
-    spin_unlock(&g_sched_lock);
-
     if (next == previous) {
+        spin_unlock(&g_sched_lock);
         irq_restore(flags);
         return;
     }
 
+    /* The old thread stays on_cpu until the new context runs; otherwise
+     * another CPU could pick it up while it is still switching stacks. */
+    pc->switch_from = previous;
+    spin_unlock(&g_sched_lock);
+
+    /* Every thread carries the address space it must run in; kernel threads
+     * fall back to the boot page tables.  The per-CPU TSS rsp0 must point at
+     * the next thread's kernel stack before it can be re-entered from ring 3. */
+    u64 next_cr3 = next->cr3 ? next->cr3 : vmm_kernel_cr3();
+    if (next_cr3 != vmm_current_cr3())
+        vmm_activate_cr3(next_cr3);
+    if (next->kernel_stack_top)
+        tss_set_rsp0_cpu(pc->index, next->kernel_stack_top);
+
     previous->switches++;
     thread_switch(&previous->rsp, next->rsp, flags);
 
-    /* Resumed on another thread's stack: the previous context is no longer
-     * in use, so its stack can be returned to the heap safely. */
+    /* Resumed on the next thread's stack: the context that switched to it
+     * is now off-CPU and may become runnable again. */
+    sched_finish_switch();
     sched_reap_local();
+}
+
+static void sched_finish_switch(void)
+{
+    struct percpu *pc = percpu_this();
+
+    u64 flags = spin_lock_irqsave(&g_sched_lock);
+    struct thread *previous = pc->switch_from;
+    pc->switch_from = NULL;
+    if (previous) {
+        previous->on_cpu = 0;
+        if (previous->state == THREAD_DEAD) {
+            previous->reap_next = pc->reap_list;
+            pc->reap_list = previous;
+        }
+    }
+    spin_unlock_irqrestore(&g_sched_lock, flags);
 }
 
 void sched_reap_local(void)
@@ -118,12 +150,23 @@ void sched_reap_local(void)
             break;
 
         void *stack = (void *)(uintptr_t)thread->stack_base;
+
+        /* A dead process keeps its address space until its thread is reaped:
+         * the space cannot be torn down while the thread still runs on it. */
+        if (thread->proc || thread->space)
+            process_thread_reaped(thread);
+
         thread->stack_base = 0;
         thread->stack_size = 0;
+        thread->kernel_stack_top = 0;
+        thread->cr3 = 0;
+        thread->space = NULL;
+        thread->proc = NULL;
         thread->entry = NULL;
         thread->arg = NULL;
         thread->reap_next = NULL;
         thread->state = THREAD_UNUSED;
+        thread->on_cpu = 0;
         thread->tid = 0;
         thread->name[0] = 0;
         if (stack)
@@ -135,7 +178,12 @@ static void thread_start(void)
 {
     struct thread *thread = sched_current();
 
+    sched_finish_switch();
     sched_reap_local();
+
+    /* The handoff is complete; only now may this CPU take timer interrupts
+     * again, otherwise a second switch could overwrite pc->switch_from. */
+    sti();
 
     if (!thread || !thread->entry)
         kthread_exit();
@@ -179,6 +227,8 @@ void sched_init(u32 cpu_count)
     main_thread->cpu = 0;
     main_thread->affinity = 0;
     main_thread->quantum = SCHED_QUANTUM_TICKS;
+    main_thread->kernel_stack_top = KERNEL_BOOT_STACK_TOP;
+    main_thread->on_cpu = 1;
     strncpy(main_thread->name, "main", sizeof(main_thread->name) - 1);
     g_percpu[0].current = main_thread;
 
@@ -262,8 +312,10 @@ void sched_maybe_preempt(void)
     schedule();
 }
 
-struct thread *kthread_create(const char *name, void (*entry)(void *),
-                              void *arg, i32 affinity)
+struct thread *kthread_create_ctx(const char *name, void (*entry)(void *),
+                                  void *arg, i32 affinity, u64 cr3,
+                                  struct address_space *space,
+                                  struct process *proc)
 {
     if (!entry)
         return NULL;
@@ -275,7 +327,8 @@ struct thread *kthread_create(const char *name, void (*entry)(void *),
     u64 top = ((u64)(uintptr_t)stack + KERNEL_THREAD_STACK) & ~0xFULL;
     u64 *sp = (u64 *)(uintptr_t)top;
     *--sp = (u64)(uintptr_t)thread_start;   /* return address */
-    *--sp = 0x202;                          /* RFLAGS: IF=1 */
+    *--sp = 0x2;                            /* RFLAGS: IF=0 until the
+                                             * switch handoff completes */
     *--sp = 0;                              /* rbx */
     *--sp = 0;                              /* rbp */
     *--sp = 0;                              /* r12 */
@@ -298,6 +351,10 @@ struct thread *kthread_create(const char *name, void (*entry)(void *),
         thread->rsp = (u64)(uintptr_t)sp;
         thread->stack_base = (u64)(uintptr_t)stack;
         thread->stack_size = KERNEL_THREAD_STACK;
+        thread->kernel_stack_top = top;
+        thread->cr3 = cr3;
+        thread->space = space;
+        thread->proc = proc;
         thread->entry = entry;
         thread->arg = arg;
         thread->tid = g_next_tid++;
@@ -318,6 +375,12 @@ struct thread *kthread_create(const char *name, void (*entry)(void *),
 
     smp_reschedule_all();
     return thread;
+}
+
+struct thread *kthread_create(const char *name, void (*entry)(void *),
+                              void *arg, i32 affinity)
+{
+    return kthread_create_ctx(name, entry, arg, affinity, 0, NULL, NULL);
 }
 
 void thread_yield(void)
