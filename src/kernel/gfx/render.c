@@ -571,6 +571,11 @@ void render_cursor_restore(void)
     g_cursor_saved = 0;
 }
 
+struct render_rect render_cursor_bounds(int x, int y)
+{
+    return render_rect_make(x, y, CURSOR_W, CURSOR_H);
+}
+
 void render_cursor(int x, int y)
 {
     if (!g_target)

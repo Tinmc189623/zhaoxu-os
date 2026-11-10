@@ -64,6 +64,7 @@ int render_text_center(const char *text, int cx, int y, u32 fg, int scale);
 
 void render_cursor(int x, int y);
 void render_cursor_restore(void);
+struct render_rect render_cursor_bounds(int x, int y);
 
 #ifdef __cplusplus
 }

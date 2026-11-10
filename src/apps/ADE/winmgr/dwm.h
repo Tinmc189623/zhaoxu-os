@@ -23,6 +23,7 @@ struct dwm_ops {
     void (*paint_dock)(void);
     int (*dock_click)(int x, int y);
     int (*dock_hover)(int x, int y);
+    void (*menu_click)(int x, int y);
     void (*tick)(void);
     void (*poll)(void);
 };
@@ -34,6 +35,7 @@ void dwm_invalidate_rect(int x, int y, int w, int h);
 void dwm_invalidate_focus(void);
 void dwm_invalidate_app(const struct ade_app *app);
 void dwm_close_app(const struct ade_app *app);
+void dwm_close_focus(void);
 void dwm_run(void) __attribute__((noreturn));
 
 int dwm_title_height(void);

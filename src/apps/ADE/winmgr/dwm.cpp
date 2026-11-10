@@ -10,6 +10,7 @@
 extern "C" {
 #include <console.h>
 #include <drivers.h>
+#include <kprintf.h>
 #include <timer.h>
 #include <types.h>
 }
@@ -27,6 +28,7 @@ struct damage_list {
 };
 
 struct render_surface *g_screen;
+struct render_surface *g_back;
 const struct dwm_ops *g_ops;
 struct dwm_window g_windows[DWM_MAX_WINDOWS];
 int g_focus = -1;
@@ -38,6 +40,9 @@ int g_drag_index = -1;
 int g_prev_buttons;
 int g_last_tick;
 int g_last_app_tick;
+int g_cursor_presented;
+int g_cursor_present_x;
+int g_cursor_present_y;
 
 struct render_rect window_damage_rect(const struct dwm_window *window){
     int pad = dwm_ui(14);
@@ -164,7 +169,7 @@ void paint_rect(struct render_rect damage)
     if (render_rect_empty(damage) || !g_screen)
         return;
 
-    render_set_target(g_screen);
+    render_set_target(g_back);
     render_set_clip(damage);
 
     if (g_ops && g_ops->wallpaper)
@@ -197,20 +202,62 @@ void paint_rect(struct render_rect damage)
     }
 }
 
+/* Copy one finished rectangle from the system-RAM back buffer to the
+ * framebuffer.  Presenting only settled pixels keeps windows from flashing
+ * while they are being composed. */
+void present_rect(struct render_rect rect)
+{
+    if (!g_back || g_back == g_screen || render_rect_empty(rect))
+        return;
+    render_set_target(g_screen);
+    render_set_clip(render_rect_make(0, 0, g_screen->width, g_screen->height));
+    render_blit(g_back, rect);
+    render_set_target(g_back);
+}
+
+void present_cursor(int x, int y, int had_old, int old_x, int old_y)
+{
+    struct render_rect current = render_cursor_bounds(x, y);
+    if (had_old)
+        present_rect(render_cursor_bounds(old_x, old_y));
+    present_rect(current);
+    g_cursor_presented = 1;
+    g_cursor_present_x = x;
+    g_cursor_present_y = y;
+}
+
 void paint(void)
 {
-    if (!g_screen || g_damage.count == 0)
+    if (!g_screen || !g_back || g_damage.count == 0)
         return;
 
+    int had_cursor = g_cursor_presented;
+    int old_x = g_cursor_present_x;
+    int old_y = g_cursor_present_y;
+
+    render_set_target(g_back);
     render_cursor_restore();
-    for (int i = 0; i < g_damage.count; i++)
-        paint_rect(g_damage.items[i]);
+
+    struct render_rect items[kMaxDamage];
+    int count = g_damage.count;
+    for (int i = 0; i < count; i++)
+        items[i] = g_damage.items[i];
+    for (int i = 0; i < count; i++)
+        paint_rect(items[i]);
     damage_reset();
 
     int mx = mouse_x();
     int my = mouse_y();
-    if (mouse_ready())
+    int ready = mouse_ready();
+    if (ready)
         render_cursor(mx, my);
+
+    for (int i = 0; i < count; i++)
+        present_rect(items[i]);
+    if (ready)
+        present_cursor(mx, my, had_cursor, old_x, old_y);
+    else
+        g_cursor_presented = 0;
 }
 
 int window_at(int x, int y)
@@ -291,6 +338,12 @@ void close_window(int index)
 
 void handle_press(int mx, int my, int buttons)
 {
+    if (g_ops && my < g_ops->menu_h) {
+        if (g_ops->menu_click)
+            g_ops->menu_click(mx, my);
+        return;
+    }
+
     int index = window_at(mx, my);
     if (index >= 0) {
         struct dwm_window *window = &g_windows[index];
@@ -363,6 +416,16 @@ void dwm_init(const struct dwm_ops *ops)
 {
     g_ops = ops;
     g_screen = render_screen();
+    g_back = g_screen ? render_surface_create(g_screen->width, g_screen->height)
+                      : nullptr;
+    if (!g_back)
+        g_back = g_screen;
+    render_set_target(g_back);
+    if (g_back != g_screen)
+        kprintf("[dwm] back buffer %dx%d, damage-only present\n",
+                g_screen->width, g_screen->height);
+    else
+        kprintf("[dwm] no back buffer, direct rendering\n");
     g_title_h = dwm_ui(32);
     g_focus = -1;
     g_next_z = 1;
@@ -370,6 +433,9 @@ void dwm_init(const struct dwm_ops *ops)
     g_prev_buttons = 0;
     g_last_tick = 0;
     g_last_app_tick = 0;
+    g_cursor_presented = 0;
+    g_cursor_present_x = 0;
+    g_cursor_present_y = 0;
 
     for (int i = 0; i < DWM_MAX_WINDOWS; i++) {
         g_windows[i].open = 0;
@@ -475,12 +541,16 @@ void dwm_close_app(const struct ade_app *app)
         close_window(index);
 }
 
+void dwm_close_focus(void)
+{
+    if (g_focus >= 0 && g_focus < DWM_MAX_WINDOWS)
+        close_window(g_focus);
+}
+
 void dwm_run(void)
 {
-    render_set_target(g_screen);
     dwm_invalidate_all();
     paint();
-    render_cursor(mouse_x(), mouse_y());
 
     for (;;) {
         int key = console_read_char();
@@ -538,11 +608,18 @@ void dwm_run(void)
             }
         }
 
-        if (g_damage.count > 0)
+        if (g_damage.count > 0) {
             paint();
-        else if (mouse_ready()) {
+        } else if (mouse_ready() &&
+                   (!g_cursor_presented || mx != g_cursor_present_x ||
+                    my != g_cursor_present_y)) {
+            int had_old = g_cursor_presented;
+            int old_x = g_cursor_present_x;
+            int old_y = g_cursor_present_y;
+            render_set_target(g_back);
             render_cursor_restore();
             render_cursor(mx, my);
+            present_cursor(mx, my, had_old, old_x, old_y);
         }
 
         timer_sleep_ms(1);
