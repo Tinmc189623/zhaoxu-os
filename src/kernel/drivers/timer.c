@@ -13,7 +13,7 @@ void timer_init(u32 hz)
         hz = 100;
     frequency = hz;
     ticks = 0;
-    pit_init(hz);
+    /* The BSP tick comes from the LAPIC timer (started after SMP init). */
 }
 
 void timer_irq(void)

@@ -4,9 +4,9 @@
 
 ### Yuanshuo Kernel · Aqua Desktop · x86_64
 
-<kbd>🧩 宏内核</kbd> <kbd>🧵 Ring 3 用户态</kbd> <kbd>💾 FAT32</kbd> <kbd>💿 UEFI + Legacy BIOS</kbd> <kbd>🧬 MBR + GPT(ISO)</kbd> <kbd>🎨 Aqua</kbd>
+<kbd>🧩 微内核</kbd> <kbd>🧵 Ring 3 用户态</kbd> <kbd>💾 FAT32</kbd> <kbd>💿 UEFI + Legacy BIOS</kbd> <kbd>🧬 MBR + GPT(ISO)</kbd> <kbd>🎨 Aqua</kbd>
 
-**C** 内核与 UEFI 引导 · **FASM** BIOS 引导 · **GAS** 底层汇编 · **SPARK/Ada** 驱动 · **C++20** 上层应用 · **Ruby** 工具链
+**C** 内核与 UEFI 引导 · **FASM** BIOS 引导 · **GAS** 底层汇编 · **Ada** 驱动 · **C++20** 上层应用 · **Ruby** 工具链
 
 [🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) · [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) · [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) · [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
@@ -16,7 +16,7 @@
 
 ---
 
-> 🧭 **一句话介绍**：Zhaoxu OS 是一个完全从零编写的 x86_64 操作系统。引导加载器 **ZhaoxuBootloader** 同时支持 UEFI 与 legacy BIOS；**Yuanshuo Kernel** 是 C 编写的宏内核；驱动全部由 **SPARK/Ada** 实现；Shell 与桌面由 **C++20** 编写并运行在 ring 3 之上；系统内部还带有一个 C 子集编译器 **zcc**，可以直接在操作系统里写程序、编译成 `.zxe` 并运行。
+> 🧭 **一句话介绍**：Zhaoxu OS 是一个完全从零编写的 x86_64 操作系统。引导加载器 **ZhaoxuBootloader** 同时支持 UEFI 与 legacy BIOS；**Yuanshuo Kernel** 是 C 编写的微内核；驱动由 **Ada** 实现；Shell **csh** 由 C 编写、桌面 **ADE** 由 **C++20** 编写，二者都运行在 ring 3 之上；系统内部还带有一个 C 子集编译器 **zcc**，可以直接在操作系统里写程序、编译成 `.zxe` 并运行。
 
 ---
 
@@ -26,11 +26,11 @@
 <tr>
 <td width="50%" valign="top">
 
-### 🖼️ Desktop-Shell
+### 🖼️ ADE
 - Aqua 风格图形桌面：渐变菜单栏、RTC 时钟、Dock
-- `DS-WM` 窗口管理器：拖动、关闭、层叠、焦点
+- `DWM` 窗口管理器：拖动、关闭、层叠、焦点
 - 原生应用：终端、文件、计算器、便签、监视器
-- 软件光标 + PS/2 鼠标，窗口内可直接运行 Shell 命令
+- 软件光标 + PS/2 鼠标，Dock 启动 ADE 客户端与 Ring 3 程序
 
 </td>
 <td width="50%" valign="top">
@@ -48,14 +48,14 @@
 
 ### 💿 双启动 + 图形安装器
 - UEFI（C 引导层）与 legacy BIOS（FASM stage1/2）
-- ISO 采用 GPT hybrid（UEFI + El Torito 双入口），安装盘写入 MBR 分区表
-- 桌面「安装」窗口或 Shell `install`
+- ISO 采用 GPT hybrid（UEFI + El Torito 双入口）；安装盘支持 MBR 与 GPT
+- 单 ISO 安装：内置图形安装器，可选 MBR 或 GPT，现场格式化 FAT32 ESP
 - AHCI 写入、扇区校验、安装后可直接启动
 
 </td>
 <td width="50%" valign="top">
 
-### 🔌 完整驱动栈（SPARK/Ada）
+### 🔌 完整驱动栈（Ada）
 - ACPI：RSDP/XSDT/FADT/DSDT、`_S5` 解析、关机与重启
 - PCI / PCIe 枚举、AHCI、IDE、SATA、SCSI（ATAPI）
 - PIT、PS/2 键盘与鼠标、GOP 帧缓冲、16550 UART
@@ -74,8 +74,8 @@
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="docs/shot-shell.png" width="100%" alt="Command-Shell neofetch">
-<br><b>🖥️ Command-Shell</b><br>
+<img src="docs/shot-shell.png" width="100%" alt="csh neofetch">
+<br><b>🖥️ csh</b><br>
 <sub>neofetch：0.5.0 内核摘要与语言构成</sub>
 </td>
 <td width="50%" align="center">
@@ -103,15 +103,15 @@
 <sub><code>disks</code>：数据盘 ZHAOXUDATA / 安装介质 ZHAOXUEFI / 空白目标盘</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/shot-install.png" width="100%" alt="Shell 安装">
-<br><b>📥 Shell 安装</b><br>
-<sub><code>install</code>：MBR + FAT16 ESP 写入目标盘并校验</sub>
+<img src="docs/shot-install.png" width="100%" alt="安装器">
+<br><b>📥 安装器</b><br>
+<sub><code>install</code>：MBR + FAT32 ESP 写入目标盘并校验</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" align="center">
 <img src="docs/shot-desktop.png" width="100%" alt="Aqua 桌面与终端">
-<br><b>🎨 Desktop-Shell · Aqua</b><br>
+<br><b>🎨 ADE · Aqua</b><br>
 <sub>菜单栏、窗口、Dock、软件光标；终端里运行真实的 neofetch</sub>
 </td>
 <td width="50%" align="center">
@@ -138,16 +138,16 @@
 
 ## 🧠 架构
 
-**单镜像宏内核**：引导层、C 内核、Ada 驱动、C++ Shell/桌面全部链接进同一份 `kernel.bin`；只有 ring 3 用户程序是独立的 `.zxe`/ELF 文件。
+**微内核结构**：`kernel.elf` 只包含 CPU/内存/调度/IPC/VFS 核心，不含任何驱动或应用；AHCI、PS/2、鼠标、RTC、串口由 Ring 3 `/bin/drivers` 独占，ADE、csh 与全部应用同样是 Ring 3 程序（规则 9）。
 
 <table>
 <tr><th>层</th><th>语言</th><th>实现</th></tr>
 <tr><td>UEFI 引导</td><td>🧩 C + GAS</td><td><code>boot/efi_main.c</code>：GOP、RSDP、内存映射、页表、<code>ExitBootServices</code></td></tr>
 <tr><td>Legacy BIOS 引导</td><td>⚙️ FASM</td><td><code>bios_stage1.asm</code> → <code>bios_stage2.asm</code>：VBE、E820、长模式</td></tr>
-<tr><td>内核</td><td>🔧 C</td><td><code>kernel/</code>：GDT/TSS、IDT、PMM/VMM、堆、进程、VFS、FAT32、TTF</td></tr>
+<tr><td>内核</td><td>🔧 C</td><td><code>kernel/</code>：GDT/TSS、IDT、PMM/VMM、堆、进程、VFS、FAT32；不含任何驱动</td></tr>
 <tr><td>底层汇编</td><td>🧱 GAS</td><td>入口、ISR 桩、用户态切换、内核镜像嵌入</td></tr>
-<tr><td>驱动</td><td>✨ SPARK/Ada</td><td><code>src/drivers/*.adb</code>：ACPI、PCI/PCIe、AHCI、IDE、SATA、SCSI、PIT、PS/2、GOP、UART</td></tr>
-<tr><td>Shell / 桌面 / 应用</td><td>🚀 C++20</td><td><code>apps/shell.cpp</code>、<code>apps/desktop.cpp</code>、<code>apps/edit.cpp</code>、<code>apps/zcc.cpp</code></td></tr>
+<tr><td>驱动</td><td>✨ Ada + C，Ring3</td><td><code>/bin/drivers</code>：AHCI、PS/2、鼠标、RTC、UART；内核通过共享页 RPC 访问</td></tr>
+<tr><td>Shell / 桌面 / 应用</td><td>🚀 C + C++20</td><td><code>apps/csh/</code>（csh，C，每命令一文件）、<code>apps/ADE/</code>（C++20）、<code>apps/zcc/main.cpp</code></td></tr>
 <tr><td>用户程序</td><td>🧵 C</td><td><code>user/</code>：<code>init</code>、<code>hello</code>，链接到 <code>0x10000000000</code>（1 TiB），运行在 ring 3</td></tr>
 <tr><td>工具链</td><td>💎 Ruby</td><td><code>tools/</code>：ELF→.zxe、BIOS 镜像、冒烟测试、实机截图、版本同步</td></tr>
 </table>
@@ -193,33 +193,24 @@
 
 5. GDT/IDT/PIC → PMM/VMM/堆 → CPUID/ACPI/RTC → AHCI/VFS → TrueType 字体。
 6. 挂载 initramfs（`/`）与 FAT32（`/mnt`，卷标 `ZHAOXUDATA`）。
-7. 自动以 ring 3 运行 `/bin/init`，随后进入 **Command-Shell**。
+7. 自动以 ring 3 运行 `/bin/init`；有 GOP 帧缓冲时启动 **ADE**，无帧缓冲时进入 **csh**。
 
 ---
 
-## 💻 Command-Shell 命令
+## 💻 csh 命令
 
 <table>
 <tr><th>命令</th><th>说明</th><th>命令</th><th>说明</th></tr>
 <tr><td><code>help</code></td><td>命令列表</td><td><code>neofetch</code></td><td>系统摘要</td></tr>
-<tr><td><code>clear</code></td><td>清屏</td><td><code>version</code></td><td>版本与构建信息</td></tr>
-<tr><td><code>echo</code></td><td>输出文本</td><td><code>uname</code></td><td>系统标识</td></tr>
+<tr><td><code>version</code></td><td>版本与内核信息</td><td><code>uname</code></td><td>系统标识</td></tr>
+<tr><td><code>echo</code></td><td>输出文本</td><td><code>uptime</code></td><td>运行时间</td></tr>
 <tr><td><code>ls [path]</code></td><td>列目录</td><td><code>cat &lt;path&gt;</code></td><td>输出文件内容</td></tr>
-<tr><td><code>./&lt;file&gt;</code> 或 <code>/目录/&lt;file&gt;</code></td><td>以 ring 3 运行 .zxe / ELF64</td><td><code>ps</code></td><td>进程状态</td></tr>
-<tr><td><code>mounts</code></td><td>挂载点</td><td><code>mem</code></td><td>物理内存与堆统计</td></tr>
-<tr><td><code>cpu</code></td><td>CPUID 详情</td><td><code>date</code></td><td>CMOS 实时时钟</td></tr>
-<tr><td><code>pci</code></td><td>PCI 设备枚举</td><td><code>acpi</code></td><td>ACPI 电源信息</td></tr>
-<tr><td><code>ata</code></td><td>IDE/ATAPI PIO 探测</td><td><code>sata</code></td><td>SATA 链路与代际</td></tr>
-<tr><td><code>scsi</code></td><td>ATAPI/SCSI 设备</td><td><code>disks</code></td><td>磁盘卷标与角色</td></tr>
-<tr><td><code>install [disk]</code></td><td>安装到目标盘</td><td><code>desktop [秒]</code></td><td>启动 Desktop-Shell，ESC 退出</td></tr>
-<tr><td><code>edit [name]</code></td><td>系统内 C 编辑器</td><td><code>cc</code></td><td>编译并运行编辑缓冲区</td></tr>
-<tr><td><code>fonttest &lt;hex&gt;</code></td><td>字形 ASCII 密度图</td><td><code>bench</code></td><td>内存与 TSC 基准</td></tr>
-<tr><td><code>sleep &lt;ms&gt;</code></td><td>休眠</td><td><code>color &lt;fg&gt; &lt;bg&gt;</code></td><td>控制台颜色</td></tr>
-<tr><td><code>uptime</code></td><td>运行时间</td><td><code>panic</code></td><td>触发页故障（测试）</td></tr>
-<tr><td><code>reboot</code></td><td>ACPI 重启</td><td><code>shutdown</code></td><td>ACPI 关机</td></tr>
+<tr><td><code>run &lt;path&gt;</code></td><td>以 ring 3 运行 .zxe / ELF64</td><td><code>cpus</code></td><td>在线 CPU 数</td></tr>
+<tr><td><code>pid</code></td><td>csh 进程号</td><td><code>rm &lt;path&gt;</code></td><td>删除 /mnt 文件</td></tr>
+<tr><td><code>exit</code></td><td>退出 shell</td><td></td><td></td></tr>
 </table>
 
-行编辑支持退格、`Ctrl+L` 清屏、`Ctrl+C` 取消当前行。
+行编辑支持退格与 `Ctrl+C` 取消当前行。
 
 ---
 
@@ -266,7 +257,7 @@ cd src
 make -j4                         # 构建 out/BOOTX64.EFI
 make run                         # 构建 out/data.img 并启动 QEMU
 make run QEMU_DISPLAY="-display gtk"
-make iso                         # 生成 out/zhaoxu-os.iso（UEFI + BIOS）
+make iso                         # 生成 out/zhaoxu_{version}_installer.iso（UEFI + BIOS）
 make run-iso                     # 从 ISO 启动（UEFI）
 make run-bios                    # 从 ISO 启动（SeaBIOS）
 ```
@@ -276,7 +267,7 @@ make run-bios                    # 从 ISO 启动（SeaBIOS）
 **验证工具**（Ruby）：
 
 ```bash
-ruby tools/smoke.rb <marker> [commands]     # 无头冒烟，逐条发送 Shell 命令
+ruby tools/smoke.rb <marker> [commands]     # 无头冒烟，逐条发送 csh 命令
 ruby tools/screenshot.rb 3.0 out/shot.png   # 实机启动并抓取帧缓冲
 SMOKE_BOOT=iso-nodata ruby tools/smoke.rb ... # ISO 无数据盘启动
 ```
@@ -309,12 +300,12 @@ Zhaoxu OS/
     │   ├── lib/              字符串、printf、UTF-8 控制台、C++ 运行时
     │   ├── font/             8x8 点阵 + TrueType glyf 光栅化
     │   └── include/          内核公共头文件
-    ├── drivers/              SPARK/Ada 驱动（ACPI、PCI/PCIe、AHCI、IDE、SATA、SCSI…）
-    ├── apps/                 C++20：Shell、Desktop-Shell、编辑器、zcc
+    ├── drivers/              Ada 驱动（ACPI、PCI/PCIe、AHCI、IDE、SATA、SCSI…）
+    ├── apps/                 csh（C）+ ADE（C++20）+ 编辑器 + zcc
     ├── user/                 ring 3 程序与用户库
     ├── initramfs/            ramfs 初始内容与数据盘素材
     ├── tools/                Ruby：zxe-pack、bios-img、smoke、screenshot
-    └── out/                  构建产物（kernel.bin、data.img、ISO）
+    └── out/                  构建产物（kernel.elf、data.img、ISO）
 ```
 
 ---
@@ -322,7 +313,8 @@ Zhaoxu OS/
 ## ⚠️ 当前限制
 
 - 🧵 单核、无调度器；同一时刻只运行一个 ring 3 进程，尚无 fork/exec
-- 💾 文件系统只读：FAT32 不支持写入、创建与删除；ext4 尚未接入
+- 💾 文件系统：FAT32 支持文件级创建/覆盖/删除（8.3 短名）；ext4 尚未接入，FAT32 目录创建与长文件名写入未支持
+- 🔤 单 ISO/安装盘在无数据盘时使用 ESP 内置的 WQY 字体；数据盘存在时优先 MiSans/MiSans Global/Inter
 - 🧠 用户进程共享内核页表，依靠页级 `U/S` 位隔离
 - 🌐 无网络协议栈
 - ⌨️ 输入为 PS/2 键盘/鼠标与 COM1 串口
@@ -337,7 +329,7 @@ Zhaoxu OS/
 
 <div align="center">
 
-**Zhaoxu OS · Yuanshuo Kernel** · 用 C / FASM / GAS / SPARK / C++ 从零构建
+**Zhaoxu OS · Yuanshuo Kernel** · 用 C / FASM / GAS / Ada / C++ 从零构建
 
 Copyright © 2026 Nexsteaduser. All Rights Reserved. · admin@nexsteaduser.com
 

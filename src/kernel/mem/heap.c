@@ -7,7 +7,7 @@
 #include <types.h>
 
 #define HEAP_MAGIC 0x48454150u
-#define HEAP_REGION_SIZE (4 * 1024 * 1024)
+#define HEAP_REGION_SIZE (16 * 1024 * 1024)
 #define HEAP_ALIGN 16
 
 struct heap_block {

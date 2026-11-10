@@ -237,7 +237,40 @@ static void free_user_tables(u64 *root)
     root[USER_PML4_INDEX] = 0;
 }
 
-struct address_space *vmm_space_create(void)
+/* Give one trusted process an identity map of the first 4 GiB with U/S=1 so
+ * the Ring3 driver service can use MMIO, DMA and ACPI pointers unchanged.
+ * Everything above 4 GiB stays supervisor-only. */
+int vmm_space_user_phys(struct address_space *space)
+{
+    if (!space)
+        return -1;
+    u64 pdpt_phys = pmm_alloc_page();
+    if (!pdpt_phys)
+        return -1;
+    u64 *pdpt = (u64 *)(uintptr_t)pdpt_phys;
+    memset(pdpt, 0, 4096);
+
+    u64 *kernel_pdpt = table_from_entry(pml4[0]);
+    for (u32 i = 0; i < 512; i++)
+        pdpt[i] = kernel_pdpt[i];
+
+    for (u32 i = 0; i < 4; i++) {
+        u64 pd_phys = pmm_alloc_page();
+        if (!pd_phys)
+            return -1;
+        u64 *pd = (u64 *)(uintptr_t)pd_phys;
+        for (u32 j = 0; j < 512; j++) {
+            u64 address = ((u64)i << 30) | ((u64)j << 21);
+            pd[j] = address | VMM_PRESENT | VMM_WRITABLE | VMM_USER | PTE_PS;
+        }
+        pdpt[i] = pd_phys | VMM_PRESENT | VMM_WRITABLE | VMM_USER;
+    }
+
+    space->pml4[0] = pdpt_phys | VMM_PRESENT | VMM_WRITABLE | VMM_USER;
+    return 0;
+}
+
+struct address_space *vmm_space_create(int user_phys)
 {
     u64 physical = pmm_alloc_page();
     if (!physical)
@@ -256,6 +289,11 @@ struct address_space *vmm_space_create(void)
     }
     space->pml4 = root;
     space->cr3 = physical;
+    if (user_phys && vmm_space_user_phys(space) != 0) {
+        pmm_free_page(physical);
+        kfree(space);
+        return NULL;
+    }
     return space;
 }
 

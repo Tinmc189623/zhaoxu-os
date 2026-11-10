@@ -9,6 +9,7 @@
 #include <console.h>
 #include <drivers.h>
 #include <ipc.h>
+#include <install.h>
 #include <keyboard.h>
 #include <kprintf.h>
 #include <mem.h>
@@ -25,84 +26,16 @@
 #define USER_LOAD_BASE      0x0000010000000000ULL   /* 1 TiB   */
 #define USER_STACK_TOP      0x0000010100000000ULL   /* 1 TiB + 4 GiB */
 #define USER_STACK_PAGES    32
-#define USER_MAX_PAGES      1024
 #define USER_KERNEL_STACK   KERNEL_THREAD_STACK
-/* Keep every user mapping inside PML4 slot 2 (1 TiB..1.5 TiB) so a private
- * address space only ever has to copy/clear/free that one slot. */
 #define USER_ADDRESS_LIMIT  0x0000018000000000ULL
-
-#define SYS_EXIT   0
-#define SYS_WRITE  1
-#define SYS_GETPID 2
-#define SYS_OPEN   3
-#define SYS_READ   4
-#define SYS_CLOSE  5
-#define SYS_UPTIME 6
-#define SYS_SPAWN       7
-#define SYS_WAIT        8
-#define SYS_PORT_LISTEN 9
-#define SYS_PORT_CONNECT 10
-#define SYS_PORT_ACCEPT 11
-#define SYS_PORT_SEND   12
-#define SYS_PORT_RECV   13
-#define SYS_PORT_CLOSE  14
-#define SYS_SHM_CREATE  15
-#define SYS_SHM_MAP     16
-#define SYS_SHM_UNMAP   17
-#define SYS_SHM_CLOSE   18
-#define SYS_FB_MAP      19
-#define SYS_MOUSE       20
-#define SYS_KEY         21
-#define SYS_SLEEP       22
-#define SYS_CPUS        23
-#define SYS_RTC         24
-#define SYS_READ_PATH   25
-#define SYS_PORT_TRY_ACCEPT 26
-#define SYS_PORT_TRY_RECV   27
-#define SYS_SERIAL_WRITE    28
-
-#define FB_USER_BASE    0x0000010040000000ULL
-#define FB_MAX_PAGES    8192
-
-struct user_fb_info {
-    u64 address;
-    u64 width;
-    u64 height;
-    u64 stride;
-    u64 format;
-};
-
-enum process_state {
-    PROC_UNUSED = 0,
-    PROC_RUNNING,
-    PROC_ZOMBIE
-};
-
-struct user_mapping {
-    u64 virtual_address;
-    u64 physical_address;
-};
-
-struct process {
-    int used;
-    u64 pid;
-    u64 parent_pid;
-    int state;
-    int exit_code;
-    int thread_reaped;
-    struct address_space *space;
-    int mapping_count;
-    struct user_mapping mappings[USER_MAX_PAGES];
-    u64 entry;
-    u64 user_stack;
-};
+#include "process_internal.h"
 
 static struct process g_processes[MAX_PROCESSES];
 static u64 g_next_pid = 1;
 static u64 g_last_pid;
 
 extern void user_enter(u64 entry, u64 stack);
-static void process_exit_current(int status);
+void process_exit_current(int status);
 
 struct elf64_header {
     u8 ident[16];
@@ -161,6 +94,11 @@ static struct process *current_process(void)
     return thread ? thread->proc : NULL;
 }
 
+struct process *process_current(void)
+{
+    return current_process();
+}
+
 static struct process *process_find(u64 pid)
 {
     for (int i = 0; i < MAX_PROCESSES; i++) {
@@ -186,7 +124,7 @@ static struct process *process_alloc(void)
 
 /* Write into a user virtual range through the identity map, so loading works
  * while the new address space is not the active CR3. */
-static int user_write(struct process *process, u64 virtual_address,
+int process_user_write(struct process *process, u64 virtual_address,
                       const void *source, u64 length)
 {
     const u8 *cursor = (const u8 *)source;
@@ -326,7 +264,7 @@ static int elf_load(struct process *process, const u8 *image, u64 image_size,
         }
 
         if (program->file_size &&
-            user_write(process, program->virtual_address,
+            process_user_write(process, program->virtual_address,
                        image + program->offset, program->file_size) != 0)
             return -1;
         if (program->memory_size > program->file_size &&
@@ -392,7 +330,7 @@ static int zxe_load(struct process *process, const u8 *image, u64 image_size,
         }
 
         if (segment->file_size &&
-            user_write(process, segment->vaddr, image + segment->file_off,
+            process_user_write(process, segment->vaddr, image + segment->file_off,
                        segment->file_size) != 0)
             return -1;
         if (segment->mem_size > segment->file_size &&
@@ -432,7 +370,7 @@ static u64 build_user_stack(struct process *process, int argc,
     for (int i = argc - 1; i >= 0; i--) {
         usize length = strlen(argv[i]) + 1;
         stack -= length;
-        if (user_write(process, stack, argv[i], length) != 0)
+        if (process_user_write(process, stack, argv[i], length) != 0)
             return 0;
         pointers[i] = stack;
     }
@@ -445,7 +383,7 @@ static u64 build_user_stack(struct process *process, int argc,
     for (int i = 0; i < argc; i++)
         frame[1 + i] = pointers[i];
     frame[1 + argc] = 0;
-    if (user_write(process, stack, frame,
+    if (process_user_write(process, stack, frame,
                    (u64)(argc + 2) * sizeof(u64)) != 0)
         return 0;
     return stack;
@@ -500,7 +438,7 @@ static u64 spawn_image(const u8 *image, u64 image_size, const char *name,
         return 0;
 
     process->parent_pid = parent ? parent->pid : 0;
-    process->space = vmm_space_create();
+    process->space = vmm_space_create(name && strcmp(name, "/bin/drivers") == 0);
     if (!process->space) {
         process_fail(process);
         return 0;
@@ -518,8 +456,9 @@ static u64 spawn_image(const u8 *image, u64 image_size, const char *name,
         return 0;
     }
 
+    int affinity = (name && strcmp(name, "/bin/drivers") == 0) ? 0 : -1;
     struct thread *thread = kthread_create_ctx(
-        name ? name : "user", process_entry, process, -1,
+        name ? name : "user", process_entry, process, affinity,
         process->space->cr3, process->space, process);
     if (!thread) {
         process_fail(process);
@@ -606,13 +545,12 @@ void process_thread_reaped(struct thread *thread)
     }
 }
 
-static void process_exit_current(int status)
+void process_exit_current(int status)
 {
     struct process *process = current_process();
 
     if (!process) {
         kthread_exit();
-        return;
     }
 
     process->state = PROC_ZOMBIE;
@@ -664,394 +602,6 @@ const struct process_info *process_get_info(void)
     info.entry = process->entry;
     info.user_pages = (u64)process->mapping_count;
     return &info;
-}
-
-static int user_range_ok(struct process *process, u64 pointer, u64 length)
-{
-    if (length == 0)
-        return 1;
-    if (!process || pointer == 0 || pointer >= USER_ADDRESS_LIMIT)
-        return 0;
-    u64 last = pointer + length - 1;
-    if (last < pointer || last >= USER_ADDRESS_LIMIT)
-        return 0;
-
-    u64 page = pointer & ~0xFFFULL;
-    u64 last_page = last & ~0xFFFULL;
-    for (; page <= last_page; page += PAGE_SIZE) {
-        if (!vmm_space_page_is_user(process->space, page))
-            return 0;
-    }
-    return 1;
-}
-
-static int copy_user_string(struct process *process, char *destination,
-                            usize capacity, u64 source)
-{
-    if (!capacity)
-        return -1;
-    for (usize i = 0; i < capacity; i++) {
-        if (user_range_ok(process, source + i, 1) != 1)
-            return -1;
-        char character = *(const char *)(uintptr_t)(source + i);
-        destination[i] = character;
-        if (character == 0)
-            return 0;
-    }
-    destination[capacity - 1] = 0;
-    return -1;
-}
-
-static long syscall_write(struct process *process, u64 descriptor, u64 buffer,
-                          u64 length)
-{
-    if (descriptor != 1 && descriptor != 2)
-        return -1;
-    if (length > 65536)
-        length = 65536;
-    if (user_range_ok(process, buffer, length) != 1)
-        return -1;
-    console_write_n((const char *)(uintptr_t)buffer, length);
-    return (long)length;
-}
-
-static long syscall_open(struct process *process, u64 path_pointer)
-{
-    char path[256];
-    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
-        return -1;
-    return vfs_open(path);
-}
-
-static long syscall_read(struct process *process, u64 descriptor, u64 buffer,
-                         u64 length)
-{
-    if (length > 0x100000)
-        length = 0x100000;
-    if (user_range_ok(process, buffer, length) != 1)
-        return -1;
-    return vfs_read((int)descriptor, (void *)(uintptr_t)buffer, length);
-}
-
-static long syscall_spawn(struct process *process, u64 path_pointer)
-{
-    char path[256];
-    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
-        return -1;
-    return (long)process_spawn(path, 0, NULL);
-}
-
-static long syscall_wait(struct process *process, u64 pid, u64 status_pointer)
-{
-    int status = 0;
-    if (process_wait(pid, &status) != 0)
-        return -1;
-    if (status_pointer) {
-        if (user_range_ok(process, status_pointer, sizeof(int)) != 1)
-            return -1;
-        if (user_write(process, status_pointer, &status, sizeof(int)) != 0)
-            return -1;
-    }
-    return status;
-}
-
-static long syscall_port_try_accept(struct process *process, u64 port,
-                                    u64 channel_pointer)
-{
-    if (user_range_ok(process, channel_pointer, sizeof(u64)) != 1)
-        return -1;
-    u64 channel = 0;
-    int status = ipc_try_accept(port, &channel);
-    if (status > 0 && user_write(process, channel_pointer, &channel,
-                                 sizeof(channel)) != 0)
-        return -1;
-    return status;
-}
-
-static long syscall_port_try_recv(struct process *process, u64 channel,
-                                  u64 type_pointer, u64 data_pointer,
-                                  u64 capacity)
-{
-    if (capacity > IPC_MSG_MAX)
-        capacity = IPC_MSG_MAX;
-    if (capacity && user_range_ok(process, data_pointer, capacity) != 1)
-        return -1;
-
-    u64 type = 0;
-    u8 data[IPC_MSG_MAX];
-    int length = ipc_try_recv(channel, &type, data, (u32)capacity);
-    if (length <= 0)
-        return length;
-
-    if (type_pointer) {
-        if (user_range_ok(process, type_pointer, sizeof(u64)) != 1)
-            return -1;
-        if (user_write(process, type_pointer, &type, sizeof(u64)) != 0)
-            return -1;
-    }
-    if (length && user_write(process, data_pointer, data, (u64)length) != 0)
-        return -1;
-    return length;
-}
-
-static long syscall_fb_map(struct process *process, u64 info_pointer)
-{
-    const struct boot_info *boot = boot_get_info();
-    if (!boot || !boot->framebuffer_base || !process->space)
-        return -1;
-    if (user_range_ok(process, info_pointer,
-                      sizeof(struct user_fb_info)) != 1)
-        return -1;
-
-    u64 bytes = (u64)boot->pitch * boot->height;
-    u64 pages = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
-    if (pages == 0 || pages > FB_MAX_PAGES)
-        return -1;
-
-    for (u64 i = 0; i < pages; i++) {
-        if (vmm_space_map_page(process->space,
-                               FB_USER_BASE + i * PAGE_SIZE,
-                               boot->framebuffer_base + i * PAGE_SIZE,
-                               VMM_PRESENT | VMM_WRITABLE | VMM_USER) != 0) {
-            for (u64 undo = 0; undo < i; undo++)
-                vmm_space_unmap_page(process->space,
-                                     FB_USER_BASE + undo * PAGE_SIZE);
-            return -1;
-        }
-    }
-
-    struct user_fb_info info;
-    info.address = FB_USER_BASE;
-    info.width = boot->width;
-    info.height = boot->height;
-    info.stride = boot->pitch / 4;
-    info.format = boot->pixel_format;
-    if (user_write(process, info_pointer, &info, sizeof(info)) != 0)
-        return -1;
-    return (long)FB_USER_BASE;
-}
-
-static long syscall_mouse(struct process *process, u64 state_pointer)
-{
-    if (user_range_ok(process, state_pointer, 3 * sizeof(u64)) != 1)
-        return -1;
-    u64 state[3];
-    state[0] = (u64)mouse_x();
-    state[1] = (u64)mouse_y();
-    state[2] = (u64)mouse_buttons();
-    if (user_write(process, state_pointer, state, sizeof(state)) != 0)
-        return -1;
-    return mouse_ready() ? 1 : 0;
-}
-
-static long syscall_serial_write(struct process *process, u64 buffer,
-                                 u64 length)
-{
-    if (length > 65536)
-        length = 65536;
-    if (user_range_ok(process, buffer, length) != 1)
-        return -1;
-
-    const u8 *data = (const u8 *)(uintptr_t)buffer;
-    for (u64 i = 0; i < length; i++)
-        serial_putc(data[i]);
-    return (long)length;
-}
-
-static long syscall_read_path(struct process *process, u64 path_pointer,
-                              u64 buffer_pointer, u64 capacity)
-{
-    char path[256];
-    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
-        return -1;
-    if (capacity > 16u * 1024 * 1024)
-        capacity = 16u * 1024 * 1024;
-    if (capacity && user_range_ok(process, buffer_pointer, capacity) != 1)
-        return -1;
-
-    u64 read = 0;
-    if (vfs_read_into(path, (u8 *)(uintptr_t)buffer_pointer, capacity,
-                      &read) != 0)
-        return -1;
-    return (long)read;
-}
-
-static long syscall_rtc(struct process *process, u64 time_pointer)
-{
-    struct rtc_time now;
-    if (user_range_ok(process, time_pointer, sizeof(now)) != 1)
-        return -1;
-    if (rtc_read(&now) != 0)
-        return -1;
-    if (user_write(process, time_pointer, &now, sizeof(now)) != 0)
-        return -1;
-    return 0;
-}
-
-static long syscall_port_listen(struct process *process, u64 name_pointer)
-{
-    char name[IPC_NAME_MAX];
-    if (copy_user_string(process, name, sizeof(name), name_pointer) != 0)
-        return -1;
-    return (long)ipc_listen(name);
-}
-
-static long syscall_port_connect(struct process *process, u64 name_pointer)
-{
-    char name[IPC_NAME_MAX];
-    if (copy_user_string(process, name, sizeof(name), name_pointer) != 0)
-        return -1;
-    return (long)ipc_connect(name);
-}
-
-static long syscall_port_send(struct process *process, u64 channel, u64 type,
-                              u64 data_pointer, u64 length)
-{
-    if (length > IPC_MSG_MAX)
-        return -1;
-    if (length && user_range_ok(process, data_pointer, length) != 1)
-        return -1;
-
-    u8 data[IPC_MSG_MAX];
-    if (length)
-        memcpy(data, (const void *)(uintptr_t)data_pointer, length);
-    return ipc_send(channel, type, data, (u32)length);
-}
-
-static long syscall_port_recv(struct process *process, u64 channel,
-                              u64 type_pointer, u64 data_pointer, u64 capacity)
-{
-    if (capacity > IPC_MSG_MAX)
-        capacity = IPC_MSG_MAX;
-    if (capacity && user_range_ok(process, data_pointer, capacity) != 1)
-        return -1;
-
-    u64 type = 0;
-    u8 data[IPC_MSG_MAX];
-    int length = ipc_recv(channel, &type, data, (u32)capacity);
-    if (length < 0)
-        return -1;
-
-    if (type_pointer) {
-        if (user_range_ok(process, type_pointer, sizeof(u64)) != 1)
-            return -1;
-        if (user_write(process, type_pointer, &type, sizeof(u64)) != 0)
-            return -1;
-    }
-    if (length) {
-        if (user_write(process, data_pointer, data, (u64)length) != 0)
-            return -1;
-    }
-    return length;
-}
-
-void syscall_dispatch(struct interrupt_frame *frame)
-{
-    struct process *process = current_process();
-    if (!process) {
-        frame->rax = (u64)-1;
-        return;
-    }
-
-    long result = -1;
-    switch (frame->rax) {
-    case SYS_EXIT:
-        process_exit_current((int)frame->rdi);
-        return;
-    case SYS_WRITE:
-        result = syscall_write(process, frame->rdi, frame->rsi, frame->rdx);
-        break;
-    case SYS_GETPID:
-        result = (long)process->pid;
-        break;
-    case SYS_OPEN:
-        result = syscall_open(process, frame->rdi);
-        break;
-    case SYS_READ:
-        result = syscall_read(process, frame->rdi, frame->rsi, frame->rdx);
-        break;
-    case SYS_CLOSE:
-        result = vfs_close((int)frame->rdi);
-        break;
-    case SYS_UPTIME:
-        result = (long)(timer_ticks() * 1000 / timer_hz());
-        break;
-    case SYS_SPAWN:
-        result = syscall_spawn(process, frame->rdi);
-        break;
-    case SYS_WAIT:
-        result = syscall_wait(process, frame->rdi, frame->rsi);
-        break;
-    case SYS_PORT_LISTEN:
-        result = syscall_port_listen(process, frame->rdi);
-        break;
-    case SYS_PORT_CONNECT:
-        result = syscall_port_connect(process, frame->rdi);
-        break;
-    case SYS_PORT_ACCEPT:
-        result = (long)ipc_accept(frame->rdi);
-        break;
-    case SYS_PORT_SEND:
-        result = syscall_port_send(process, frame->rdi, frame->rsi,
-                                   frame->rdx, frame->r10);
-        break;
-    case SYS_PORT_RECV:
-        result = syscall_port_recv(process, frame->rdi, frame->rsi,
-                                   frame->rdx, frame->r10);
-        break;
-    case SYS_PORT_CLOSE:
-        result = ipc_close(frame->rdi);
-        break;
-    case SYS_SHM_CREATE:
-        result = (long)shm_create(frame->rdi);
-        break;
-    case SYS_SHM_MAP:
-        result = (long)shm_map(frame->rdi);
-        break;
-    case SYS_SHM_UNMAP:
-        result = shm_unmap(frame->rdi);
-        break;
-    case SYS_SHM_CLOSE:
-        result = shm_close(frame->rdi);
-        break;
-    case SYS_FB_MAP:
-        result = syscall_fb_map(process, frame->rdi);
-        break;
-    case SYS_MOUSE:
-        result = syscall_mouse(process, frame->rdi);
-        break;
-    case SYS_KEY:
-        result = keyboard_getchar();
-        break;
-    case SYS_SLEEP:
-        thread_sleep_ms((u32)frame->rdi);
-        result = 0;
-        break;
-    case SYS_CPUS:
-        result = (long)smp_cpu_count();
-        break;
-    case SYS_RTC:
-        result = syscall_rtc(process, frame->rdi);
-        break;
-    case SYS_READ_PATH:
-        result = syscall_read_path(process, frame->rdi, frame->rsi,
-                                   frame->rdx);
-        break;
-    case SYS_PORT_TRY_ACCEPT:
-        result = syscall_port_try_accept(process, frame->rdi, frame->rsi);
-        break;
-    case SYS_PORT_TRY_RECV:
-        result = syscall_port_try_recv(process, frame->rdi, frame->rsi,
-                                       frame->rdx, frame->r10);
-        break;
-    case SYS_SERIAL_WRITE:
-        result = syscall_serial_write(process, frame->rdi, frame->rsi);
-        break;
-    default:
-        result = -1;
-        break;
-    }
-    frame->rax = (u64)result;
 }
 
 void process_handle_exception(struct interrupt_frame *frame)

@@ -24,7 +24,9 @@ CXXFLAGS := $(filter-out -std=gnu11,$(CFLAGS)) -std=gnu++20 \
             -fno-exceptions -fno-rtti -fno-threadsafe-statics \
             -fno-use-cxa-atexit
 PROC_SELFTEST ?= 0
-CFLAGS += -DPROC_SELFTEST=$(PROC_SELFTEST)
+DEBUG_SERIAL ?= 0
+SCHED_STATS ?= 0
+CFLAGS += -DPROC_SELFTEST=$(PROC_SELFTEST) -DDEBUG_SERIAL=$(DEBUG_SERIAL) -DSCHED_STATS=$(SCHED_STATS)
 ADAFLAGS := -c -gnatp -gnat2022 -O2 -g -fno-pie \
             -fno-stack-protector -mno-red-zone -mcmodel=kernel \
             -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -mno-avx \
@@ -49,28 +51,22 @@ C_SRCS := kernel/main.c \
           kernel/arch/x86_64/smp.c \
           kernel/int/idt.c \
           kernel/drivers/timer.c \
-          kernel/drivers/keyboard.c \
-          kernel/drivers/rtc.c \
-          kernel/drivers/pci_ui.c \
-          kernel/drivers/acpi_glue.c \
-          kernel/drivers/iommu_glue.c \
-          kernel/drivers/ahci_log.c \
           kernel/fs/initramfs.c \
           kernel/fs/fat32.c \
+          kernel/fs/fat32_write.c \
+          kernel/fs/fat32_format.c \
           kernel/fs/vfs.c \
+          kernel/fs/block.c \
           kernel/fs/install.c \
           kernel/proc/process.c \
+          kernel/proc/syscall.c \
+          kernel/proc/dev.c \
           kernel/proc/thread.c \
           kernel/ipc/port.c \
           kernel/ipc/shm.c \
-          kernel/gfx/render.c \
-          kernel/gfx/svg.c \
           kernel/lib/string.c \
           kernel/lib/printf.c \
           kernel/lib/console.c \
-          kernel/font/font.c \
-          kernel/font/ttf.c \
-          kernel/font/stbtt.c \
           kernel/mem/pmm.c \
           kernel/mem/vmm.c \
           kernel/mem/heap.c
@@ -80,45 +76,39 @@ ASM_SRCS := kernel/arch/x86_64/entry.S \
             kernel/arch/x86_64/user.S \
             kernel/arch/x86_64/switch.S \
             kernel/arch/x86_64/ap_trampoline.S
-ADA_SRCS := drivers/acpi.adb \
-            drivers/iommu.adb \
-            drivers/serial.adb \
-            drivers/pit.adb \
-            drivers/ps2.adb \
-            drivers/mouse.adb \
-            drivers/gop.adb \
-            drivers/pcie.adb \
-            drivers/pci.adb \
-            drivers/ahci.adb \
-            drivers/ide.adb \
-            drivers/scsi.adb \
-            drivers/sata.adb
-CXX_SRCS := kernel/lib/cxx.cpp \
-            apps/ADE/main.cpp \
-            apps/ADE/wallpaper.cpp \
-            apps/ADE/menubar.cpp \
-            apps/ADE/dock.cpp \
-            apps/ADE/winmgr/dwm.cpp \
-            apps/deskapps/registry/main.cpp \
-            apps/deskapps/welcome/main.cpp \
-            apps/deskapps/files/main.cpp \
-            apps/deskapps/monitor/main.cpp \
-            apps/deskapps/calc/main.cpp
 
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(C_SRCS)) \
         $(patsubst %.S,$(BUILD)/%.o,$(ASM_SRCS)) \
-        $(patsubst %.cpp,$(BUILD)/%.o,$(CXX_SRCS)) \
-        $(patsubst %.adb,$(BUILD)/%.o,$(ADA_SRCS)) \
         $(BUILD)/initramfs.o \
         $(BUILD)/bios_stage1.o \
         $(BUILD)/bios_stage2.o
 DEPS := $(OBJS:.o=.d)
 
 HEADLESS ?= 0
+.DEFAULT_GOAL := all
+HEADLESS_HEADER := $(BUILD)/headless.h
 
-.PHONY: all clean run iso run-iso run-bios version
+$(HEADLESS_HEADER): FORCE
+	@mkdir -p $(BUILD)
+	@printf '#define BUILD_HEADLESS %s\n' '$(HEADLESS)' > $@.tmp
+	@if cmp -s $@.tmp $@; then rm -f $@.tmp; else mv $@.tmp $@; fi
 
-all: $(OUT)/BOOTX64.EFI $(ESP)/BOOTX64.EFI $(ESP)/KERNEL.ELF
+FORCE:
+
+.PHONY: all clean run iso run-iso run-bios version fonts FORCE
+
+all: $(OUT)/BOOTX64.EFI $(ESP)/BOOTX64.EFI $(ESP)/KERNEL.ELF esp/WQY.TTC
+
+# MiSans/MiSans Global are not redistributable, so they are fetched here.
+FONT_FILES := initramfs/data/MiSans-Regular.ttf \
+              initramfs/data/MiSansLatinVF.ttf \
+              initramfs/data/Inter-Regular.otf
+
+fonts:
+	$(RUBY) tools/fetch-fonts.rb
+
+$(FONT_FILES):
+	$(RUBY) tools/fetch-fonts.rb
 
 # Sync the version from version.php (repo root) into all surfaces.
 version:
@@ -200,10 +190,60 @@ $(BUILD)/calc_client.uelf: $(CALC_SRCS) $(WELCOME_HDRS) user/user.ld
 	$(CC) $(USER_CFLAGS) -Iuser -Iuser/lib/include -Ikernel/include \
 	  $(USER_LDFLAGS) -o $@ $(CALC_SRCS)
 
+INSTALL_SRCS := user/install_client.c user/lib/ade_client.c user/userlib.c
+
+$(BUILD)/install_client.uelf: $(INSTALL_SRCS) $(WELCOME_HDRS) user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -Iuser -Iuser/lib/include -Ikernel/include \
+	  $(USER_LDFLAGS) -o $@ $(INSTALL_SRCS)
+
+# ---- csh: the ring 3 shell ------------------------------------------
+CSH_SRCS := apps/csh/main.c apps/csh/io.c apps/csh/commands.c \
+            apps/csh/builtins.c apps/csh/files.c apps/csh/run.c \
+            apps/csh/write.c apps/csh/install.c user/userlib.c
+CSH_HDRS := apps/csh/csh.h user/userlib.h
+
+$(BUILD)/csh.uelf: $(CSH_SRCS) $(CSH_HDRS) user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -Iapps/csh -Iuser -Ikernel/include \
+	  $(USER_LDFLAGS) -o $@ $(CSH_SRCS)
+
+# ---- Ring3 driver service -------------------------------------------
+DRV_BUILD := $(BUILD)/drv
+DRV_ADAFLAGS := -c -gnatp -gnat2022 -O2 -fno-pie -fno-stack-protector \
+                -mno-red-zone -mcmodel=large -mgeneral-regs-only \
+                -mno-sse -mno-sse2 -mno-mmx -mno-avx -Idrivers
+DRV_ADA_SRCS := drivers/ahci.adb drivers/ps2.adb drivers/mouse.adb \
+                drivers/serial.adb
+DRV_ADA_OBJS := $(patsubst drivers/%.adb,$(DRV_BUILD)/ada/%.o,$(DRV_ADA_SRCS))
+DRV_C_SRCS := apps/drivers/main.c apps/drivers/glue.c apps/drivers/keyboard.c \
+              apps/drivers/rtc.c kernel/drivers/ahci_log.c \
+              kernel/lib/printf.c user/userlib.c
+DRV_OBJS := $(patsubst %.c,$(DRV_BUILD)/%.o,$(DRV_C_SRCS)) $(DRV_ADA_OBJS)
+DRV_DEPS := $(DRV_OBJS:.o=.d)
+
+$(DRV_BUILD)/ada/%.o: drivers/%.adb
+	@mkdir -p $(dir $@)
+	$(ADA) $(DRV_ADAFLAGS) -o $@ $<
+
+$(DRV_BUILD)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -Iapps/drivers -Iuser -Ikernel/include -MMD -MP \
+	  -c $< -o $@
+
+$(BUILD)/drivers.uelf: $(DRV_OBJS) user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_LDFLAGS) -o $@ $(DRV_OBJS)
+
+-include $(DRV_DEPS)
+
 # ---- initramfs -------------------------------------------------------
 RAMFS := $(BUILD)/initramfs
-RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/ade \
+RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/ade $(RAMFS)/bin/csh \
+               $(RAMFS)/bin/drivers \
                $(RAMFS)/bin/apps/welcome.zxe $(RAMFS)/bin/apps/calc.zxe \
+               $(RAMFS)/bin/apps/install.zxe \
+               $(RAMFS)/boot/BOOTX64.EFI \
                $(RAMFS)/etc/motd $(RAMFS)/etc/version \
                $(RAMFS)/mnt \
                $(RAMFS)/data/HELLO.TXT $(RAMFS)/data/HELLO.ZXE \
@@ -219,11 +259,27 @@ $(RAMFS)/bin/ade: $(OUT)/ade.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
+$(RAMFS)/bin/csh: $(OUT)/csh.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/bin/drivers: $(OUT)/drivers.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/boot/BOOTX64.EFI: $(OUT)/BOOTX64.EFI
+	@mkdir -p $(dir $@)
+	cp $< $@
+
 $(RAMFS)/bin/apps/welcome.zxe: $(OUT)/welcome_client.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
 $(RAMFS)/bin/apps/calc.zxe: $(OUT)/calc_client.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/bin/apps/install.zxe: $(OUT)/install_client.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
@@ -279,7 +335,7 @@ $(BUILD)/initramfs.o: $(OUT)/initramfs.tar
 # ---- FAT32 data volume ----------------------------------------------
 DATA_IMG := $(OUT)/data.img
 
-$(DATA_IMG): $(OUT)/hello.zxe $(BUILD)/hello.uelf initramfs/data/hello.txt initramfs/data/info.txt initramfs/data/wqy.ttc
+$(DATA_IMG): $(OUT)/hello.zxe $(BUILD)/hello.uelf initramfs/data/hello.txt initramfs/data/info.txt initramfs/data/wqy.ttc $(FONT_FILES)
 	@mkdir -p $(OUT)
 	dd if=/dev/zero of=$@ bs=1M count=64 status=none
 	mkfs.vfat -F 32 -n ZHAOXUDATA $@ >/dev/null
@@ -288,9 +344,12 @@ $(DATA_IMG): $(OUT)/hello.zxe $(BUILD)/hello.uelf initramfs/data/hello.txt initr
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/hello.zxe ::/HELLO.ZXE
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(BUILD)/hello.uelf ::/HELLO.ELF
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/wqy.ttc ::/WQY.TTC
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/MiSans-Regular.ttf ::/
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/MiSansLatinVF.ttf ::/
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/Inter-Regular.otf ::/
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/info.txt ::/DOCS/INFO.TXT
 
-$(BUILD)/efi_main.o: boot/efi_main.c boot/uefi.h
+$(BUILD)/efi_main.o: boot/efi_main.c boot/uefi.h $(HEADLESS_HEADER)
 	@mkdir -p $(BUILD)
 	$(BOOT_CC) $(BOOT_CFLAGS) -c $< -o $@
 
@@ -320,8 +379,8 @@ $(BIOS_S1): boot/bios_stage1.asm $(BIOS1_INC)
 	@mkdir -p $(OUT)
 	$(FASM) $< $@
 
-$(BIOS_IMG): $(BIOS_S1) $(BIOS_S2) $(OUT)/kernel.bin tools/bios-img.rb
-	$(RUBY) tools/bios-img.rb $(BIOS_S1) $(BIOS_S2) $(OUT)/kernel.bin $@
+$(BIOS_IMG): $(BIOS_S1) $(BIOS_S2) $(OUT)/kernel.elf tools/bios-img.rb
+	$(RUBY) tools/bios-img.rb $(BIOS_S1) $(BIOS_S2) $(OUT)/kernel.elf $@
 
 $(BUILD)/bios_stage1.o: $(BIOS_S1)
 	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 \
@@ -374,9 +433,6 @@ $(OUT)/kernel.elf: $(OBJS) kernel/linker.ld
 	@mkdir -p $(OUT)
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
 
-$(OUT)/kernel.bin: $(OUT)/kernel.elf
-	$(OBJCOPY) -O binary $< $@
-
 $(ESP)/BOOTX64.EFI: $(OUT)/BOOTX64.EFI
 	@mkdir -p $(ESP)
 	cp $< $@
@@ -387,12 +443,15 @@ $(ESP)/KERNEL.ELF: $(OUT)/kernel.elf
 	@mkdir -p $(dir $@)
 	cp $< $@
 
+esp/WQY.TTC: initramfs/data/wqy.ttc
+	cp $< $@
+
 clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin $(OUT)/BOOTX64.EFI \
 	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/initramfs.tar \
 	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu_*_installer.iso \
 	       $(OUT)/bios_stage1.bin $(OUT)/bios_stage2.bin $(OUT)/bios.img \
-	       $(OUT)/target.img $(ESP)/BOOTX64.EFI $(ESP)/KERNEL.ELF
+	       $(OUT)/target.img $(ESP)/BOOTX64.EFI $(ESP)/KERNEL.ELF esp/WQY.TTC
 
 OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
@@ -405,14 +464,14 @@ QEMU_MONITOR ?= none
 QEMU_IOMMU ?= -device intel-iommu
 
 # Installer plumbing: out/efi.img is the read-only "installation media"
-# (16 MiB FAT16 ESP labelled ZHAOXUEFI); out/target.img is the blank disk the
+# (64 MiB FAT32 ESP labelled ZHAOXUEFI); out/target.img is the blank disk the
 # graphical installer copies it onto.
 TARGET_IMG := $(OUT)/target.img
 EFI_IMG := $(OUT)/efi.img
 
 $(TARGET_IMG):
 	@mkdir -p $(OUT)
-	dd if=/dev/zero of=$@ bs=1M count=64 status=none
+	dd if=/dev/zero of=$@ bs=1M count=96 status=none
 
 run: all $(DATA_IMG) $(EFI_IMG) $(TARGET_IMG)
 	cp $(OVMF_VARS) $(OUT)/OVMF_VARS.fd
@@ -436,7 +495,7 @@ ISO := $(OUT)/zhaoxu_$(ZHAOXU_VERSION)_installer.iso
 ISO_ROOT := $(BUILD)/iso
 ISO_ESP_MB ?= 64
 
-$(EFI_IMG): $(OUT)/BOOTX64.EFI $(OUT)/kernel.elf
+$(EFI_IMG): $(OUT)/BOOTX64.EFI $(OUT)/kernel.elf initramfs/data/wqy.ttc
 	@mkdir -p $(OUT)
 	dd if=/dev/zero of=$@ bs=1M count=$(ISO_ESP_MB) status=none
 	mkfs.vfat -F 32 -n ZHAOXUEFI $@ >/dev/null
@@ -444,6 +503,7 @@ $(EFI_IMG): $(OUT)/BOOTX64.EFI $(OUT)/kernel.elf
 	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/EFI/BOOT
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/kernel.elf ::/EFI/BOOT/KERNEL.ELF
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/wqy.ttc ::/WQY.TTC
 
 $(ISO): $(OUT)/BOOTX64.EFI $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG)
 	@rm -rf $(ISO_ROOT)

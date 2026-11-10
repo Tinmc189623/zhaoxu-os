@@ -36,10 +36,13 @@ Yuanshuo Kernel：地址空间、进程、IPC、IRQ/MMIO 授权、帧缓冲映�
 
 ### Ring3 边界
 
-- `src/apps/ADE/` 只放桌面环境：`shell/`（壁纸、菜单栏、Dock、启动器）、
+- `src/apps/ADE/` 只放桌面环境：`wallpaper.cpp`/`menubar.cpp`/`dock.cpp`（桌面外观）、
   `winmgr/`（DWM）、`display/`（端口服务、窗口协议、输入路由）。
-- 应用源码在 `src/apps/deskapps/`，编译为独立 `.zxe`，只依赖 ZOS API 与
-  客户端 SDK，不 include ADE 内部头文件。
+- `src/apps/drivers/` 是 Ring3 驱动服务：AHCI、PS/2、鼠标、RTC、串口；内核通过 `kernel/include/dev.h` 的共享页请求块 I/O，日志与输入走共享环。
+- `src/apps/csh/` 是 Ring3 Shell：`main.c`（REPL）、`builtins.c`、`files.c`、
+  `run.c`、`install.c`、`io.c`，一个文件只负责一类命令。
+- 应用客户端在 `src/user/`（如 `welcome_client.c`、`calc_client.c`），编译为独立
+  `.zxe`，只依赖 ZOS API 与客户端 SDK，不 include ADE 内部头文件。
 - 字体（MiSans、MiSans Global、Inter）属于系统：由 `libzos` 从 `/mnt`
   加载，ADE 与应用都不打包字体文件。
 - DWM 通过系统渲染接口合成，不直接操作帧缓冲像素，也不绘制应用页面。
@@ -66,9 +69,10 @@ Yuanshuo Kernel：地址空间、进程、IPC、IRQ/MMIO 授权、帧缓冲映�
 
 ### P2 已落地
 
-- `/bin/ade` 作为 Ring3 显示服务器启动；内核 `spawn` 后 `wait`，失败才回退内核 ADE。
+- `/bin/ade` 作为 Ring3 显示服务器启动；内核 `spawn` 后 `wait`，失败则打印日志并停机（内核不再包含 ADE 回退）。
+- 无帧缓冲时内核启动 Ring3 `/bin/csh`。
 - 系统调用扩充：`fb_map`、`mouse`、`key`、`sleep`、`cpus`、`rtc`、`read_path`、
-  `port_try_accept`、`port_try_recv`。
+  `port_try_accept`、`port_try_recv`、`readdir`、`disks`、`install`。
 - `libzos` 复用 `kernel/gfx/render.c`、`svg.c`、`font/ttf.c` 与 stb_truetype，
   在 Ring3 提供同一套系统渲染 API；字体从 `/mnt` 读入共享页。
 - 窗口协议：`user/lib/include/ade_protocol.h`，客户端通过 `ade` 端口发送

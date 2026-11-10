@@ -265,8 +265,10 @@ void ade_display_init(void)
 
     long welcome = sys_spawn("/bin/apps/welcome.zxe");
     long calc = sys_spawn("/bin/apps/calc.zxe");
-    kprintf("[ade ] display server listening, welcome %ld, calc %ld\n",
-            welcome, calc);
+    long installer = sys_spawn("/bin/apps/install.zxe");
+    kprintf("[ade ] display server listening, welcome %ld, calc %ld, "
+            "install %ld\n",
+            welcome, calc, installer);
 }
 
 void ade_display_poll(void)

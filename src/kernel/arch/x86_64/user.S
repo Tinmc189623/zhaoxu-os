@@ -27,7 +27,7 @@ user_enter:
 
     pushq   $0x23               /* SS  */
     pushq   %rsi                /* RSP */
-    pushq   $0x202              /* RFLAGS: IF=1, IOPL=0 */
+    pushq   $0x3202             /* RFLAGS: IF=1, IOPL=3 (driver IO) */
     pushq   $0x1B               /* CS (user code, RPL 3) */
     pushq   %rdi                /* RIP */
     iretq

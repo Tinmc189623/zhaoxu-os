@@ -1,60 +1,38 @@
 /*
- * Zhaoxu OS - FAT32 read-only filesystem
+ * Zhaoxu OS - FAT32 filesystem: mount, lookup, list and read
  *
  * The driver scans the AHCI block devices for a FAT32 volume (either a
  * superfloppy or the first partition of an MBR disk), preferring the volume
  * labelled ZHAOXUDATA.  Directory entries support VFAT long file names.
  */
-#include <ahci.h>
+#include <block.h>
 #include <fat32.h>
 #include <kprintf.h>
 #include <mem.h>
 #include <string.h>
 #include <types.h>
 
-#define FAT32_LABEL_MAX 12
-#define FAT32_MAX_FILE_SIZE (2 * 1024 * 1024)
-
-struct fat32_fs {
-    int disk;
-    u64 volume_base;
-    u32 bytes_per_sector;
-    u32 sectors_per_cluster;
-    u32 reserved_sectors;
-    u32 num_fats;
-    u32 fat_size;
-    u32 root_cluster;
-    u32 total_sectors;
-    u32 data_start;
-    u32 cluster_count;
-    char label[FAT32_LABEL_MAX];
-    int mounted;
-    u32 cache_sector;
-    int cache_valid;
-    u8 cache[512];
-};
-
-struct fat_entry {
-    char name[256];
-    u32 cluster;
-    u32 size;
-    int is_dir;
-};
+#include "fat32_internal.h"
 
 static struct fat32_fs g_fs;
 
-static u16 read_le16(const u8 *p)
+u16 read_le16(const u8 *p)
 {
     return (u16)(p[0] | ((u16)p[1] << 8));
 }
 
-static u32 read_le32(const u8 *p)
+u32 read_le32(const u8 *p)
 {
     return (u32)p[0] | ((u32)p[1] << 8) |
            ((u32)p[2] << 16) | ((u32)p[3] << 24);
 }
 
-static int name_equal(const char *a, const char *b)
+static u64 read_le64(const u8 *p)
+{
+    return (u64)read_le32(p) | ((u64)read_le32(p + 4) << 32);
+}
+
+int name_equal(const char *a, const char *b)
 {
     while (*a && *b) {
         char x = *a++;
@@ -114,20 +92,20 @@ static int is_fat32_boot(const u8 *sector, char *label_out)
     return 1;
 }
 
-static int read_sector(u64 lba, void *buffer)
+int read_sector(u64 lba, void *buffer)
 {
-    return ahci_disk_read(g_fs.disk, g_fs.volume_base + lba, 1, buffer);
+    return block_disk_read(g_fs.disk, g_fs.volume_base + lba, 1, buffer);
 }
 
-static int read_cluster(u32 cluster, void *buffer)
+int read_cluster(u32 cluster, void *buffer)
 {
     u64 lba = (u64)g_fs.data_start +
               (u64)(cluster - 2) * g_fs.sectors_per_cluster;
-    return ahci_disk_read(g_fs.disk, g_fs.volume_base + lba,
+    return block_disk_read(g_fs.disk, g_fs.volume_base + lba,
                           g_fs.sectors_per_cluster, buffer);
 }
 
-static u32 fat_next_cluster(u32 cluster)
+u32 fat_next_cluster(u32 cluster)
 {
     u32 offset = cluster * 4;
     u32 sector = g_fs.reserved_sectors + offset / 512;
@@ -197,7 +175,7 @@ static void lfn_to_ascii(const struct lfn_state *state, char *output)
     output[out] = 0;
 }
 
-static void short_name(const u8 *entry, char *output)
+void short_name(const u8 *entry, char *output)
 {
     u32 out = 0;
     for (u32 i = 0; i < 8 && entry[i] != ' '; i++)
@@ -350,7 +328,7 @@ static int split_component(const char **path, char *output, usize capacity,
     return 1;
 }
 
-static int fat32_find(const char *path, struct fat_entry *result)
+int fat32_find(const char *path, struct fat_entry *result)
 {
     if (!g_fs.mounted)
         return -1;
@@ -438,7 +416,7 @@ static int fat32_read_data(const struct fat_entry *entry, u8 *data, u64 size)
     while (remaining > 0 && cluster >= 2 && guard-- > 0) {
         u64 lba = (u64)g_fs.data_start +
                   (u64)(cluster - 2) * g_fs.sectors_per_cluster;
-        if (ahci_disk_read(g_fs.disk, g_fs.volume_base + lba,
+        if (block_disk_read(g_fs.disk, g_fs.volume_base + lba,
                            g_fs.sectors_per_cluster, cluster_buffer) != 0) {
             kfree(cluster_buffer);
             return -1;
@@ -519,6 +497,8 @@ static void load_bpb(const u8 *sector, u64 volume_base, int disk,
     g_fs.root_cluster = read_le32(sector + 44);
     g_fs.total_sectors = read_le32(sector + 32);
     g_fs.data_start = g_fs.reserved_sectors + g_fs.num_fats * g_fs.fat_size;
+    u32 fsinfo = read_le16(sector + 48);
+    g_fs.fsinfo_sector = fsinfo > 0 && fsinfo < g_fs.reserved_sectors ? fsinfo : 0;
 
     u32 data_sectors = g_fs.total_sectors > g_fs.data_start
                            ? g_fs.total_sectors - g_fs.data_start
@@ -531,7 +511,7 @@ static void load_bpb(const u8 *sector, u64 volume_base, int disk,
 
 int fat32_mount(void)
 {
-    int disk_count = ahci_disk_count();
+    int disk_count = block_disk_count();
     if (disk_count <= 0) {
         kprintf("[fat32] no block device available\n");
         return -1;
@@ -546,12 +526,12 @@ int fat32_mount(void)
     memset(best_label, 0, sizeof(best_label));
 
     for (int disk = 0; disk < disk_count; disk++) {
-        u64 sectors = ahci_disk_sectors(disk);
+        u64 sectors = block_disk_sectors(disk);
         if (sectors < 2) {
             kprintf("[fat32] disk %d: only %llu sectors\n", disk, sectors);
             continue;
         }
-        if (ahci_disk_read(disk, 0, 1, sector) != 0) {
+        if (block_disk_read(disk, 0, 1, sector) != 0) {
             kprintf("[fat32] disk %d: sector 0 read failed\n", disk);
             continue;
         }
@@ -579,7 +559,7 @@ int fat32_mount(void)
                 u64 start = read_le32(entry + 8);
                 if (start == 0 || start >= sectors)
                     continue;
-                if (ahci_disk_read(disk, start, 1, boot) != 0)
+                if (block_disk_read(disk, start, 1, boot) != 0)
                     continue;
                 label[0] = 0;
                 if (!is_fat32_boot(boot, label))
@@ -589,6 +569,42 @@ int fat32_mount(void)
                 candidate_count++;
                 if (candidate_count >= 8)
                     break;
+            }
+        }
+
+        if (candidate_count == 0 && sector[446 + 4] == 0xEE &&
+            block_disk_read(disk, 1, 1, boot) == 0 &&
+            memcmp(boot, "EFI PART", 8) == 0) {
+            u64 entries_lba = read_le64(boot + 72);
+            u32 entries = read_le32(boot + 80);
+            u32 entry_size = read_le32(boot + 84);
+            if (entry_size >= 128 && entries <= 128 && entries_lba < sectors) {
+                for (u32 i = 0; i < entries && candidate_count < 8; i++) {
+                    u64 offset = (u64)i * entry_size;
+                    u32 within = (u32)(offset % 512);
+                    if (within + 128 > 512)
+                        continue;
+                    if (block_disk_read(disk, entries_lba + offset / 512, 1,
+                                       boot) != 0)
+                        continue;
+                    const u8 *entry = boot + within;
+                    int used = 0;
+                    for (int k = 0; k < 16; k++)
+                        used |= entry[k];
+                    if (!used)
+                        continue;
+                    u64 start = read_le64(entry + 32);
+                    if (start == 0 || start >= sectors)
+                        continue;
+                    if (block_disk_read(disk, start, 1, boot) != 0)
+                        continue;
+                    label[0] = 0;
+                    if (!is_fat32_boot(boot, label))
+                        continue;
+                    candidates[candidate_count] = start;
+                    strcpy(labels[candidate_count], label);
+                    candidate_count++;
+                }
             }
         }
 
@@ -613,7 +629,7 @@ int fat32_mount(void)
         return -1;
     }
 
-    if (ahci_disk_read(best_disk, best_base, 1, boot) != 0)
+    if (block_disk_read(best_disk, best_base, 1, boot) != 0)
         return -1;
 
     load_bpb(boot, best_base, best_disk, best_label);
@@ -623,6 +639,24 @@ int fat32_mount(void)
             "%u clusters\n",
             g_fs.label, best_disk, g_fs.sectors_per_cluster,
             g_fs.cluster_count);
+    return 0;
+}
+
+struct fat32_fs *fat32_state(void)
+{
+    return &g_fs;
+}
+
+int fat32_mount_at(int disk, u64 volume_base)
+{
+    u8 sector[512];
+    if (block_disk_read(disk, volume_base, 1, sector) != 0)
+        return -1;
+    char label[FAT32_LABEL_MAX];
+    if (!is_fat32_boot(sector, label))
+        return -1;
+    load_bpb(sector, volume_base, disk, label);
+    g_fs.cache_valid = 0;
     return 0;
 }
 

@@ -1,0 +1,41 @@
+#ifndef ZHAOXU_PROCESS_INTERNAL_H
+#define ZHAOXU_PROCESS_INTERNAL_H
+
+#include <process.h>
+#include <types.h>
+
+struct address_space;
+
+#define USER_MAX_PAGES 1024
+
+enum process_state {
+    PROC_UNUSED = 0,
+    PROC_RUNNING,
+    PROC_ZOMBIE
+};
+
+struct user_mapping {
+    u64 virtual_address;
+    u64 physical_address;
+};
+
+struct process {
+    int used;
+    u64 pid;
+    u64 parent_pid;
+    int state;
+    int exit_code;
+    int thread_reaped;
+    struct address_space *space;
+    int mapping_count;
+    struct user_mapping mappings[USER_MAX_PAGES];
+    u64 entry;
+    u64 user_stack;
+};
+
+int process_user_write(struct process *process, u64 virtual_address,
+                        const void *source, u64 length);
+struct process *process_current(void);
+void process_exit_current(int status) __attribute__((noreturn));
+
+#endif

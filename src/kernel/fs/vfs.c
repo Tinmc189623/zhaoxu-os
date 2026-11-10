@@ -112,6 +112,24 @@ int vfs_read_into(const char *path, u8 *dst, u64 cap, u64 *read_out)
     return ramfs_read_into(path, dst, cap, read_out);
 }
 
+int vfs_write_file(const char *path, const u8 *data, u64 size)
+{
+    if (!path || !g_fat_mounted)
+        return -1;
+    if (!path_is_mnt(path) || !path[4])
+        return -1;
+    return fat32_write_file(path + 4, data, size);
+}
+
+int vfs_unlink(const char *path)
+{
+    if (!path || !g_fat_mounted)
+        return -1;
+    if (!path_is_mnt(path) || !path[4])
+        return -1;
+    return fat32_unlink(path + 4);
+}
+
 int vfs_stat(const char *path, int *is_dir, u64 *size)
 {
     if (!path)

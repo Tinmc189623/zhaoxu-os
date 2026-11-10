@@ -26,6 +26,8 @@ struct boot_info {
     u64 kernel_map_size;
     u64 page_table_root;
     u64 flags;
+    u64 font_phys;          /* preloaded WQY.TTC from the boot volume */
+    u64 font_size;
 } __attribute__((packed));
 
 #define BOOT_FLAG_HIGHER_HALF 1u

@@ -97,13 +97,13 @@ int kvsnprintf(char *out, usize capacity, const char *fmt, va_list ap)
             continue;
         }
 
-        int left = 0, zero = 0, plus = 0, space = 0, alternate = 0;
+        int left = 0, zero = 0, plus = 0, space = 0;
         for (;;) {
             if (*p == '-') left = 1;
             else if (*p == '0') zero = 1;
             else if (*p == '+') plus = 1;
             else if (*p == ' ') space = 1;
-            else if (*p == '#') alternate = 1;
+            else if (*p == '#') { }
             else break;
             p++;
         }

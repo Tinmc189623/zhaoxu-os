@@ -23,6 +23,7 @@ void apic_start_cpu(u32 apic_id, u32 vector);
 u32 apic_calibrate_lapic(void);
 u32 apic_lapic_hz(void);
 void apic_timer_start(u32 vector, u32 hz);
+void apic_delay_ms(u32 ms);
 void apic_timer_stop(void);
 
 #endif

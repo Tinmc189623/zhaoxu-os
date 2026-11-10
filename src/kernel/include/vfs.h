@@ -12,6 +12,8 @@ int vfs_list(const char *path, vfs_list_cb callback, void *context);
 int vfs_read_all(const char *path, u8 **buffer, u64 *size);
 int vfs_read_into(const char *path, u8 *dst, u64 cap, u64 *read_out);
 int vfs_stat(const char *path, int *is_dir, u64 *size);
+int vfs_write_file(const char *path, const u8 *data, u64 size);
+int vfs_unlink(const char *path);
 int vfs_open(const char *path);
 long vfs_read(int fd, void *buffer, u64 count);
 int vfs_close(int fd);

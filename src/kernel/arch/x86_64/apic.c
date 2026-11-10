@@ -42,6 +42,7 @@ static volatile u32 *lapic;
 static u64 lapic_physical = LAPIC_DEFAULT_BASE;
 static u64 rsdp_physical;
 static u32 lapic_timer_hz;
+static u32 pm_timer_port;
 static struct madt_cpu cpu_table[MAX_CPUS];
 static u32 cpu_table_count;
 
@@ -210,8 +211,53 @@ static void place_bsp_first(u32 bsp_apic_id)
     cpu_table[position] = saved;
 }
 
+static void apic_pm_timer_locate(void)
+{
+    u32 length = 0;
+    const u8 *fadt = acpi_find_table("FACP", &length);
+    if (!fadt || length < 80)
+        return;
+    pm_timer_port = (u32)fadt[76] | ((u32)fadt[77] << 8) |
+                    ((u32)fadt[78] << 16) | ((u32)fadt[79] << 24);
+}
+
+/* One-shot PIT channel-2 wait used only to calibrate the LAPIC timer.  The
+ * PIT is not a kernel driver; it is core timing hardware used once at boot. */
+static void pit_wait_10ms(void)
+{
+    u8 control = inb(0x61) & 0xFC;
+    outb(0x61, (u8)(control | 1));
+    outb(0x43, 0xB0);
+    outb(0x42, 11932 & 0xFF);
+    outb(0x42, (11932 >> 8) & 0xFF);
+    for (u64 spin = 0; spin < 100000000ULL; spin++) {
+        if (inb(0x61) & 0x20)
+            break;
+    }
+    outb(0x61, (u8)(inb(0x61) & 0xFE));
+}
+
+void apic_delay_ms(u32 ms)
+{
+    if (!pm_timer_port) {
+        for (volatile u64 spin = 0; spin < (u64)ms * 1000000ULL; spin++)
+            cpu_relax();
+        return;
+    }
+    u64 ticks = ((u64)ms * 3579545ULL) / 1000ULL;
+    u32 start = inl(pm_timer_port) & 0xFFFFFFu;
+    for (;;) {
+        u32 now = inl(pm_timer_port) & 0xFFFFFFu;
+        u32 elapsed = (now - start) & 0xFFFFFFu;
+        if (elapsed >= ticks)
+            return;
+        cpu_relax();
+    }
+}
+
 void apic_init(u64 rsdp)
 {
+    apic_pm_timer_locate();
     rsdp_physical = apic_locate_rsdp(rsdp);
     lapic = (volatile u32 *)(uintptr_t)LAPIC_DEFAULT_BASE;
 
@@ -307,11 +353,11 @@ void apic_start_cpu(u32 apic_id, u32 vector)
 {
     /* INIT assert, deassert, then two STARTUP IPIs with the trampoline page. */
     apic_send_ipi(apic_id, 0x00004500u);
-    timer_sleep_ms(10);
+    apic_delay_ms(10);
     apic_send_ipi(apic_id, 0x00008500u);
-    timer_sleep_ms(1);
+    apic_delay_ms(1);
     apic_send_ipi(apic_id, 0x00004600u | (vector & 0xFFu));
-    timer_sleep_ms(1);
+    apic_delay_ms(1);
     apic_send_ipi(apic_id, 0x00004600u | (vector & 0xFFu));
 }
 
@@ -321,7 +367,7 @@ u32 apic_calibrate_lapic(void)
     lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
     lapic_write(LAPIC_REG_TIMER_INIT, 0xFFFFFFFFu);
 
-    timer_sleep_ms(10);
+    pit_wait_10ms();
 
     u32 remaining = lapic_read(LAPIC_REG_TIMER_CUR);
     lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);

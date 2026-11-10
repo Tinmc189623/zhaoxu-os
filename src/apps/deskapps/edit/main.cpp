@@ -1,7 +1,7 @@
 /*
  * Zhaoxu OS - in-OS source editor.
  *
- * Keeps a small line buffer in the Command-Shell session and drives the
+ * Keeps a small line buffer in the csh session and drives the
  * zcc compiler (apps/zcc.cpp) and the ring 3 loader, so programs can be
  * written, compiled and run entirely on the machine.
  */

@@ -66,7 +66,6 @@ void ade_register_builtin_apps(void);
 #ifdef __cplusplus
 extern "C" {
 #endif
-void ade_run(void) __attribute__((noreturn));
 #ifdef __cplusplus
 }
 #endif

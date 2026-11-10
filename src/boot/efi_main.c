@@ -55,6 +55,8 @@ struct boot_info_blob {
     UINT64 kernel_map_size;
     UINT64 page_table_root;
     UINT64 flags;
+    UINT64 font_phys;
+    UINT64 font_size;
 } __attribute__((packed));
 
 /* no libc: clang is built with -fno-builtin so these loops stay loops */
@@ -448,12 +450,90 @@ static UINT64 load_kernel_elf(EFI_HANDLE image_handle, UINT64 staging)
                ph->filesz);
         memset((void *)(UINTN)(staging + offset + ph->filesz), 0,
                ph->memsz - ph->filesz);
-        if (offset + ph->memsz > span)
-            span = offset + ph->memsz;
+        if (offset + ph->filesz > span)
+            span = offset + ph->filesz;
     }
 
     g_bs->FreePool(buffer);
     return span;
+}
+
+#define FONT_FILE_MAX 0x00800000ULL
+
+/* Preload the CJK fallback font from the boot volume so disk-less (single
+ * ISO) boots still render Chinese.  The buffer is never freed; the kernel
+ * reads it through boot_info after ExitBootServices. */
+static void load_boot_font(EFI_HANDLE image_handle, UINT64 *physical,
+                           UINT64 *bytes)
+{
+    static const EFI_GUID loaded_guid = ZHAOXU_LOADED_IMAGE_GUID;
+    static const EFI_GUID fs_guid = ZHAOXU_SIMPLE_FS_GUID;
+    EFI_LOADED_IMAGE_PROTOCOL *image = 0;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = 0;
+    EFI_FILE_PROTOCOL *root = 0;
+    EFI_FILE_PROTOCOL *file = 0;
+    EFI_STATUS status;
+
+    *physical = 0;
+    *bytes = 0;
+
+    status = g_bs->HandleProtocol(image_handle, &loaded_guid, (void **)&image);
+    if (EFI_ERROR(status) || !image || !image->DeviceHandle)
+        return;
+    status = g_bs->HandleProtocol(image->DeviceHandle, &fs_guid, (void **)&fs);
+    if (EFI_ERROR(status) || !fs)
+        return;
+    status = fs->OpenVolume(fs, &root);
+    if (EFI_ERROR(status) || !root)
+        return;
+
+    static CHAR16 root_path[] = L"\\WQY.TTC";
+    static CHAR16 esp_path[] = L"\\EFI\\BOOT\\WQY.TTC";
+    CHAR16 *paths[2] = {root_path, esp_path};
+    for (int i = 0; i < 2 && !file; i++) {
+        status = root->Open(root, &file, paths[i], EFI_FILE_MODE_READ, 0);
+        if (EFI_ERROR(status))
+            file = 0;
+    }
+    if (!file) {
+        root->Close(root);
+        return;
+    }
+
+    UINT64 pages = (FONT_FILE_MAX + 4095) / 4096;
+    EFI_PHYSICAL_ADDRESS address = 0xFFFFFFFFULL;
+    status = g_bs->AllocatePages(EFI_ALLOCATE_MAX_ADDRESS, EFI_LOADER_DATA,
+                                 pages, &address);
+    if (EFI_ERROR(status) || !address)
+        status = g_bs->AllocatePages(EFI_ALLOCATE_ANY_PAGES, EFI_LOADER_DATA,
+                                     pages, &address);
+    if (EFI_ERROR(status) || !address) {
+        file->Close(file);
+        root->Close(root);
+        return;
+    }
+
+    UINT64 total = 0;
+    for (;;) {
+        if (total >= FONT_FILE_MAX)
+            break;
+        UINTN chunk = 0x100000;
+        if (total + chunk > FONT_FILE_MAX)
+            chunk = (UINTN)(FONT_FILE_MAX - total);
+        status = file->Read(file, &chunk,
+                            (void *)(UINTN)(address + total));
+        if (EFI_ERROR(status) || chunk == 0)
+            break;
+        total += chunk;
+    }
+    file->Close(file);
+    root->Close(root);
+
+    if (total > 12) {
+        *physical = (UINT64)address;
+        *bytes = total;
+        boot_print("Loaded WQY.TTC from the boot volume.\r\n");
+    }
 }
 
 EFI_STATUS EFIAPI efi_start(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
@@ -504,6 +584,10 @@ EFI_STATUS EFIAPI efi_start(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
         boot_print("Cannot load KERNEL.ELF from the boot volume.\r\n");
         halt();
     }
+
+    UINT64 font_phys = 0;
+    UINT64 font_size = 0;
+    load_boot_font(image_handle, &font_phys, &font_size);
 
     EFI_PHYSICAL_ADDRESS pt_alloc = 0;
     status = alloc_below_4g(PAGE_TABLE_PAGES, &pt_alloc);
@@ -558,6 +642,8 @@ EFI_STATUS EFIAPI efi_start(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     bi->kernel_map_size = KERNEL_MAP_SIZE;
     bi->page_table_root = pt_alloc;
     bi->flags = 1;
+    bi->font_phys = font_phys;
+    bi->font_size = font_size;
 
     UINTN mmap_size = MMAP_MAX;
     UINTN map_key = 0;

@@ -1,10 +1,8 @@
 #include <apic.h>
 #include <console.h>
-#include <drivers.h>
 #include <idt.h>
 #include <io.h>
 #include <kprintf.h>
-#include <keyboard.h>
 #include <process.h>
 #include <string.h>
 #include <thread.h>
@@ -147,19 +145,7 @@ static void irq_dispatch(struct interrupt_frame *f)
 {
     u32 irq = (u32)(f->vector - 32);
 
-    switch (irq) {
-    case 0:
-        timer_irq();
-        break;
-    case 1:
-        keyboard_irq();
-        break;
-    case 12:
-        mouse_irq();
-        break;
-    default:
-        break;
-    }
+    (void)irq;
 
     if (irq >= 8)
         outb(0xA0, 0x20);
@@ -175,7 +161,7 @@ void interrupt_dispatch(struct interrupt_frame *f)
         return;
     }
     if (f->vector == APIC_VECTOR_TIMER) {
-        sched_tick();
+        timer_irq();
         lapic_eoi();
         sched_maybe_preempt();
         return;

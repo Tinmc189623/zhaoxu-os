@@ -38,7 +38,7 @@ u64 vmm_alloc_pages(u32 count);
 u64 vmm_get_physical(u64 virtual_address);
 u64 vmm_heap_cursor(void);
 
-struct address_space *vmm_space_create(void);
+struct address_space *vmm_space_create(int user_phys);
 void vmm_space_destroy(struct address_space *space);
 int vmm_space_map_page(struct address_space *space, u64 virtual_address,
                        u64 physical_address, u64 flags);
@@ -46,6 +46,7 @@ u64 vmm_space_unmap_page(struct address_space *space, u64 virtual_address);
 u64 vmm_space_get_physical(struct address_space *space, u64 virtual_address);
 int vmm_space_page_is_user(struct address_space *space, u64 virtual_address);
 void vmm_space_activate(struct address_space *space);
+int vmm_space_user_phys(struct address_space *space);
 void vmm_activate_cr3(u64 cr3);
 struct address_space *vmm_kernel_space(void);
 u64 vmm_kernel_cr3(void);

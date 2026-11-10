@@ -236,6 +236,19 @@ void bring_to_front(int index)
 {
     if (index < 0 || index >= DWM_MAX_WINDOWS)
         return;
+
+    int top_z = 0;
+    for (int i = 0; i < DWM_MAX_WINDOWS; i++) {
+        if (i != index && g_windows[i].open && g_windows[i].z > top_z)
+            top_z = g_windows[i].z;
+    }
+
+    int already_top = g_windows[index].z > top_z;
+    int already_focused = g_focus == index;
+    if (already_top && already_focused)
+        return;
+
+    int old_focus = g_focus;
     g_windows[index].z = ++g_next_z;
     if (g_next_z > 900) {
         for (int i = 0; i < DWM_MAX_WINDOWS; i++)
@@ -243,7 +256,10 @@ void bring_to_front(int index)
         g_next_z /= 2;
     }
     g_focus = index;
-    dwm_invalidate_all();
+
+    damage_add_raw(window_damage_rect(&g_windows[index]));
+    if (old_focus >= 0 && old_focus != index && g_windows[old_focus].open)
+        damage_add_raw(window_damage_rect(&g_windows[old_focus]));
 }
 
 bool close_button_at(const struct dwm_window *window, int x, int y)
@@ -261,13 +277,14 @@ void close_window(int index)
     if (index < 0 || index >= DWM_MAX_WINDOWS)
         return;
     const struct ade_app *app = g_windows[index].app;
+    struct render_rect closed = window_damage_rect(&g_windows[index]);
     g_windows[index].open = 0;
     g_windows[index].z = 0;
     g_windows[index].app = nullptr;
     if (g_focus == index)
         g_focus = -1;
     g_drag_index = -1;
-    dwm_invalidate_all();
+    damage_add_raw(closed);
     if (app && app->close)
         app->close();
 }
@@ -410,7 +427,7 @@ struct dwm_window *dwm_open(const struct ade_app *app)
 
     if (app->init)
         app->init();
-    dwm_invalidate_all();
+    damage_add_raw(window_damage_rect(window));
     return window;
 }
 
@@ -428,10 +445,8 @@ void dwm_invalidate_rect(int x, int y, int w, int h)
 
 void dwm_invalidate_focus(void)
 {
-    if (g_focus < 0 || !g_windows[g_focus].open) {
-        dwm_invalidate_all();
+    if (g_focus < 0 || !g_windows[g_focus].open)
         return;
-    }
     struct render_rect r = window_damage_rect(&g_windows[g_focus]);
     damage_add_raw(r);
 }
@@ -448,10 +463,8 @@ int window_index_for(const struct ade_app *app)
 void dwm_invalidate_app(const struct ade_app *app)
 {
     int index = window_index_for(app);
-    if (index < 0) {
-        dwm_invalidate_all();
+    if (index < 0)
         return;
-    }
     damage_add_raw(window_damage_rect(&g_windows[index]));
 }
 

@@ -15,15 +15,6 @@ extern "C" {
 #include <version.h>
 #include <zos_user.h>
 }
-#else
-extern "C" {
-#include <boot.h>
-#include <io.h>
-#include <kprintf.h>
-#include <string.h>
-#include <types.h>
-#include <version.h>
-}
 #endif
 
 #include "ade.h"
@@ -214,9 +205,10 @@ extern "C" int user_main(long *stack)
     int font_status = font ? ttf_load(font, font_size) : -1;
     if (font_status == 0)
         ttf_set_pixel_size(fb.height >= 1000 ? 24 : 20);
-    else
+    else {
         kprintf("[ade ] no system font (data %llu, load %d)\n", font_size,
                 font_status);
+    }
 
     ade_setup(g_screen);
     ade_display_init();
@@ -225,46 +217,5 @@ extern "C" int user_main(long *stack)
     kprintf("[ade ] %s\n", ZOS_API_BANNER);
     dwm_run();
     return 0;
-}
-#else
-extern "C" void ade_run(void)
-{
-    const struct boot_info *boot = boot_get_info();
-    if (!boot || !boot->framebuffer_base) {
-        kprintf("[ade ] no framebuffer; desktop unavailable\n");
-        for (;;)
-            hlt();
-    }
-
-    render_init(boot);
-    g_screen = render_screen();
-    if (!g_screen) {
-        kprintf("[ade ] render surface unavailable\n");
-        for (;;)
-            hlt();
-    }
-
-    struct render_surface *wallpaper = ade_build_wallpaper();
-    ade_register_builtin_apps();
-
-    struct dwm_ops ops;
-    memset(&ops, 0, sizeof(ops));
-    ops.wallpaper = wallpaper;
-    ops.menu_h = ade_menubar_height();
-    ops.dock_h = ade_dock_height();
-    ops.paint_menubar = ade_menubar_paint;
-    ops.paint_dock = ade_dock_paint;
-    ops.dock_click = ade_dock_click;
-    ops.dock_hover = ade_dock_hover;
-    ops.tick = ade_menubar_tick;
-
-    dwm_init(&ops);
-    if (g_app_count > 0)
-        dwm_open(g_apps[0]);
-
-    kprintf("[ade ] Desktop Environment %s (DWM, Aqua), %d app(s)\n",
-            ZHAOXU_VERSION, g_app_count);
-    kprintf("[ade ] %s\n", ZOS_API_BANNER);
-    dwm_run();
 }
 #endif

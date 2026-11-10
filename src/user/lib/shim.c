@@ -236,7 +236,8 @@ u8 *zos_load_font(u64 *size_out)
 {
     static const char *const candidates[] = {
         "/mnt/MiSans.ttf", "/mnt/MiSans-Regular.ttf",
-        "/mnt/MiSansGlobal.ttf", "/mnt/Inter.ttf",
+        "/mnt/MiSansGlobal.ttf", "/mnt/MiSansLatinVF.ttf",
+        "/mnt/MiSansLatin-Regular.ttf", "/mnt/Inter.ttf",
         "/mnt/Inter-Regular.ttf", "/mnt/WQY.TTC"
     };
 
@@ -259,6 +260,14 @@ u8 *zos_load_font(u64 *size_out)
                 *size_out = (u64)total;
             return buffer;
         }
+    }
+
+    long boot_total = sys_boot_font(buffer, FONT_SHARED_BYTES);
+    if (boot_total > 12) {
+        kprintf("[ade ] font boot volume: %ld bytes\n", boot_total);
+        if (size_out)
+            *size_out = (u64)boot_total;
+        return buffer;
     }
     return 0;
 }

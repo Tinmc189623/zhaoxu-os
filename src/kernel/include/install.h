@@ -3,10 +3,10 @@
 
 #include <types.h>
 
-/* The installed disk is dual-boot: the MBR holds the legacy BIOS stage 1
- * (ZhaoxuBootloader), stage 2 and the raw kernel follow it in the gap, and
- * the FAT16 ESP image (out/efi.img, label ZHAOXUEFI) is copied into a single
- * partition starting at INSTALL_PARTITION_LBA for UEFI firmware. */
+/* The installer is self-contained: stage 1/2 and the running kernel are
+ * written to the target, and a FAT32 ESP is formatted in place at
+ * INSTALL_PARTITION_LBA with the embedded UEFI loader and kernel file.
+ * Both MBR and GPT layouts are supported. */
 #define INSTALL_PARTITION_LBA 2048
 
 struct install_disk_info {
@@ -21,10 +21,8 @@ struct install_disk_info {
 };
 
 int install_scan(struct install_disk_info *out, int capacity);
-int install_source_disk(void);
-u64 install_source_sectors(void);
-int install_pick_target(int source_disk);
-int install_run(int source_disk, int target_disk,
+int install_pick_target(void);
+int install_run(int target_disk, int gpt,
                 void (*progress)(u32 done, u32 total));
 const char *install_last_error(void);
 

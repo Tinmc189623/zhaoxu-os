@@ -1,5 +1,5 @@
 #!/usr/bin/env ruby
-# screenshot.rb -- boot Zhaoxu OS headless, run Desktop-Shell, and capture the
+# screenshot.rb -- boot Zhaoxu OS headless, run ADE, and capture the
 # QEMU framebuffer to a PNG for visual verification.
 #
 #   usage: ruby tools/screenshot.rb [seconds-before-shot] [out.png]

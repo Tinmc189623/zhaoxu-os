@@ -1,5 +1,5 @@
 #ifndef ZHAOXU_ADE_CLIENT_H
-#define ZHAOXU_ADEX_CLIENT_H
+#define ZHAOXU_ADE_CLIENT_H
 
 #include <ade_protocol.h>
 

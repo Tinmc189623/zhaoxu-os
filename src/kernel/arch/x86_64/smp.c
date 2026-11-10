@@ -35,11 +35,13 @@ struct ap_params {
     u64 cpu;
 };
 
+#if SCHED_STATS
 static volatile u64 worker_hits[MAX_CPUS];
 static volatile u32 churn_progress;
 
 #define CHURN_THREADS 4
 #define CHURN_ROUNDS  3
+#endif
 
 static u64 read_cr3(void)
 {
@@ -50,6 +52,7 @@ static u64 read_cr3(void)
 
 void ap_entry(u32 cpu);
 
+#if SCHED_STATS
 static void worker_entry(void *arg)
 {
     u32 cpu = (u32)(uintptr_t)arg;
@@ -85,6 +88,7 @@ static void monitor_entry(void *arg)
                 CHURN_THREADS * CHURN_ROUNDS, heap_used);
     }
 }
+#endif
 
 static int copy_trampoline(void)
 {
@@ -124,7 +128,7 @@ static void start_cpu(u32 cpu)
     for (u32 spin = 0; spin < 200; spin++) {
         if (__atomic_load_n(&g_percpu[cpu].online, __ATOMIC_ACQUIRE))
             return;
-        timer_sleep_ms(1);
+        apic_delay_ms(1);
     }
 
     kprintf("[smp ] cpu%u did not come online\n", cpu);
@@ -178,6 +182,9 @@ void smp_reschedule_all(void)
 
 static void start_demo_threads(u32 cpu_count)
 {
+#if !SCHED_STATS
+    (void)cpu_count;
+#else
     if (cpu_count > 1) {
         for (u32 cpu = 1; cpu < cpu_count; cpu++) {
             if (!kthread_create("worker", worker_entry,
@@ -200,6 +207,7 @@ static void start_demo_threads(u32 cpu_count)
         if (!kthread_create("churn", churn_entry, NULL, cpu))
             kprintf("[sched] cannot create churn thread %u\n", i);
     }
+#endif
 }
 
 void smp_init(u64 rsdp)
@@ -212,13 +220,13 @@ void smp_init(u64 rsdp)
 
     sched_init(cpu_count);
 
-    if (cpu_count > 1) {
-        u32 hz = apic_calibrate_lapic();
-        if (hz)
-            kprintf("[smp ] LAPIC timer %u Hz, divider 16\n", hz);
-        else
-            kprintf("[smp ] LAPIC timer uncalibrated, APs stay passive\n");
+    u32 hz = apic_calibrate_lapic();
+    if (hz)
+        kprintf("[smp ] LAPIC timer %u Hz, divider 16\n", hz);
+    else
+        kprintf("[smp ] LAPIC timer uncalibrated\n");
 
+    if (cpu_count > 1) {
         if (copy_trampoline() == 0) {
             for (u32 cpu = 1; cpu < cpu_count; cpu++)
                 start_cpu(cpu);
@@ -226,7 +234,7 @@ void smp_init(u64 rsdp)
             kprintf("[smp ] trampoline does not fit one page\n");
         }
     } else {
-        kprintf("[smp ] single processor, PIT preemption only\n");
+        kprintf("[smp ] single processor, LAPIC preemption\n");
     }
 
     sched_start();

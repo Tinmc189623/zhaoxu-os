@@ -4,18 +4,57 @@
 #   LBA 0            stage 1 (512-byte boot sector)
 #   LBA 1 .. 1+S-1   stage 2
 #   LBA 1+S ..       kernel (zero padded)
-# The stage 2 parameter block is patched with the kernel LBA, byte size and
-# sector count so the same stage 2 binary works from the ISO and from an
-# installed disk.
+# The kernel payload is extracted from the canonical KERNEL.ELF (PT_LOAD
+# filesz, placed at vaddr - KERNEL_VMA), so the BIOS and UEFI paths always
+# use the same kernel artifact and no kernel.bin intermediate is needed.
 #
-#   ruby tools/bios-img.rb <stage1> <stage2> <kernel> <out.img>
+#   ruby tools/bios-img.rb <stage1> <stage2> <kernel.elf> <out.img>
 
 S1, S2, KERNEL, OUT = ARGV
-abort "usage: bios-img.rb <stage1> <stage2> <kernel> <out.img>" unless OUT
+abort "usage: bios-img.rb <stage1> <stage2> <kernel.elf> <out.img>" unless OUT
+
+KERNEL_VMA = 0xffffffff80000000
+
+# Flatten an ELF64 kernel into the memory image that starts at KERNEL_VMA.
+# A raw binary is accepted as-is for callers that already pass one.
+def flatten_kernel(path)
+  data = File.binread(path)
+  return data unless data.start_with?("\x7FELF".b)
+
+  abort "not an ELF64 x86-64 image" unless data.getbyte(4) == 2 &&
+                                            data.getbyte(5) == 1
+  entry = data[24, 8].unpack1("Q<")
+  abort "kernel entry is not KERNEL_VMA" unless entry == KERNEL_VMA
+
+  phoff = data[32, 8].unpack1("Q<")
+  phentsize = data[54, 2].unpack1("v")
+  phnum = data[56, 2].unpack1("v")
+  abort "no program headers" if phoff.zero? || phnum.zero?
+
+  segments = []
+  span = 0
+  phnum.times do |i|
+    base = phoff + i * phentsize
+    type, _flags, offset, vaddr, _paddr, filesz, _memsz, _align =
+      data[base, 56].unpack("VVQ<Q<Q<Q<Q<Q<")
+    next unless type == 1 && filesz.positive?
+    abort "segment below KERNEL_VMA" if vaddr < KERNEL_VMA
+    virtual = vaddr - KERNEL_VMA
+    abort "segment offset overflow" if virtual + filesz < virtual
+    abort "segment outside file" if offset + filesz > data.bytesize
+    segments << [virtual, offset, filesz]
+    span = [span, virtual + filesz].max
+  end
+  abort "no loadable segments" if segments.empty?
+
+  flat = "\x00".b * span
+  segments.each { |virtual, offset, filesz| flat[virtual, filesz] = data[offset, filesz] }
+  flat
+end
 
 s1 = File.binread(S1)
 s2 = File.binread(S2)
-kernel = File.binread(KERNEL)
+kernel = flatten_kernel(KERNEL)
 
 abort "stage1 must be 512 bytes" unless s1.bytesize == 512
 abort "stage2 too large (#{s2.bytesize})" if s2.bytesize > 0x8000

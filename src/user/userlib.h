@@ -35,6 +35,14 @@ typedef unsigned long long u64;
 #define SYS_PORT_TRY_ACCEPT 26
 #define SYS_PORT_TRY_RECV   27
 #define SYS_SERIAL_WRITE    28
+#define SYS_READDIR         29
+#define SYS_DISKS           30
+#define SYS_INSTALL         31
+#define SYS_WRITE_FILE      32
+#define SYS_UNLINK          33
+#define SYS_DATA_VOLUME     34
+#define SYS_DEV_ALLOC       35
+#define SYS_BOOT_FONT       36
 
 struct zos_fb_info {
     unsigned long address;
@@ -208,6 +216,48 @@ static inline long sys_port_try_recv(long channel, unsigned long *type,
 static inline long sys_serial_write(const void *data, unsigned long length)
 {
     return syscall3(SYS_SERIAL_WRITE, (long)data, (long)length, 0);
+}
+
+static inline long sys_readdir(const char *path, void *buffer,
+                               unsigned long capacity)
+{
+    return syscall3(SYS_READDIR, (long)path, (long)buffer, (long)capacity);
+}
+
+static inline long sys_disks(void *buffer, unsigned long capacity)
+{
+    return syscall3(SYS_DISKS, (long)buffer, (long)capacity, 0);
+}
+
+static inline long sys_install(long target, long gpt)
+{
+    return syscall3(SYS_INSTALL, target, gpt, 0);
+}
+
+static inline long sys_write_file(const char *path, const void *data,
+                                  unsigned long size)
+{
+    return syscall3(SYS_WRITE_FILE, (long)path, (long)data, (long)size);
+}
+
+static inline long sys_unlink(const char *path)
+{
+    return syscall3(SYS_UNLINK, (long)path, 0, 0);
+}
+
+static inline long sys_data_volume(void)
+{
+    return syscall3(SYS_DATA_VOLUME, 0, 0, 0);
+}
+
+static inline unsigned long sys_dev_alloc_page(void)
+{
+    return (unsigned long)syscall3(SYS_DEV_ALLOC, 0, 0, 0);
+}
+
+static inline long sys_boot_font(void *buffer, unsigned long capacity)
+{
+    return syscall3(SYS_BOOT_FONT, (long)buffer, (long)capacity, 0);
 }
 
 static inline void sys_exit(int status)

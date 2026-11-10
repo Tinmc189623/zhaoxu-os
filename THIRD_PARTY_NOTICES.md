@@ -53,3 +53,12 @@ Zhaoxu OS kernel image.
 
 UEFI firmware (OVMF) and QEMU are development and test dependencies and are not
 redistributed by this repository.
+
+## Fonts
+
+- **Inter** — © The Inter Project Authors, SIL Open Font License 1.1.
+  Fetched at build time by `src/tools/fetch-fonts.rb`.
+- **MiSans / MiSans Global** — © Xiaomi. Distributed under the MiSans font
+  licence, which forbids redistributing the font files. They are fetched at
+  build time by `src/tools/fetch-fonts.rb` and are not committed to this
+  repository.

@@ -42,7 +42,7 @@ start:
         mov     ax, 0x0800              ; stage 2 loads at 0x8000
         mov     es, ax
         xor     bx, bx
-        mov     ax, 1                   ; stage 2 starts at LBA 1
+        mov     ax, [stage2_lba]        ; patched by the installer (1 or 34)
         mov     cx, STAGE2_SECTORS
         call    read_chs
         jc      fail
@@ -182,6 +182,8 @@ print:
         pop     ax
         ret
 
+stage2_marker   db 'ZSLBA'
+stage2_lba      dw 1
 boot_drive      db 0
 spt             dw 18
 heads           dw 2

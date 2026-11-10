@@ -5,10 +5,10 @@ Zhaoxu OS 全部版本记录。当前版本的功能说明见 [README.md](README
 ## 0.5.0 「Yuanshuo」
 
 ### 桌面与安装
-- Desktop-Shell 图形桌面（Aqua 风格）：渐变菜单栏、RTC 时钟、Dock、软件光标
-- DS-WM 窗口管理器：拖动、关闭、层叠、焦点与键盘路由
-- 原生桌面应用：终端（可直接执行 Command-Shell 命令）、文件、计算器、便签、监视器
-- 图形安装器：识别安装源 `ZHAOXUEFI` 与空白目标盘，AHCI 写入 MBR + FAT16 ESP，进度与结果提示
+- ADE 图形桌面（Aqua 风格）：渐变菜单栏、RTC 时钟、Dock、软件光标
+- DWM 窗口管理器：拖动、关闭、层叠、焦点与键盘路由
+- 原生桌面应用：终端（可直接执行 csh 命令）、文件、计算器、便签、监视器
+- 图形安装器：识别安装源 `ZHAOXUEFI` 与空白目标盘，AHCI 写入 MBR + FAT32 ESP，进度与结果提示
 - Shell `install [disk]` 与 `disks`：安装介质、数据盘、目标盘角色识别
 - PS/2 鼠标 IRQ12 三字节包解析，窗口与安装按钮可点击
 
@@ -19,8 +19,8 @@ Zhaoxu OS 全部版本记录。当前版本的功能说明见 [README.md](README
 - Shell 提示符在编辑模式下切换为 `edit>`
 
 ### 驱动与平台
-- ACPI 驱动迁移到 SPARK/Ada：RSDP 校验、RSDT/XSDT 遍历、FADT 解析、DSDT `_S5` AML 解析、关机/重启回退链；C 侧只保留端口 I/O、日志与 CPU 控制胶水
-- PCI/PCIe 枚举、AHCI、IDE（PIO）、SATA（链路状态）、SCSI（ATAPI）驱动以 SPARK/Ada 实现
+- ACPI 驱动迁移到 Ada：RSDP 校验、RSDT/XSDT 遍历、FADT 解析、DSDT `_S5` AML 解析、关机/重启回退链；C 侧只保留端口 I/O、日志与 CPU 控制胶水
+- PCI/PCIe 枚举、AHCI、IDE（PIO）、SATA（链路状态）、SCSI（ATAPI）驱动以 Ada 实现
 - Shell 新增 `ata`、`sata`、`scsi`、`ps` 命令
 
 ### 修复
@@ -55,7 +55,7 @@ Zhaoxu OS 全部版本记录。当前版本的功能说明见 [README.md](README
 - PIT 节拍、PS/2 键盘 IRQ、COM1 串口输入输出
 - 物理页位图分配器、4 KiB 虚拟映射、内核堆
 - `kprintf` / `ksnprintf`、字符串库、图形 + 串口双路控制台
-- Command-Shell 基础命令、异常现场打印、CPUID/RTC/PCI 信息
+- csh 基础命令、异常现场打印、CPUID/RTC/PCI 信息
 
 ## 0.1.0
 
