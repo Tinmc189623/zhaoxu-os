@@ -16,7 +16,7 @@
 
 ---
 
-> 🧭 **一句话介绍**：Zhaoxu OS 是一个完全从零编写的 x86_64 操作系统。引导加载器 **ZhaoxuBootloader** 同时支持 UEFI 与 legacy BIOS；**Yuanshuo Kernel** 是 C 编写的微内核；驱动由 **Ada** 实现；Shell **csh** 由 C 编写、桌面 **ADE** 由 **C++20** 编写，二者都运行在 ring 3 之上；系统内部还带有一个 C 子集编译器 **zcc**，可以直接在操作系统里写程序、编译成 `.zxe` 并运行。
+> 🧭 **一句话介绍**：Zhaoxu OS 是一个面向 x86_64 的微内核操作系统。引导加载器 **ZhaoxuBootloader** 同时支持 UEFI 与 legacy BIOS；**Yuanshuo Kernel** 是 C 编写的微内核；驱动由 **Ada** 实现；Shell **csh** 由 C 编写、桌面 **ADE** 由 **C++20** 编写，二者都运行在 ring 3 之上；系统内部还带有一个 C 子集编译器 **zcc**，可以直接在操作系统里写程序、编译成 `.zxe` 并运行。
 
 ---
 
@@ -39,7 +39,7 @@
 - `edit`：系统内 C 编辑器（带示例程序）
 - `cc`：把编辑缓冲区交给内置编译器 **zcc**
 - **zcc** 直接生成 `.zxe` 机器码镜像，在 ring 3 执行
-- 自研 `.zxe` 格式，同时保留完整 ELF64 兼容路径
+- `.zxe` 可执行格式，同时保留完整 ELF64 兼容路径
 
 </td>
 </tr>
@@ -234,7 +234,7 @@ Hello from zcc inside Zhaoxu OS!
 ```
 
 - **zcc** 支持：`int` 变量、赋值、`print` / `printnum`、`if` / `else`、`while`、比较与四则运算、`return`
-- 输出格式为自研 `.zxe` v1：112 字节头 + 段表 + 代码段 + 只读段
+- 输出格式为 `.zxe` v1：112 字节头 + 段表 + 代码段 + 只读段
 - 编译器与编辑器都是内核镜像里的 C++20 代码，不依赖任何外部工具
 
 ---
@@ -332,7 +332,7 @@ Zhaoxu OS/
 
 <div align="center">
 
-**Zhaoxu OS · Yuanshuo Kernel** · 用 C / FASM / GAS / Ada / C++ 从零构建
+**Zhaoxu OS · Yuanshuo Kernel** · C / FASM / GAS / Ada / C++ 技术栈
 
 Copyright © 2026 Nexsteaduser. All Rights Reserved. · admin@nexsteaduser.com
 
