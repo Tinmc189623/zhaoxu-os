@@ -20,7 +20,7 @@
 
 ---
 
-## ✨ 0.5.0 亮点
+## ✨ 0.5.0 内容
 
 <table>
 <tr>
@@ -49,13 +49,13 @@
 ### 💿 双启动 + 图形安装器
 - UEFI（C 引导层）与 legacy BIOS（FASM stage1/2）
 - ISO 采用 GPT hybrid（UEFI + El Torito 双入口）；安装目标盘支持 MBR 与 GPT
-- 单 ISO 安装：内置图形安装器，可选 MBR 或 GPT，现场格式化 FAT32 ESP 与 `ZHAOXUDATA` 数据分区
+- 图形安装器：现场格式化 FAT32 ESP 与 `ZHAOXUDATA` 数据分区
 - AHCI 写入、扇区校验、安装后可直接启动
 
 </td>
 <td width="50%" valign="top">
 
-### 🔌 完整驱动栈（Ada）
+### 🔌 驱动栈（Ada）
 - ACPI：RSDP/XSDT/FADT/DSDT、`_S5` 解析、关机与重启
 - PCI / PCIe 枚举、AHCI、IDE、SATA、SCSI（ATAPI）
 - PIT、PS/2 键盘与鼠标、GOP 帧缓冲、16550 UART
@@ -315,10 +315,10 @@ Zhaoxu OS/
 
 ## ⚠️ 当前限制
 
-- 🧵 单核、无调度器；同一时刻只运行一个 ring 3 进程，尚无 fork/exec
-- 💾 文件系统：FAT32 支持文件级创建/覆盖/删除（8.3 短名）；ext4 尚未接入，FAT32 目录创建与长文件名写入未支持
-- 🔤 单 ISO 启动时，UEFI 加载器从光盘根 `/install/WQY.TTC` 预读字体；安装后的系统从目标盘 `ZHAOXUDATA` 数据分区读取；数据盘上的 MiSans/MiSans Global/Inter 优先
-- 🧠 用户进程共享内核页表，依靠页级 `U/S` 位隔离
+- 🧵 抢占式 SMP 调度与 `spawn/wait` 已可用；暂无 `fork/exec`、COW 与交换
+- 💾 文件系统：FAT32 支持文件级创建/覆盖/删除（8.3 短名）；ext4 尚未接入，长文件名写入未支持
+- 🔤 从 ISO 启动时，UEFI 加载器从光盘根 `/install/WQY.TTC` 预读字体；安装后的系统从目标盘 `ZHAOXUDATA` 数据分区读取；数据盘上的 MiSans/MiSans Global/Inter 优先
+- 🧠 用户进程使用独立 CR3；驱动进程为 DMA/MMIO 保留 0..4 GiB 恒等映射，隔离依赖页级 `U/S` 位
 - 🌐 无网络协议栈
 - ⌨️ 输入为 PS/2 键盘/鼠标与 COM1 串口
 - 🖼️ 显示依赖 UEFI GOP 或 VBE LFB 帧缓冲
