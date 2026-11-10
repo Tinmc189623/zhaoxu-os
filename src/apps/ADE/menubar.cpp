@@ -4,6 +4,7 @@ extern "C" {
 #include <rtc.h>
 #include <smp.h>
 #include <types.h>
+#include <userlib.h>
 }
 
 #include "ade_internal.h"
@@ -12,6 +13,9 @@ extern "C" {
 namespace {
 
 u32 g_clock_second = 0xFFFFFFFFu;
+int g_brand_end;
+int g_item_x[4];
+int g_item_w[4];
 
 } // namespace
 
@@ -41,11 +45,19 @@ void ade_menubar_paint(void)
     render_text_center("Z", x + logo / 2, logo_y + 1, 0xFFFFFF, 1);
     x += logo + ade_ui(12);
 
-    x += render_text("Zhaoxu OS", x, text_y, 0x16293C, 1) + ade_ui(20);
-    x += render_text("文件", x, text_y, 0x36495C, 1) + ade_ui(18);
-    x += render_text("编辑", x, text_y, 0x36495C, 1) + ade_ui(18);
-    x += render_text("显示", x, text_y, 0x36495C, 1) + ade_ui(18);
-    render_text("帮助", x, text_y, 0x36495C, 1);
+    int brand = render_text_width("Zhaoxu OS", 1);
+    render_text("Zhaoxu OS", x, text_y, 0x16293C, 1);
+    g_brand_end = x + brand;
+    x += brand + ade_ui(20);
+
+    static const char *const labels[4] = {"文件", "编辑", "显示", "帮助"};
+    for (int i = 0; i < 4; i++) {
+        int width = render_text_width(labels[i], 1);
+        g_item_x[i] = x;
+        g_item_w[i] = width;
+        render_text(labels[i], x, text_y, 0x36495C, 1);
+        x += width + ade_ui(18);
+    }
 
     struct rtc_time now;
     char clock[16];
@@ -67,6 +79,33 @@ void ade_menubar_paint(void)
     int badge_w = render_text_width(badge, 1);
     render_text(badge, screen->width - clock_w - badge_w - ade_ui(52),
                 text_y, 0x51606F, 1);
+}
+
+void ade_menubar_click(int x, int y)
+{
+    if (y < 0 || y >= ade_menubar_height())
+        return;
+    if (x < g_brand_end) {
+        ade_open_app(ade_about_app());
+        return;
+    }
+    for (int i = 0; i < 4; i++) {
+        int left = i == 0 ? g_brand_end
+                          : (g_item_x[i - 1] + g_item_w[i - 1] +
+                             g_item_x[i]) / 2;
+        int right = i == 3 ? g_item_x[i] + g_item_w[i] + ade_ui(8)
+                           : (g_item_x[i] + g_item_w[i] +
+                              g_item_x[i + 1]) / 2;
+        if (x < left || x >= right)
+            continue;
+        if (i == 0)
+            sys_spawn_arg("/bin/apps/install.zxe", "force");
+        else if (i == 1)
+            dwm_close_focus();
+        else
+            ade_open_app(ade_about_app());
+        return;
+    }
 }
 
 void ade_menubar_tick(void)

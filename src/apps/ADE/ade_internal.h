@@ -10,10 +10,14 @@ struct render_surface *ade_build_wallpaper(void);
 int ade_menubar_height(void);
 void ade_menubar_paint(void);
 void ade_menubar_tick(void);
+void ade_menubar_click(int x, int y);
 
 int ade_dock_height(void);
 void ade_dock_paint(void);
 int ade_dock_click(int x, int y);
 int ade_dock_hover(int x, int y);
+const struct ade_app *ade_about_app(void);
+const char *ade_icon_for_title(const char *title);
+const char *ade_icon_about(void);
 
 #endif

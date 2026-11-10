@@ -43,6 +43,7 @@ typedef unsigned long long u64;
 #define SYS_DATA_VOLUME     34
 #define SYS_DEV_ALLOC       35
 #define SYS_BOOT_FONT       36
+#define SYS_SPAWN_ARG       37
 
 struct zos_fb_info {
     unsigned long address;
@@ -106,6 +107,11 @@ static inline long sys_uptime(void)
 static inline long sys_spawn(const char *path)
 {
     return syscall3(SYS_SPAWN, (long)path, 0, 0);
+}
+
+static inline long sys_spawn_arg(const char *path, const char *argument)
+{
+    return syscall3(SYS_SPAWN_ARG, (long)path, (long)argument, 0);
 }
 
 static inline long sys_wait(long pid, int *status)

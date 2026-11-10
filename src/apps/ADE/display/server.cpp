@@ -15,6 +15,7 @@ extern "C" {
 }
 
 #include "../ade.h"
+#include "../ade_internal.h"
 #include "../winmgr/dwm.h"
 #include "server.h"
 
@@ -223,6 +224,7 @@ void handle_create(int index, const struct ade_message *message)
     app->default_w = message->x > 0 ? message->x : 640;
     app->default_h = message->y > 0 ? message->y : 460;
     app->unscaled = 1;
+    app->icon_svg = ade_icon_for_title(client->title);
     app->paint = g_client_ops[index].paint;
     app->key = g_client_ops[index].key;
     app->click = g_client_ops[index].click;

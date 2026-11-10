@@ -65,6 +65,11 @@ void ade_register_app(const struct ade_app *app)
             return;
     }
     g_apps[g_app_count++] = app;
+    if (g_screen) {
+        int dock = ade_dock_height();
+        dwm_invalidate_rect(0, g_screen->height - dock - ade_ui(40),
+                            g_screen->width, dock + ade_ui(40));
+    }
 }
 
 void ade_unregister_app(const struct ade_app *app)
@@ -76,6 +81,11 @@ void ade_unregister_app(const struct ade_app *app)
             g_apps[j - 1] = g_apps[j];
         g_app_count--;
         g_apps[g_app_count] = nullptr;
+        if (g_screen) {
+            int dock = ade_dock_height();
+            dwm_invalidate_rect(0, g_screen->height - dock - ade_ui(40),
+                                g_screen->width, dock + ade_ui(40));
+        }
         return;
     }
 }
@@ -166,6 +176,8 @@ static void ade_setup(const struct render_surface *screen)
     (void)screen;
     struct render_surface *wallpaper = ade_build_wallpaper();
 
+    ade_register_app(ade_about_app());
+
     struct dwm_ops ops;
     memset(&ops, 0, sizeof(ops));
     ops.wallpaper = wallpaper;
@@ -175,6 +187,7 @@ static void ade_setup(const struct render_surface *screen)
     ops.paint_dock = ade_dock_paint;
     ops.dock_click = ade_dock_click;
     ops.dock_hover = ade_dock_hover;
+    ops.menu_click = ade_menubar_click;
     ops.tick = ade_menubar_tick;
     ops.poll = ade_display_poll;
 

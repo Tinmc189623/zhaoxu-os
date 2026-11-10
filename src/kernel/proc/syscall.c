@@ -64,6 +64,7 @@
 #define SYS_DATA_VOLUME     34
 #define SYS_DEV_ALLOC       35
 #define SYS_BOOT_FONT       36
+#define SYS_SPAWN_ARG       37
 
 #define FB_USER_BASE    0x0000010040000000ULL
 #define FB_MAX_PAGES    8192
@@ -149,6 +150,19 @@ static long syscall_spawn(struct process *process, u64 path_pointer)
     if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
         return -1;
     return (long)process_spawn(path, 0, NULL);
+}
+
+static long syscall_spawn_arg(struct process *process, u64 path_pointer,
+                              u64 arg_pointer)
+{
+    char path[256];
+    char argument[256];
+    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
+        return -1;
+    if (copy_user_string(process, argument, sizeof(argument), arg_pointer) != 0)
+        return -1;
+    char *argv[1] = {argument};
+    return (long)process_spawn(path, 1, argv);
 }
 
 static long syscall_wait(struct process *process, u64 pid, u64 status_pointer)
@@ -621,6 +635,9 @@ void syscall_dispatch(struct interrupt_frame *frame)
         break;
     case SYS_BOOT_FONT:
         result = syscall_boot_font(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_SPAWN_ARG:
+        result = syscall_spawn_arg(process, frame->rdi, frame->rsi);
         break;
     default:
         result = -1;
