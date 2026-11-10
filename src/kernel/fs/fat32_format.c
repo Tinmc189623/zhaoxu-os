@@ -42,7 +42,19 @@ static void put32(u8 *p, u32 value)
     p[3] = (u8)(value >> 24);
 }
 
-static void build_bpb(u8 *sector, u32 total, u32 fat_size, u32 hidden)
+static void put_label(u8 *destination, const char *label)
+{
+    int i = 0;
+    while (i < 11 && label && label[i]) {
+        destination[i] = (u8)label[i];
+        i++;
+    }
+    while (i < 11)
+        destination[i++] = ' ';
+}
+
+static void build_bpb(u8 *sector, u32 total, u32 fat_size, u32 hidden,
+                      const char *label)
 {
     memset(sector, 0, 512);
     sector[0] = 0xEB;
@@ -69,7 +81,7 @@ static void build_bpb(u8 *sector, u32 total, u32 fat_size, u32 hidden)
     sector[64] = 0x80;
     sector[66] = 0x29;
     put32(sector + 67, 0x5A4F5355);
-    memcpy(sector + 71, "ZHAOXUEFI  ", 11);
+    put_label(sector + 71, label);
     memcpy(sector + 82, "FAT32   ", 8);
     sector[510] = 0x55;
     sector[511] = 0xAA;
@@ -93,7 +105,8 @@ static u32 compute_fat_size(u32 total)
     }
 }
 
-int fat32_format_volume(int disk, u64 volume_base, u32 sectors)
+int fat32_format_volume(int disk, u64 volume_base, u32 sectors,
+                        const char *label)
 {
     if (sectors < 2048)
         return -1;
@@ -105,7 +118,7 @@ int fat32_format_volume(int disk, u64 volume_base, u32 sectors)
     u32 clusters = sectors - data_start - 1;   /* one cluster for root */
 
     u8 sector[512];
-    build_bpb(sector, sectors, fat_size, (u32)volume_base);
+    build_bpb(sector, sectors, fat_size, (u32)volume_base, label);
     if (write_sector(disk, volume_base, sector) != 0)
         return -1;
 
@@ -143,7 +156,7 @@ int fat32_format_volume(int disk, u64 volume_base, u32 sectors)
     if (zero_sectors(disk, root_lba, 1) != 0)
         return -1;
     memset(sector, 0, sizeof(sector));
-    memcpy(sector, "ZHAOXUEFI  ", 11);
+    put_label(sector, label);
     sector[11] = 0x08;
     if (write_sector(disk, root_lba, sector) != 0)
         return -1;
@@ -152,15 +165,14 @@ int fat32_format_volume(int disk, u64 volume_base, u32 sectors)
 }
 
 int fat32_make_esp(int disk, u64 volume_base, u32 sectors, const u8 *bootx64,
-                   u64 bootx64_size, const u8 *kernel, u64 kernel_size,
-                   const u8 *font, u64 font_size)
+                   u64 bootx64_size, const u8 *kernel, u64 kernel_size)
 {
     struct fat32_fs saved = *fat32_state();
     int result = -1;
 
     if (!bootx64 || !bootx64_size || !kernel || !kernel_size)
         return -1;
-    if (fat32_format_volume(disk, volume_base, sectors) != 0)
+    if (fat32_format_volume(disk, volume_base, sectors, "ZHAOXUEFI") != 0)
         return -1;
     if (fat32_mount_at(disk, volume_base) != 0)
         goto restore;
@@ -172,9 +184,6 @@ int fat32_make_esp(int disk, u64 volume_base, u32 sectors, const u8 *bootx64,
         goto restore;
     if (fat32_write_file("/EFI/BOOT/KERNEL.ELF", kernel, kernel_size) != 0)
         goto restore;
-    if (font && font_size > 12 &&
-        fat32_write_file("/WQY.TTC", font, font_size) != 0)
-        goto restore;
 
     struct fat_entry entry;
     if (fat32_find("/EFI/BOOT/BOOTX64.EFI", &entry) != 0 ||
@@ -183,10 +192,37 @@ int fat32_make_esp(int disk, u64 volume_base, u32 sectors, const u8 *bootx64,
     if (fat32_find("/EFI/BOOT/KERNEL.ELF", &entry) != 0 ||
         entry.size != (u32)kernel_size)
         goto restore;
-    if (font && font_size > 12 &&
-        (fat32_find("/WQY.TTC", &entry) != 0 ||
-         entry.size != (u32)font_size))
+
+    result = 0;
+
+restore:
+    *fat32_state() = saved;
+    return result;
+}
+
+/* The data partition keeps runtime assets (currently the CJK font) out of
+ * the ESP, so an installed system still renders Chinese without any extra
+ * disk (rule 27). */
+int fat32_make_data(int disk, u64 volume_base, u32 sectors, const u8 *font,
+                    u64 font_size)
+{
+    struct fat32_fs saved = *fat32_state();
+    int result = -1;
+
+    if (fat32_format_volume(disk, volume_base, sectors, "ZHAOXUDATA") != 0)
+        return -1;
+    if (fat32_mount_at(disk, volume_base) != 0)
         goto restore;
+    fat32_alloc_reset();
+
+    if (font && font_size > 12) {
+        if (fat32_write_file("/WQY.TTC", font, font_size) != 0)
+            goto restore;
+        struct fat_entry entry;
+        if (fat32_find("/WQY.TTC", &entry) != 0 ||
+            entry.size != (u32)font_size)
+            goto restore;
+    }
 
     result = 0;
 

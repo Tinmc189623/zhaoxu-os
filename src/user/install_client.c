@@ -33,10 +33,10 @@ static void draw(long channel, int status, int gpt)
     ade_text(channel, 24, 160, 0x51606F, gpt ? "分区表：GPT" : "分区表：MBR");
 
     ade_round(channel, 24, 200, 250, 48, 10,
-              gpt ? 0x1E6FB8 : 0x6B7C8C);
+              gpt ? 0x6B7C8C : 0x1E6FB8);
     ade_text(channel, 54, 214, 0xFFFFFF, "使用 MBR 安装");
     ade_round(channel, 300, 200, 250, 48, 10,
-              gpt ? 0x6B7C8C : 0x1E6FB8);
+              gpt ? 0x1E6FB8 : 0x6B7C8C);
     ade_text(channel, 330, 214, 0xFFFFFF, "使用 GPT 安装");
 
     if (status == 1)
@@ -50,9 +50,13 @@ static void draw(long channel, int status, int gpt)
 
 int user_main(long *stack)
 {
-    (void)stack;
+    long argc = stack[0];
+    const char **argv = (const char **)(stack + 1);
+    int force = 0;
+    if (argc > 0 && argv[0] && argv[0][0] == 'f')
+        force = 1;
 
-    if (sys_data_volume())
+    if (!force && sys_data_volume())
         return 0;
 
     static char disks[1024];

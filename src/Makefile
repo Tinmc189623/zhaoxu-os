@@ -95,9 +95,9 @@ $(HEADLESS_HEADER): FORCE
 
 FORCE:
 
-.PHONY: all clean run iso run-iso run-bios version fonts FORCE
+.PHONY: all clean run iso run-iso run-install run-bios run-install-bios version fonts FORCE
 
-all: $(OUT)/BOOTX64.EFI $(ESP)/BOOTX64.EFI $(ESP)/KERNEL.ELF esp/WQY.TTC
+all: $(OUT)/BOOTX64.EFI $(ESP)/BOOTX64.EFI $(ESP)/KERNEL.ELF
 
 # MiSans/MiSans Global are not redistributable, so they are fetched here.
 FONT_FILES := initramfs/data/MiSans-Regular.ttf \
@@ -145,8 +145,8 @@ ADE_C_SRCS := user/lib/shim.c user/lib/string_extra.c user/userlib.c \
               kernel/gfx/render.c kernel/gfx/svg.c kernel/font/font.c
 ADE_FONT_SRCS := kernel/font/ttf.c kernel/font/stbtt.c
 ADE_CXX_SRCS := apps/ADE/main.cpp apps/ADE/wallpaper.cpp \
-                apps/ADE/menubar.cpp apps/ADE/dock.cpp \
-                apps/ADE/display/server.cpp \
+                apps/ADE/menubar.cpp apps/ADE/dock.cpp apps/ADE/about.cpp \
+                apps/ADE/icons.cpp apps/ADE/display/server.cpp \
                 apps/ADE/winmgr/dwm.cpp
 ADE_OBJS := $(patsubst %.c,$(ADE_BUILD)/%.o,$(ADE_C_SRCS)) \
             $(patsubst %.c,$(ADE_BUILD)/%.o,$(ADE_FONT_SRCS)) \
@@ -343,7 +343,6 @@ $(DATA_IMG): $(OUT)/hello.zxe $(BUILD)/hello.uelf initramfs/data/hello.txt initr
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/hello.txt ::/HELLO.TXT
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/hello.zxe ::/HELLO.ZXE
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(BUILD)/hello.uelf ::/HELLO.ELF
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/wqy.ttc ::/WQY.TTC
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/MiSans-Regular.ttf ::/
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/MiSansLatinVF.ttf ::/
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/Inter-Regular.otf ::/
@@ -443,15 +442,13 @@ $(ESP)/KERNEL.ELF: $(OUT)/kernel.elf
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-esp/WQY.TTC: initramfs/data/wqy.ttc
-	cp $< $@
 
 clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin $(OUT)/BOOTX64.EFI \
 	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/initramfs.tar \
 	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu_*_installer.iso \
 	       $(OUT)/bios_stage1.bin $(OUT)/bios_stage2.bin $(OUT)/bios.img \
-	       $(OUT)/target.img $(ESP)/BOOTX64.EFI $(ESP)/KERNEL.ELF esp/WQY.TTC
+	       $(OUT)/target.img $(ESP)/BOOTX64.EFI $(ESP)/KERNEL.ELF
 
 OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
@@ -460,33 +457,19 @@ QEMU_MEM ?= 512M
 QEMU_SMP ?= 4
 QEMU_DISPLAY ?= -display none
 QEMU_MONITOR ?= none
-# VT-d IOMMU for the q35/OVMF runs; QEMU then exposes an ACPI DMAR table.
-QEMU_IOMMU ?= -device intel-iommu
 
-# Installer plumbing: out/efi.img is the read-only "installation media"
-# (64 MiB FAT32 ESP labelled ZHAOXUEFI); out/target.img is the blank disk the
-# graphical installer copies it onto.
+# Installer plumbing: out/efi.img is the El Torito ESP holding only the UEFI
+# loader; out/target.img is the blank disk the graphical installer formats.
 TARGET_IMG := $(OUT)/target.img
 EFI_IMG := $(OUT)/efi.img
 
 $(TARGET_IMG):
 	@mkdir -p $(OUT)
-	dd if=/dev/zero of=$@ bs=1M count=96 status=none
+	dd if=/dev/zero of=$@ bs=1M count=256 status=none
 
-run: all $(DATA_IMG) $(EFI_IMG) $(TARGET_IMG)
-	cp $(OVMF_VARS) $(OUT)/OVMF_VARS.fd
-	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
-	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
-	  -drive if=pflash,format=raw,unit=1,file=$(OUT)/OVMF_VARS.fd \
-	  -drive format=raw,file=fat:rw:esp \
-	  -drive if=none,id=zdata,format=raw,file=$(DATA_IMG) \
-	  -device ide-hd,drive=zdata,bus=ide.1 \
-	  -drive if=none,id=zsrc,format=raw,file=$(EFI_IMG) \
-	  -device ide-hd,drive=zsrc,bus=ide.2 \
-	  -drive if=none,id=zdst,format=raw,file=$(TARGET_IMG) \
-	  -device ide-hd,drive=zdst,bus=ide.3 \
-	  $(QEMU_IOMMU) \
-	  -net none -serial stdio -monitor $(QEMU_MONITOR) $(QEMU_DISPLAY) -no-reboot
+# ISO-only testing (rule 27): the CD carries loader, kernel and assets, so no
+# data disk is attached.  run-install adds one blank target for the installer.
+run: run-iso
 
 # ---- UEFI ISO --------------------------------------------------------
 # Rule 11: ISO files are named zhaoxu_{version}_installer.iso.
@@ -495,52 +478,62 @@ ISO := $(OUT)/zhaoxu_$(ZHAOXU_VERSION)_installer.iso
 ISO_ROOT := $(BUILD)/iso
 ISO_ESP_MB ?= 64
 
-$(EFI_IMG): $(OUT)/BOOTX64.EFI $(OUT)/kernel.elf initramfs/data/wqy.ttc
+# The El Torito ESP only holds the loader; the kernel is read from the CD
+# root by the loader's ISO9660 reader (not from the ESP).
+$(EFI_IMG): $(OUT)/BOOTX64.EFI
 	@mkdir -p $(OUT)
 	dd if=/dev/zero of=$@ bs=1M count=$(ISO_ESP_MB) status=none
 	mkfs.vfat -F 32 -n ZHAOXUEFI $@ >/dev/null
 	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/EFI
 	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/EFI/BOOT
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/kernel.elf ::/EFI/BOOT/KERNEL.ELF
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/wqy.ttc ::/WQY.TTC
 
-$(ISO): $(OUT)/BOOTX64.EFI $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG)
+$(ISO): $(OUT)/BOOTX64.EFI $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG) initramfs/data/wqy.ttc
 	@rm -rf $(ISO_ROOT)
-	@mkdir -p $(ISO_ROOT)/EFI/BOOT
-	cp $(OUT)/BOOTX64.EFI $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
-	cp $(OUT)/kernel.elf $(ISO_ROOT)/EFI/BOOT/KERNEL.ELF
+	@mkdir -p $(ISO_ROOT)/install
 	cp $(EFI_IMG) $(ISO_ROOT)/efi.img
 	cp $(BIOS_IMG) $(ISO_ROOT)/bios.img
+	cp $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.ELF
+	cp initramfs/data/wqy.ttc $(ISO_ROOT)/install/WQY.TTC
 	xorriso -as mkisofs -o $@ -V ZHAOXU_OS -J -R \
 	  -b bios.img -eltorito-alt-boot \
 	  -e efi.img -no-emul-boot -isohybrid-gpt-basdat $(ISO_ROOT)
 
 iso: $(ISO)
 
-# The CD lives on ide.0; the installer media/target disks use ide.2/ide.3.
+# The CD lives on ide.0; run-install adds one blank target on ide.1.
 QEMU_CD := -drive if=none,id=zcd,format=raw,media=cdrom,readonly=on,file=$(ISO) \
            -device ide-cd,drive=zcd,bus=ide.0
-QEMU_INSTALL_DISKS := \
-	-drive if=none,id=zdata,format=raw,file=$(DATA_IMG) \
-	-device ide-hd,drive=zdata,bus=ide.1 \
-	-drive if=none,id=zsrc,format=raw,file=$(EFI_IMG) \
-	-device ide-hd,drive=zsrc,bus=ide.2 \
+QEMU_TARGET_DISK := \
 	-drive if=none,id=zdst,format=raw,file=$(TARGET_IMG) \
-	-device ide-hd,drive=zdst,bus=ide.3
+	-device ide-hd,drive=zdst,bus=ide.1
 
-run-iso: $(ISO) $(DATA_IMG) $(EFI_IMG) $(TARGET_IMG)
+run-iso: $(ISO)
 	cp $(OVMF_VARS) $(OUT)/OVMF_VARS.fd
 	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
 	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
 	  -drive if=pflash,format=raw,unit=1,file=$(OUT)/OVMF_VARS.fd \
-	  $(QEMU_CD) $(QEMU_INSTALL_DISKS) -boot order=d \
+	  $(QEMU_CD) -boot order=d \
+	  -net none -serial stdio -monitor $(QEMU_MONITOR) $(QEMU_DISPLAY) -no-reboot
+
+# Installer test: the same CD plus one blank target disk.
+run-install: $(ISO) $(TARGET_IMG)
+	cp $(OVMF_VARS) $(OUT)/OVMF_VARS.fd
+	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
+	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
+	  -drive if=pflash,format=raw,unit=1,file=$(OUT)/OVMF_VARS.fd \
+	  $(QEMU_CD) $(QEMU_TARGET_DISK) -boot order=d \
 	  -net none -serial stdio -monitor $(QEMU_MONITOR) $(QEMU_DISPLAY) -no-reboot
 
 # Legacy BIOS: SeaBIOS boots the El Torito image (ZhaoxuBootloader stage 1).
-run-bios: $(ISO) $(DATA_IMG) $(EFI_IMG) $(TARGET_IMG)
+run-bios: $(ISO)
 	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
-	  $(QEMU_CD) $(QEMU_INSTALL_DISKS) -boot order=d \
+	  $(QEMU_CD) -boot order=d \
+	  -net none -serial stdio -monitor $(QEMU_MONITOR) $(QEMU_DISPLAY) -no-reboot
+
+run-install-bios: $(ISO) $(TARGET_IMG)
+	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
+	  $(QEMU_CD) $(QEMU_TARGET_DISK) -boot order=d \
 	  -net none -serial stdio -monitor $(QEMU_MONITOR) $(QEMU_DISPLAY) -no-reboot
 
 -include $(DEPS)

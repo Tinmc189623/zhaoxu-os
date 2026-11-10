@@ -251,6 +251,40 @@ typedef struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
 #define ZHAOXU_SIMPLE_FS_GUID \
     { 0x964E5B22, 0x6459, 0x11D2, { 0x8E, 0x39, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B } }
 
+#define ZHAOXU_BLOCK_IO_GUID \
+    { 0x964E5B21, 0x6459, 0x11D2, { 0x8E, 0x39, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B } }
+
+typedef UINT64 EFI_LBA;
+
+typedef struct {
+    UINT32 MediaId;
+    UINT8 RemovableMedia;
+    UINT8 MediaPresent;
+    UINT8 LogicalPartition;
+    UINT8 ReadOnly;
+    UINT8 WriteCaching;
+    UINT32 BlockSize;
+    UINT32 IoAlign;
+    EFI_LBA LastBlock;
+    EFI_LBA LowestAlignedLba;
+    UINT32 LogicalBlocksPerPhysicalBlock;
+    UINT32 OptimalTransferLengthGranularity;
+} EFI_BLOCK_IO_MEDIA;
+
+typedef struct EFI_BLOCK_IO_PROTOCOL {
+    UINT64 Revision;
+    EFI_BLOCK_IO_MEDIA *Media;
+    EFI_STATUS (EFIAPI *Reset)(struct EFI_BLOCK_IO_PROTOCOL *This,
+                               UINT8 ExtendedVerification);
+    EFI_STATUS (EFIAPI *ReadBlocks)(struct EFI_BLOCK_IO_PROTOCOL *This,
+                                    UINT32 MediaId, EFI_LBA Lba,
+                                    UINTN BufferSize, void *Buffer);
+    EFI_STATUS (EFIAPI *WriteBlocks)(struct EFI_BLOCK_IO_PROTOCOL *This,
+                                     UINT32 MediaId, EFI_LBA Lba,
+                                     UINTN BufferSize, const void *Buffer);
+    EFI_STATUS (EFIAPI *FlushBlocks)(struct EFI_BLOCK_IO_PROTOCOL *This);
+} EFI_BLOCK_IO_PROTOCOL;
+
 #define EFI_FILE_MODE_READ 0x0000000000000001ULL
 
 #endif

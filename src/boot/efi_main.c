@@ -359,6 +359,44 @@ struct elf64_phdr {
 
 #define ELF_PT_LOAD 1
 
+static UINT64 load_kernel_from_iso(EFI_HANDLE image_handle, UINT64 staging);
+
+static UINT64 load_elf_image(const void *buffer, UINT64 file_size,
+                             UINT64 staging)
+{
+    const struct elf64_ehdr *ehdr = (const struct elf64_ehdr *)buffer;
+    if (!file_size || file_size < sizeof(*ehdr) ||
+        ehdr->ident[0] != 0x7F || ehdr->ident[1] != 'E' ||
+        ehdr->ident[2] != 'L' || ehdr->ident[3] != 'F' ||
+        ehdr->ident[4] != 2 || ehdr->type != 2 || ehdr->machine != 62 ||
+        ehdr->phentsize < sizeof(struct elf64_phdr) || !ehdr->phnum ||
+        ehdr->entry != KERNEL_VMA)
+        return 0;
+
+    UINT64 span = 0;
+    for (UINT16 i = 0; i < ehdr->phnum; i++) {
+        const struct elf64_phdr *ph = (const struct elf64_phdr *)
+            ((UINT64)(UINTN)buffer + ehdr->phoff +
+             (UINT64)i * ehdr->phentsize);
+        if (ph->type != ELF_PT_LOAD || ph->memsz == 0)
+            continue;
+        if (ph->vaddr < KERNEL_VMA || ph->filesz > ph->memsz ||
+            ph->offset + ph->filesz > file_size)
+            continue;
+        UINT64 offset = ph->vaddr - KERNEL_VMA;
+        if (offset + ph->memsz > KERNEL_MAP_SIZE)
+            continue;
+        memcpy((void *)(UINTN)(staging + offset),
+               (const void *)(UINTN)((UINT64)(UINTN)buffer + ph->offset),
+               ph->filesz);
+        memset((void *)(UINTN)(staging + offset + ph->filesz), 0,
+               ph->memsz - ph->filesz);
+        if (offset + ph->filesz > span)
+            span = offset + ph->filesz;
+    }
+    return span;
+}
+
 static UINT64 load_kernel_elf(EFI_HANDLE image_handle, UINT64 staging)
 {
     static const EFI_GUID loaded_guid = ZHAOXU_LOADED_IMAGE_GUID;
@@ -369,6 +407,11 @@ static UINT64 load_kernel_elf(EFI_HANDLE image_handle, UINT64 staging)
     EFI_FILE_PROTOCOL *file = 0;
     EFI_STATUS status;
     void *buffer = 0;
+
+    /* ISO boots take the kernel from the CD root, outside the El Torito ESP. */
+    UINT64 span = load_kernel_from_iso(image_handle, staging);
+    if (span)
+        return span;
 
     status = g_bs->HandleProtocol(image_handle, &loaded_guid, (void **)&image);
     if (EFI_ERROR(status) || !image || !image->DeviceHandle)
@@ -421,119 +464,287 @@ static UINT64 load_kernel_elf(EFI_HANDLE image_handle, UINT64 staging)
     file->Close(file);
     root->Close(root);
 
-    const struct elf64_ehdr *ehdr = (const struct elf64_ehdr *)buffer;
-    if (!file_size || file_size < sizeof(*ehdr) ||
-        ehdr->ident[0] != 0x7F || ehdr->ident[1] != 'E' ||
-        ehdr->ident[2] != 'L' || ehdr->ident[3] != 'F' ||
-        ehdr->ident[4] != 2 || ehdr->type != 2 || ehdr->machine != 62 ||
-        ehdr->phentsize < sizeof(struct elf64_phdr) || !ehdr->phnum ||
-        ehdr->entry != KERNEL_VMA) {
-        g_bs->FreePool(buffer);
-        return 0;
-    }
-
-    UINT64 span = 0;
-    for (UINT16 i = 0; i < ehdr->phnum; i++) {
-        const struct elf64_phdr *ph = (const struct elf64_phdr *)
-            ((UINT64)(UINTN)buffer + ehdr->phoff +
-             (UINT64)i * ehdr->phentsize);
-        if (ph->type != ELF_PT_LOAD || ph->memsz == 0)
-            continue;
-        if (ph->vaddr < KERNEL_VMA || ph->filesz > ph->memsz ||
-            ph->offset + ph->filesz > file_size)
-            continue;
-        UINT64 offset = ph->vaddr - KERNEL_VMA;
-        if (offset + ph->memsz > KERNEL_MAP_SIZE)
-            continue;
-        memcpy((void *)(UINTN)(staging + offset),
-               (const void *)(UINTN)((UINT64)(UINTN)buffer + ph->offset),
-               ph->filesz);
-        memset((void *)(UINTN)(staging + offset + ph->filesz), 0,
-               ph->memsz - ph->filesz);
-        if (offset + ph->filesz > span)
-            span = offset + ph->filesz;
-    }
-
+    span = load_elf_image(buffer, file_size, staging);
     g_bs->FreePool(buffer);
     return span;
 }
 
 #define FONT_FILE_MAX 0x00800000ULL
 
-/* Preload the CJK fallback font from the boot volume so disk-less (single
- * ISO) boots still render Chinese.  The buffer is never freed; the kernel
- * reads it through boot_info after ExitBootServices. */
+typedef EFI_STATUS (EFIAPI *LOCATE_HANDLE_BUFFER)(
+    UINT32 SearchType, const EFI_GUID *Protocol, void *SearchKey,
+    UINTN *NoHandles, EFI_HANDLE **Buffer);
+
+#define EFI_BY_PROTOCOL 2
+
+static UINT32 iso_le32(const UINT8 *p)
+{
+    return (UINT32)p[0] | ((UINT32)p[1] << 8) | ((UINT32)p[2] << 16) |
+           ((UINT32)p[3] << 24);
+}
+
+static int iso_match(const UINT8 *data, const char *text, UINT8 length)
+{
+    for (UINT8 i = 0; i < length; i++) {
+        if (data[i] != (UINT8)text[i])
+            return 0;
+    }
+    return 1;
+}
+
+static int iso_name_equal(const UINT8 *name, UINT8 length, const char *want)
+{
+    UINT8 count = length;
+    for (UINT8 i = 0; i < length; i++) {
+        if (name[i] == ';') {
+            count = i;
+            break;
+        }
+    }
+    while (count > 0 && (name[count - 1] == ' ' || name[count - 1] == '.'))
+        count--;
+
+    const char *w = want;
+    for (UINT8 i = 0; i < count; i++) {
+        char a = (char)name[i];
+        char b = *w++;
+        if (a >= 'a' && a <= 'z')
+            a = (char)(a - 'a' + 'A');
+        if (b >= 'a' && b <= 'z')
+            b = (char)(b - 'a' + 'A');
+        if (!b || a != b)
+            return 0;
+    }
+    return *w == 0;
+}
+
+static int iso_read_file(EFI_BLOCK_IO_PROTOCOL *bio, UINT32 extent, UINT32 size,
+                         void *destination)
+{
+    UINT32 block = bio->Media->BlockSize;
+    if (!block)
+        return 0;
+    UINT64 byte = (UINT64)extent * 2048ULL;
+    EFI_LBA lba = byte / block;
+    UINT32 inner = (UINT32)(byte % block);
+    UINT64 total = (UINT64)inner + size;
+    UINT64 blocks = (total + block - 1) / block;
+    UINT8 *buffer = 0;
+    EFI_STATUS status = g_bs->AllocatePool(EFI_LOADER_DATA,
+                                           (UINTN)(blocks * block),
+                                           (void **)&buffer);
+    if (EFI_ERROR(status) || !buffer)
+        return 0;
+    status = bio->ReadBlocks(bio, bio->Media->MediaId, lba,
+                             (UINTN)(blocks * block), buffer);
+    if (EFI_ERROR(status)) {
+        g_bs->FreePool(buffer);
+        return 0;
+    }
+    memcpy(destination, buffer + inner, size);
+    g_bs->FreePool(buffer);
+    return 1;
+}
+
+static UINT8 *iso_read_directory(EFI_BLOCK_IO_PROTOCOL *bio, UINT32 extent,
+                                 UINT32 size)
+{
+    if (size == 0 || size > 0x100000)
+        return 0;
+    UINT8 *buffer = 0;
+    EFI_STATUS status = g_bs->AllocatePool(EFI_LOADER_DATA, size,
+                                           (void **)&buffer);
+    if (EFI_ERROR(status) || !buffer)
+        return 0;
+    if (!iso_read_file(bio, extent, size, buffer)) {
+        g_bs->FreePool(buffer);
+        return 0;
+    }
+    return buffer;
+}
+
+static int iso_find(const UINT8 *directory, UINT32 size, const char *name,
+                    UINT32 *extent, UINT32 *bytes, UINT8 *flags)
+{
+    UINT32 offset = 0;
+    while (offset + 33 <= size) {
+        UINT8 length = directory[offset];
+        if (length < 33) {
+            offset = (offset / 2048 + 1) * 2048;
+            continue;
+        }
+        UINT8 name_length = directory[offset + 32];
+        if (name_length && offset + 33 + name_length <= size &&
+            iso_name_equal(directory + offset + 33, name_length, name)) {
+            *extent = iso_le32(directory + offset + 2);
+            *bytes = iso_le32(directory + offset + 10);
+            *flags = directory[offset + 25];
+            return 1;
+        }
+        offset += length;
+    }
+    return 0;
+}
+
+static int iso_is_iso(EFI_BLOCK_IO_PROTOCOL *bio)
+{
+    UINT8 pvd[2048];
+    return iso_read_file(bio, 16, sizeof(pvd), pvd) &&
+           pvd[0] == 1 && iso_match(pvd + 1, "CD001", 5);
+}
+
+/* The image device is the El Torito FAT volume, so probe it first and then
+ * every Block I/O handle until one answers with an ISO9660 PVD. */
+static EFI_BLOCK_IO_PROTOCOL *iso_device(EFI_HANDLE image_handle)
+{
+    static EFI_BLOCK_IO_PROTOCOL *cached;
+    static const EFI_GUID loaded_guid = ZHAOXU_LOADED_IMAGE_GUID;
+    static const EFI_GUID block_guid = ZHAOXU_BLOCK_IO_GUID;
+    if (cached)
+        return cached;
+
+    EFI_LOADED_IMAGE_PROTOCOL *image = 0;
+    if (!EFI_ERROR(g_bs->HandleProtocol(image_handle, &loaded_guid,
+                                        (void **)&image)) &&
+        image && image->DeviceHandle) {
+        EFI_BLOCK_IO_PROTOCOL *bio = 0;
+        if (!EFI_ERROR(g_bs->HandleProtocol(image->DeviceHandle, &block_guid,
+                                            (void **)&bio)) &&
+            bio && iso_is_iso(bio)) {
+            cached = bio;
+            return bio;
+        }
+    }
+
+    LOCATE_HANDLE_BUFFER locate =
+        (LOCATE_HANDLE_BUFFER)g_bs->LocateHandleBuffer;
+    EFI_HANDLE *handles = 0;
+    UINTN count = 0;
+    if (EFI_ERROR(locate(EFI_BY_PROTOCOL, &block_guid, 0, &count, &handles)) ||
+        !handles)
+        return 0;
+    for (UINTN i = 0; i < count && !cached; i++) {
+        EFI_BLOCK_IO_PROTOCOL *bio = 0;
+        if (!EFI_ERROR(g_bs->HandleProtocol(handles[i], &block_guid,
+                                            (void **)&bio)) &&
+            bio && iso_is_iso(bio))
+            cached = bio;
+    }
+    g_bs->FreePool(handles);
+    return cached;
+}
+
+/* Resolve "DIR/FILE.EXT" inside the ISO9660 root directory. */
+static int iso_find_path(EFI_BLOCK_IO_PROTOCOL *bio, const char *path,
+                         UINT32 *out_extent, UINT32 *out_bytes)
+{
+    UINT8 pvd[2048];
+    if (!iso_read_file(bio, 16, sizeof(pvd), pvd))
+        return 0;
+    if (pvd[0] != 1 || !iso_match(pvd + 1, "CD001", 5))
+        return 0;
+
+    UINT32 dir_extent = iso_le32(pvd + 158);
+    UINT32 dir_size = iso_le32(pvd + 166);
+    UINT8 *dir = iso_read_directory(bio, dir_extent, dir_size);
+    if (!dir)
+        return 0;
+
+    int found = 0;
+    while (*path && dir) {
+        char name[32];
+        UINT8 length = 0;
+        while (*path && *path != '/' && length + 1 < sizeof(name))
+            name[length++] = *path++;
+        name[length] = 0;
+        while (*path == '/')
+            path++;
+
+        UINT32 extent = 0;
+        UINT32 bytes = 0;
+        UINT8 flags = 0;
+        found = iso_find(dir, dir_size, name, &extent, &bytes, &flags);
+        g_bs->FreePool(dir);
+        dir = 0;
+        if (!found)
+            return 0;
+
+        if (*path) {
+            if (!(flags & 2))
+                return 0;
+            dir_extent = extent;
+            dir_size = bytes;
+            dir = iso_read_directory(bio, dir_extent, dir_size);
+        } else {
+            *out_extent = extent;
+            *out_bytes = bytes;
+            return !(flags & 2);
+        }
+    }
+    if (dir)
+        g_bs->FreePool(dir);
+    return 0;
+}
+
+static UINT64 load_kernel_from_iso(EFI_HANDLE image_handle, UINT64 staging)
+{
+    EFI_BLOCK_IO_PROTOCOL *bio = iso_device(image_handle);
+    if (!bio)
+        return 0;
+
+    UINT32 extent = 0;
+    UINT32 bytes = 0;
+    if (!iso_find_path(bio, "INSTALL/KERNEL.ELF", &extent, &bytes) ||
+        bytes < sizeof(struct elf64_ehdr) || bytes > KERNEL_FILE_MAX)
+        return 0;
+
+    void *buffer = 0;
+    if (EFI_ERROR(g_bs->AllocatePool(EFI_LOADER_DATA, bytes, &buffer)) ||
+        !buffer)
+        return 0;
+    if (!iso_read_file(bio, extent, bytes, buffer)) {
+        g_bs->FreePool(buffer);
+        return 0;
+    }
+
+    UINT64 span = load_elf_image(buffer, bytes, staging);
+    g_bs->FreePool(buffer);
+    if (span)
+        boot_print("Kernel: /install/KERNEL.ELF from the ISO.\r\n");
+    return span;
+}
+
 static void load_boot_font(EFI_HANDLE image_handle, UINT64 *physical,
                            UINT64 *bytes)
 {
-    static const EFI_GUID loaded_guid = ZHAOXU_LOADED_IMAGE_GUID;
-    static const EFI_GUID fs_guid = ZHAOXU_SIMPLE_FS_GUID;
-    EFI_LOADED_IMAGE_PROTOCOL *image = 0;
-    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = 0;
-    EFI_FILE_PROTOCOL *root = 0;
-    EFI_FILE_PROTOCOL *file = 0;
-    EFI_STATUS status;
-
     *physical = 0;
     *bytes = 0;
 
-    status = g_bs->HandleProtocol(image_handle, &loaded_guid, (void **)&image);
-    if (EFI_ERROR(status) || !image || !image->DeviceHandle)
-        return;
-    status = g_bs->HandleProtocol(image->DeviceHandle, &fs_guid, (void **)&fs);
-    if (EFI_ERROR(status) || !fs)
-        return;
-    status = fs->OpenVolume(fs, &root);
-    if (EFI_ERROR(status) || !root)
+    EFI_BLOCK_IO_PROTOCOL *bio = iso_device(image_handle);
+    if (!bio)
         return;
 
-    static CHAR16 root_path[] = L"\\WQY.TTC";
-    static CHAR16 esp_path[] = L"\\EFI\\BOOT\\WQY.TTC";
-    CHAR16 *paths[2] = {root_path, esp_path};
-    for (int i = 0; i < 2 && !file; i++) {
-        status = root->Open(root, &file, paths[i], EFI_FILE_MODE_READ, 0);
-        if (EFI_ERROR(status))
-            file = 0;
-    }
-    if (!file) {
-        root->Close(root);
+    UINT32 extent = 0;
+    UINT32 size = 0;
+    if (!iso_find_path(bio, "INSTALL/WQY.TTC", &extent, &size) ||
+        size < 13 || size > FONT_FILE_MAX)
         return;
-    }
 
-    UINT64 pages = (FONT_FILE_MAX + 4095) / 4096;
+    UINT64 pages = (size + 4095) / 4096;
     EFI_PHYSICAL_ADDRESS address = 0xFFFFFFFFULL;
-    status = g_bs->AllocatePages(EFI_ALLOCATE_MAX_ADDRESS, EFI_LOADER_DATA,
-                                 pages, &address);
+    EFI_STATUS status = g_bs->AllocatePages(EFI_ALLOCATE_MAX_ADDRESS,
+                                            EFI_LOADER_DATA, pages, &address);
     if (EFI_ERROR(status) || !address)
         status = g_bs->AllocatePages(EFI_ALLOCATE_ANY_PAGES, EFI_LOADER_DATA,
                                      pages, &address);
-    if (EFI_ERROR(status) || !address) {
-        file->Close(file);
-        root->Close(root);
+    if (EFI_ERROR(status) || !address)
         return;
-    }
 
-    UINT64 total = 0;
-    for (;;) {
-        if (total >= FONT_FILE_MAX)
-            break;
-        UINTN chunk = 0x100000;
-        if (total + chunk > FONT_FILE_MAX)
-            chunk = (UINTN)(FONT_FILE_MAX - total);
-        status = file->Read(file, &chunk,
-                            (void *)(UINTN)(address + total));
-        if (EFI_ERROR(status) || chunk == 0)
-            break;
-        total += chunk;
-    }
-    file->Close(file);
-    root->Close(root);
-
-    if (total > 12) {
-        *physical = (UINT64)address;
-        *bytes = total;
-        boot_print("Loaded WQY.TTC from the boot volume.\r\n");
-    }
+    if (!iso_read_file(bio, extent, size, (void *)(UINTN)address))
+        return;
+    *physical = (UINT64)address;
+    *bytes = size;
+    boot_print("Font: /install/WQY.TTC from the ISO.\r\n");
 }
 
 EFI_STATUS EFIAPI efi_start(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
