@@ -23,6 +23,7 @@ extern int ahci_disk_read(int disk, u64 lba, u32 count, void *buffer);
 extern int ahci_disk_write(int disk, u64 lba, u32 count, const void *buffer);
 extern int ahci_disk_flush(int disk);
 extern void ps2_init(void);
+extern u8 ps2_status(void);
 extern int mouse_init(int width, int height);
 extern void mouse_irq(void);
 extern int mouse_x(void);
@@ -94,14 +95,26 @@ void driver_push_key(char c)
 
 static void input_poll(void)
 {
-    keyboard_poll();
-    int c = serial_getc();
-    if (c >= 0) {
+    /* Drain the 8042 completely each pass: a 1-byte controller buffer loses
+     * mouse packets if we only read one byte per millisecond. */
+    for (int i = 0; i < 64; i++) {
+        u8 status = ps2_status();
+        if ((status & 1) == 0)
+            break;
+        if (status & 0x20)
+            mouse_irq();
+        else
+            keyboard_poll();
+    }
+
+    for (int i = 0; i < 32; i++) {
+        int c = serial_getc();
+        if (c < 0)
+            break;
         if (c == 13)
             c = 10;
         driver_push_key((char)c);
     }
-    mouse_irq();
 
     int x = mouse_x();
     int y = mouse_y();
@@ -212,10 +225,12 @@ int user_main(long *stack)
     g_header->state = DEV_STATE_READY;
     __sync_synchronize();
 
+    int spin = sys_cpus() > 1;
+
     for (;;) {
         log_drain();
         input_poll();
-        if (!handle_request())
+        if (!handle_request() && !spin)
             sys_sleep(1);
     }
 }

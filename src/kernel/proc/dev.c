@@ -97,11 +97,19 @@ static void dev_copy_from_user(void *destination, u64 length)
     memcpy(destination, g_data, (usize)length);
 }
 
-static long dev_call(u32 op, u32 disk, u64 lba, u32 count)
+/* g_data is one shared page for every driver request, so payload copies must
+ * happen inside the busy window; otherwise a concurrent RTC/disk call from
+ * another process can overwrite the bytes between copy and processing. */
+static long dev_call_io(u32 op, u32 disk, u64 lba, u32 count,
+                        const void *send, u64 send_length, void *recv,
+                        u64 recv_length)
 {
     long result = -1;
     while (__atomic_test_and_set(&g_dev_busy, __ATOMIC_ACQUIRE))
         thread_sleep_ms(1);
+
+    if (send)
+        dev_copy_to_user(send, send_length);
 
     g_header->op = op;
     g_header->status = 0;
@@ -132,9 +140,16 @@ static long dev_call(u32 op, u32 disk, u64 lba, u32 count)
     }
 
     result = g_header->status;
+    if (result == 0 && recv)
+        dev_copy_from_user(recv, recv_length);
     g_header->state = DEV_STATE_IDLE;
     __atomic_clear(&g_dev_busy, __ATOMIC_RELEASE);
     return result;
+}
+
+static long dev_call(u32 op, u32 disk, u64 lba, u32 count)
+{
+    return dev_call_io(op, disk, lba, count, NULL, 0, NULL, 0);
 }
 
 int dev_start(void)
@@ -213,9 +228,9 @@ int dev_disk_read(int disk, u64 lba, u32 count, void *buffer)
     u8 *out = buffer;
     while (count) {
         u32 chunk = count > DEV_IO_SECTORS ? DEV_IO_SECTORS : count;
-        if (dev_call(DEV_OP_READ, (u32)disk, lba, chunk) != 0)
+        if (dev_call_io(DEV_OP_READ, (u32)disk, lba, chunk, NULL, 0, out,
+                        (u64)chunk * 512) != 0)
             return -1;
-        dev_copy_from_user(out, (u64)chunk * 512);
         out += (u64)chunk * 512;
         lba += chunk;
         count -= chunk;
@@ -228,8 +243,8 @@ int dev_disk_write(int disk, u64 lba, u32 count, const void *buffer)
     const u8 *in = buffer;
     while (count) {
         u32 chunk = count > DEV_IO_SECTORS ? DEV_IO_SECTORS : count;
-        dev_copy_to_user(in, (u64)chunk * 512);
-        if (dev_call(DEV_OP_WRITE, (u32)disk, lba, chunk) != 0)
+        if (dev_call_io(DEV_OP_WRITE, (u32)disk, lba, chunk, in,
+                        (u64)chunk * 512, NULL, 0) != 0)
             return -1;
         in += (u64)chunk * 512;
         lba += chunk;
@@ -251,9 +266,9 @@ int dev_rtc_read(struct rtc_time *time)
 
     u64 now = timer_ticks();
     if (!valid || now - cached_tick >= 500) {
-        if (dev_call(DEV_OP_RTC, 0, 0, 0) != 0)
+        if (dev_call_io(DEV_OP_RTC, 0, 0, 0, NULL, 0, &cached,
+                        sizeof(cached)) != 0)
             return -1;
-        dev_copy_from_user(&cached, sizeof(cached));
         cached_tick = now;
         valid = 1;
     }
