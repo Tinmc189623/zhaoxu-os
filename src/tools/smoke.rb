@@ -7,11 +7,13 @@
 #               "shutdown" is always appended automatically.
 #   env:   SMOKE_DISTRO SMOKE_ROOT SMOKE_TIMEOUT (seconds, default 180)
 #          SMOKE_FW: uefi (default, OVMF pflash) or bios (SeaBIOS, no pflash)
-#          SMOKE_BOOT: esp (default, fat:rw:esp + data.img)
-#                      iso (cdrom out/zhaoxu-os.iso + data.img)
-#                      iso-nodata (cdrom only, exercises /mnt fallback)
-#                      installed (boot out/target.img)
-#          bios firmware supports iso, iso-nodata and installed.
+#          SMOKE_BOOT: iso (default, CD only, no extra disks)
+#                      iso-install (CD + one blank out/target.img)
+#                      installed (boot out/target.img alone)
+#          bios firmware supports iso, iso-install and installed.
+#
+# Tests boot the ISO only; installation is exercised by `install` in csh or
+# by booting the installed target afterwards.
 #
 # Run from Windows Ruby (WSL has no ruby): it shells out through wsl.exe and
 # feeds one command line at a time once the guest shows a prompt, so the
@@ -29,15 +31,9 @@ TIMEOUT = (ENV["SMOKE_TIMEOUT"] || 180).to_i
 marker = ARGV[0] or abort "usage: smoke.rb <marker> [commands]"
 commands = (ARGV[1] || "").gsub('\n', "\n").split("\n").reject(&:empty?)
 
-installer_disks = [
-  "-drive if=none,id=zsrc,format=raw,file=out/efi.img",
-  "-device ide-hd,drive=zsrc,bus=ide.2",
+target_disk = [
   "-drive if=none,id=zdst,format=raw,file=out/target.img",
-  "-device ide-hd,drive=zdst,bus=ide.3",
-]
-data_disk = [
-  "-drive if=none,id=zdata,format=raw,file=out/data.img",
-  "-device ide-hd,drive=zdata,bus=ide.1",
+  "-device ide-hd,drive=zdst,bus=ide.1",
 ]
 # Rule 11: ISO images are named zhaoxu_{version}_installer.iso.
 iso_file = Dir[File.join(win_root, "out", "zhaoxu_*_installer.iso")]
@@ -47,29 +43,23 @@ iso_drives = [
   "file=out/#{iso_file ? File.basename(iso_file) : "zhaoxu_0.5.0_installer.iso"}",
   "-device ide-cd,drive=zcd,bus=ide.0",
 ]
-boot = ENV["SMOKE_BOOT"] || "esp"
+boot = ENV["SMOKE_BOOT"] || "iso"
 fw = ENV["SMOKE_FW"] || "uefi"
 if boot.start_with?("iso") && !iso_file
   abort "out/zhaoxu_*_installer.iso not found; run `make iso` first"
 end
 drives = case boot
-         when "esp"
-           [
-             "-drive format=raw,file=fat:rw:esp",
-             *data_disk,
-             *installer_disks,
-           ]
          when "iso"
-           [*iso_drives, *data_disk, *installer_disks]
-         when "iso-nodata"
            iso_drives
+         when "iso-install"
+           [*iso_drives, *target_disk]
          when "installed"
            [
              "-drive if=none,id=zdst,format=raw,file=out/target.img",
              "-device ide-hd,drive=zdst,bus=ide.0",
            ]
          else
-           abort "SMOKE_BOOT must be esp, iso, iso-nodata or installed"
+           abort "SMOKE_BOOT must be iso, iso-install or installed"
          end
 
 case fw
@@ -81,8 +71,8 @@ when "uefi"
   ]
   boot_order = boot.start_with?("iso") ? ["-boot", "order=d"] : []
 when "bios"
-  unless %w[iso iso-nodata installed].include?(boot)
-    abort "SMOKE_FW=bios supports only iso, iso-nodata and installed"
+  unless %w[iso iso-install installed].include?(boot)
+    abort "SMOKE_FW=bios supports only iso, iso-install and installed"
   end
   firmware = []
   boot_order = ["-boot", boot == "installed" ? "order=c" : "order=d"]

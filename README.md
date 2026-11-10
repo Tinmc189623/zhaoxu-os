@@ -48,8 +48,8 @@
 
 ### 💿 双启动 + 图形安装器
 - UEFI（C 引导层）与 legacy BIOS（FASM stage1/2）
-- ISO 采用 GPT hybrid（UEFI + El Torito 双入口）；安装盘支持 MBR 与 GPT
-- 单 ISO 安装：内置图形安装器，可选 MBR 或 GPT，现场格式化 FAT32 ESP
+- ISO 采用 GPT hybrid（UEFI + El Torito 双入口）；安装目标盘支持 MBR 与 GPT
+- 单 ISO 安装：内置图形安装器，可选 MBR 或 GPT，现场格式化 FAT32 ESP 与 `ZHAOXUDATA` 数据分区
 - AHCI 写入、扇区校验、安装后可直接启动
 
 </td>
@@ -100,12 +100,12 @@
 <td width="50%" align="center">
 <img src="docs/shot-disks.png" width="100%" alt="磁盘角色">
 <br><b>🗄️ 磁盘与角色</b><br>
-<sub><code>disks</code>：数据盘 ZHAOXUDATA / 安装介质 ZHAOXUEFI / 空白目标盘</sub>
+<sub><code>disks</code>：ZHAOXUDATA 数据分区 / ZHAOXUEFI ESP / 空白目标盘</sub>
 </td>
 <td width="50%" align="center">
 <img src="docs/shot-install.png" width="100%" alt="安装器">
 <br><b>📥 安装器</b><br>
-<sub><code>install</code>：MBR + FAT32 ESP 写入目标盘并校验</sub>
+<sub><code>install</code>：目标盘写入 MBR/GPT + FAT32 ESP + ZHAOXUDATA 并校验</sub>
 </td>
 </tr>
 <tr>
@@ -255,11 +255,13 @@ Hello from zcc inside Zhaoxu OS!
 # 或者直接在 WSL 中
 cd src
 make -j4                         # 构建 out/BOOTX64.EFI
-make run                         # 构建 out/data.img 并启动 QEMU
+make run                         # 等同 make run-iso（仅光盘启动）
 make run QEMU_DISPLAY="-display gtk"
 make iso                         # 生成 out/zhaoxu_{version}_installer.iso（UEFI + BIOS）
-make run-iso                     # 从 ISO 启动（UEFI）
-make run-bios                    # 从 ISO 启动（SeaBIOS）
+make run-iso                     # 仅从 ISO 启动（UEFI），不挂数据盘
+make run-install                 # ISO + 单个空白目标盘（UEFI 安装测试）
+make run-bios                    # 仅从 ISO 启动（SeaBIOS）
+make run-install-bios            # ISO + 单个空白目标盘（BIOS 安装测试）
 ```
 
 **依赖**：`gcc`、`g++`、`gcc-14` + `gnat-14`、`ld.lld`、`objcopy`、`clang`、`qemu-system-x86_64`、OVMF、`mkfs.vfat`、`mtools`、`tar`、`xorriso`；FASM 已随仓库提供（`src/tools/fasm`）。
@@ -269,7 +271,8 @@ make run-bios                    # 从 ISO 启动（SeaBIOS）
 ```bash
 ruby tools/smoke.rb <marker> [commands]     # 无头冒烟，逐条发送 csh 命令
 ruby tools/screenshot.rb 3.0 out/shot.png   # 实机启动并抓取帧缓冲
-SMOKE_BOOT=iso-nodata ruby tools/smoke.rb ... # ISO 无数据盘启动
+SMOKE_BOOT=iso-install ruby tools/smoke.rb ... # ISO + 空白目标盘安装测试
+SMOKE_BOOT=installed ruby tools/smoke.rb ...   # 从安装后的目标盘启动
 ```
 
 ---
@@ -305,7 +308,7 @@ Zhaoxu OS/
     ├── user/                 ring 3 程序与用户库
     ├── initramfs/            ramfs 初始内容与数据盘素材
     ├── tools/                Ruby：zxe-pack、bios-img、smoke、screenshot
-    └── out/                  构建产物（kernel.elf、data.img、ISO）
+    └── out/                  构建产物（kernel.elf、ISO）
 ```
 
 ---
@@ -314,7 +317,7 @@ Zhaoxu OS/
 
 - 🧵 单核、无调度器；同一时刻只运行一个 ring 3 进程，尚无 fork/exec
 - 💾 文件系统：FAT32 支持文件级创建/覆盖/删除（8.3 短名）；ext4 尚未接入，FAT32 目录创建与长文件名写入未支持
-- 🔤 单 ISO/安装盘在无数据盘时使用 ESP 内置的 WQY 字体；数据盘存在时优先 MiSans/MiSans Global/Inter
+- 🔤 单 ISO 启动时，UEFI 加载器从光盘根 `/install/WQY.TTC` 预读字体；安装后的系统从目标盘 `ZHAOXUDATA` 数据分区读取；数据盘上的 MiSans/MiSans Global/Inter 优先
 - 🧠 用户进程共享内核页表，依靠页级 `U/S` 位隔离
 - 🌐 无网络协议栈
 - ⌨️ 输入为 PS/2 键盘/鼠标与 COM1 串口
