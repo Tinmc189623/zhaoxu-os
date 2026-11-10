@@ -315,14 +315,17 @@ Zhaoxu OS/
 
 ## ⚠️ 当前限制
 
-- 🧵 抢占式 SMP 调度与 `spawn/wait` 已可用；暂无 `fork/exec`、COW 与交换
-- 💾 文件系统：FAT32 支持文件级创建/覆盖/删除（8.3 短名）；ext4 尚未接入，长文件名写入未支持
-- 🔤 从 ISO 启动时，UEFI 加载器从光盘根 `/install/WQY.TTC` 预读字体；安装后的系统从目标盘 `ZHAOXUDATA` 数据分区读取；数据盘上的 MiSans/MiSans Global/Inter 优先
-- 🧠 用户进程使用独立 CR3；驱动进程为 DMA/MMIO 保留 0..4 GiB 恒等映射，隔离依赖页级 `U/S` 位
-- 🌐 无网络协议栈
-- ⌨️ 输入为 PS/2 键盘/鼠标与 COM1 串口
-- 🖼️ 显示依赖 UEFI GOP 或 VBE LFB 帧缓冲
-- 🔌 存储驱动覆盖 AHCI/IDE/SATA/SCSI（ATAPI），暂无 NVMe 与 USB 存储
+- 🧵 进程与线程：最多 16 个进程、32 个线程；已有抢占式 SMP 调度和 `spawn/wait`，但无 `fork/exec`、信号、COW 与交换
+- 🧠 内存：无按需分页，用户页在加载时一次性映射；用户栈固定 32 页
+- 💾 文件系统：仅 FAT32，无 ext4；写入使用 8.3 短名，不支持创建长文件名；单文件上限 16 MiB；文件描述符只读，写入走 `write_file` / `unlink`
+- 🔐 权限：无多用户、文件属主与 Unix 权限位，所有用户进程以同一特权运行
+- 🧱 兼容性：无 POSIX/libc 兼容层，系统调用为 ZOS API 1.0；用户程序静态链接，无动态链接器
+- 🌐 网络：无协议栈与 socket
+- 🔌 外设：输入仅 PS/2 键盘/鼠标与 COM1；存储仅 AHCI/IDE/SATA/SCSI，无 NVMe/USB；无音频与 USB HID
+- 🖼️ 图形：单帧缓冲、软件光栅化，无 GPU 加速与多显示器
+- ⚡ 电源：ACPI 仅用于关机/重启，无睡眠与休眠
+- 🛡️ 启动：引导加载器未签名，开启 Secure Boot 的机器需要先关闭 Secure Boot 或自行签名
+- ⏱️ 时间：仅 RTC 本地时间，无 NTP 与时区处理
 
 ---
 
