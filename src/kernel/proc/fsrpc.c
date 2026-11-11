@@ -89,13 +89,17 @@ static int wait_done(u32 seq)
     return -1;
 }
 
-static void take_busy(void)
+/* Returns 0 when the lock is held, -1 when the channel is already retired
+ * (then the lock was never taken).  Only the holder sets g_fs_broken, so the
+ * acquired case can never see it again. */
+static int take_busy(void)
 {
     while (__atomic_test_and_set(&g_busy, __ATOMIC_ACQUIRE)) {
         if (g_fs_broken)
-            return; /* Not acquired: the holder is still unwinding. */
+            return -1;
         thread_sleep_ms(1);
     }
+    return 0;
 }
 
 static void drop_busy(void)
@@ -118,9 +122,8 @@ static int fs_call_values(u32 op, const char *path, u64 offset, u32 length,
     if (!g_rpc || !g_ready || g_fs_broken)
         return -1;
 
-    take_busy();
-    if (g_fs_broken)
-        return -1; /* take_busy() returned without the lock. */
+    if (take_busy() != 0)
+        return -1; /* Channel retired; the lock was not taken. */
     if (!g_rpc || !g_ready) {
         drop_busy();
         return -1;
