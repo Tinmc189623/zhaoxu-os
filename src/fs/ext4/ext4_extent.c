@@ -6,13 +6,17 @@
 #include <string.h>
 #include <types.h>
 
-static int extent_lookup(const u8 *node, u16 depth, u32 logical,
+/* `capacity` is the byte size of this node (60 for the in-inode root, the
+ * block size for a leaf/index block).  The 12-byte header is not entry space,
+ * so at most (capacity - 12) / 12 entries fit: 4 in the inode root and
+ * (block_size - 12) / 12 in a block.  Never walk an entry past the node. */
+static int extent_lookup(const u8 *node, u16 depth, u32 logical, u32 capacity,
                          struct ext4_extent_path *path)
 {
     if (ext4_le16(node) != EXT4_EXTENT_MAGIC)
         return -1;
     u16 entries = ext4_le16(node + 2);
-    if (entries > 1024)
+    if (entries > (capacity - 12u) / 12u)
         return -1;
 
     if (depth == 0) {
@@ -47,7 +51,8 @@ static int extent_lookup(const u8 *node, u16 depth, u32 logical,
             return -1;
         int result = ext4_read_block(leaf, buffer);
         if (result == 0)
-            result = extent_lookup(buffer, (u16)(depth - 1), logical, path);
+            result = extent_lookup(buffer, (u16)(depth - 1), logical,
+                                   g_ext4.block_size, path);
         ext4_free(buffer);
         return result;
     }
@@ -63,7 +68,8 @@ int ext4_map_extent(const u8 *inode, u32 logical,
     const u8 *node = inode + EXT4_INODE_BLOCK_OFF;
     if (ext4_le16(node) != EXT4_EXTENT_MAGIC)
         return -1;
-    return extent_lookup(node, ext4_le16(node + 6), logical, path);
+    return extent_lookup(node, ext4_le16(node + 6), logical,
+                         EXT4_INODE_EXTENT_BYTES, path);
 }
 
 int ext4_read_inode_data(const u8 *inode, u64 offset, void *buffer,

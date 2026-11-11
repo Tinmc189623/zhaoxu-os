@@ -19,7 +19,7 @@ static void flush_bitmap(void)
     g_bitmap_dirty = 0;
 }
 
-static void bitmap_invalidate(void)
+void ext4_bitmap_invalidate(void)
 {
     flush_bitmap();
     g_bitmap_valid = 0;
@@ -510,7 +510,7 @@ int ext4_sync(void)
 {
     if (!g_ext4.writable)
         return -1;
-    bitmap_invalidate();
+    ext4_bitmap_invalidate();
     if (ext4_update_super() != 0)
         return -1;
     const struct ext4_env *env = ext4_env();

@@ -10,6 +10,7 @@
 
 #define EXT4_SB_OFFSET 1024u
 #define EXT4_INODE_BLOCK_OFF 0x28u
+#define EXT4_INODE_EXTENT_BYTES 60u
 #define EXT4_INODE_SIZE_OFF 0x04u
 #define EXT4_INODE_BLOCKS_OFF 0x1Cu
 #define EXT4_INODE_FLAGS_OFF 0x20u
@@ -132,6 +133,7 @@ int ext4_write_group_desc(u32 group, const u8 *desc);
 int ext4_write_inode_raw(u32 ino, const u8 *inode);
 int ext4_alloc_run(u32 count, u32 *first);
 void ext4_free_run(u32 first, u32 count);
+void ext4_bitmap_invalidate(void);
 int ext4_alloc_inode(u32 *ino);
 void ext4_free_inode(u32 ino);
 int ext4_truncate(u32 ino);

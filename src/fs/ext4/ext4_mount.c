@@ -158,9 +158,13 @@ static int ext4_fill_fs(int disk, u64 base, const u8 *sb)
         u32 free_hi = ext4_le32(sb + 0x158);
         if (blocks_hi || free_hi)
             return -1;
-        g_ext4.desc_size = ext4_le16(sb + 0xFE);
-        if (g_ext4.desc_size < EXT4_GD_SIZE64)
-            g_ext4.desc_size = EXT4_GD_SIZE64;
+        /* s_desc_size only exists with the 64bit feature and every group
+         * descriptor buffer in this core is EXT4_GD_SIZE64 bytes, so a
+         * larger value would overflow the callers. */
+        u32 desc_size = ext4_le16(sb + 0xFE);
+        if (desc_size < EXT4_GD_SIZE32 || desc_size > EXT4_GD_SIZE64)
+            return -1;
+        g_ext4.desc_size = desc_size;
     } else {
         g_ext4.desc_size = EXT4_GD_SIZE32;
     }
@@ -333,5 +337,9 @@ struct ext4_state ext4_state_save(void)
 
 void ext4_state_restore(struct ext4_state state)
 {
+    /* The block bitmap cache lives outside g_ext4: drop it (flushing any
+     * pending bit for the outgoing volume first) so the restored volume can
+     * never allocate against the previous volume's bitmap. */
+    ext4_bitmap_invalidate();
     memcpy(&g_ext4, state.bytes, sizeof(g_ext4));
 }

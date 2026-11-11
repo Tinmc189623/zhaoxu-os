@@ -61,6 +61,10 @@ int ext4_dir_add(u32 parent, const char *name, u32 child, u8 type)
                     return -1;
                 }
             }
+            /* A corrupt name_len can make the in-use span larger than the
+             * record itself; the remainder below would wrap. */
+            if (used > rec)
+                break;
             if (used == 0) {
                 if (rec >= needed) {
                     memset(entry, 0, rec);
