@@ -222,8 +222,11 @@ int ext4_format_volume(int disk, u64 volume_base, u32 sectors,
         0x9A, 0x4F, 0x53, 0x31, 0x00, 0x00, 0x00, 0x03
     };
     memcpy(sb + 0x68, uuid, 16);
-    for (int i = 0; i < 16; i++)
-        sb[0x78 + i] = label && label[i] ? (u8)label[i] : 0;
+    /* s_volume_name is 16 bytes and does not have to be NUL terminated, but
+     * the label handed in is a C string: stop at its NUL instead of reading
+     * up to 16 bytes out of a shorter literal (found by the host harness). */
+    for (int i = 0; i < 16 && label && label[i]; i++)
+        sb[0x78 + i] = (u8)label[i];
     ext4_put16(sb + 0x5A, 0);
     ext4_put16(sb + 0x15C, 32);
     ext4_put16(sb + 0x15E, 32);
