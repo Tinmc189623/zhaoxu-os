@@ -26,7 +26,14 @@
 #include <thread.h>
 #include <types.h>
 
+/* Per-op timeouts.  Metadata and read requests are small and must never hang
+ * the caller, but FORMAT zeroes megabytes of inode tables and WRITE /
+ * WRITE_CONTIG commit the whole file (the WQY.TTC font is ~5 MiB) inside the
+ * last request, all of it through 4 KiB block syscalls to the driver service.
+ * A fixed 5 s ceiling is below what a slow disk needs for those, and a timeout
+ * retires the channel, so they get a much longer budget instead. */
 #define FS_WAIT_MS 5000
+#define FS_LONG_WAIT_MS 120000
 
 static struct fs_rpc *g_rpc;
 static u8 *g_data;
@@ -74,12 +81,29 @@ static void copy_text(char *destination, usize capacity, const char *source)
     destination[n] = 0;
 }
 
+/* How long a single request may stay unanswered before the channel is
+ * retired.  Only ops that touch the whole volume or a whole file get the long
+ * budget; everything else must answer quickly or is treated as a dead
+ * service. */
+static u32 op_timeout_ms(u32 op)
+{
+    switch (op) {
+    case FS_OP_FORMAT:
+    case FS_OP_WRITE:
+    case FS_OP_WRITE_CONTIG:
+    case FS_OP_SYNC:
+        return FS_LONG_WAIT_MS;
+    default:
+        return FS_WAIT_MS;
+    }
+}
+
 /* Wait until the service publishes DONE for this exact request.  A stale DONE
  * left over from an earlier request does not match the sequence number, so it
  * can neither satisfy nor poison this wait. */
-static int wait_done(u32 seq)
+static int wait_done(u32 seq, u32 timeout_ms)
 {
-    for (int waited = 0; waited < FS_WAIT_MS; waited++) {
+    for (u32 waited = 0; waited < timeout_ms; waited++) {
         if (g_rpc->state == FS_STATE_DONE && g_rpc->seq == seq) {
             __sync_synchronize();
             return 0;
@@ -148,7 +172,7 @@ static int fs_call_values(u32 op, const char *path, u64 offset, u32 length,
     __sync_synchronize();
     g_rpc->state = FS_STATE_REQUEST;
 
-    if (wait_done(seq) != 0) {
+    if (wait_done(seq, op_timeout_ms(op)) != 0) {
         /* The service did not answer in time.  It may still be inside the
          * old request, so the page must never be reused: retire the channel
          * and fail every later call instead of corrupting a new request. */
