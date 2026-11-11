@@ -55,6 +55,8 @@ C_SRCS := kernel/main.c \
           kernel/fs/fat32.c \
           kernel/fs/fat32_write.c \
           kernel/fs/fat32_format.c \
+          kernel/fs/ext4.c \
+          kernel/fs/ext4_write.c \
           kernel/fs/vfs.c \
           kernel/fs/block.c \
           kernel/fs/install.c \
@@ -380,9 +382,9 @@ $(OUT)/BOOTX64.EFI: $(BUILD)/efi_main.o
 	$(BOOT_LD) $(BOOT_LDFLAGS) $(BUILD)/efi_main.o /out:$@
 
 # ---- ZhaoxuBootloader legacy BIOS chain ------------------------------
-# stage1 (512-byte MBR / El Torito boot sector) loads stage2 from LBA 1;
-# stage2 collects VBE/E820/RSDP, loads the raw kernel and enters long mode
-# with the same boot_info contract as the UEFI layer.
+# bios.img is a no-emulation El Torito image holding only stage1 + stage2;
+# the kernel is an ordinary ISO9660 file (install/KERNEL.BIN) whose extent is
+# patched into stage2 by tools/iso-bios.rb after xorriso laid the ISO out.
 BIOS_S1 := $(OUT)/bios_stage1.bin
 BIOS_S2 := $(OUT)/bios_stage2.bin
 BIOS_IMG := $(OUT)/bios.img
@@ -401,8 +403,8 @@ $(BIOS_S1): boot/bios_stage1.asm $(BIOS1_INC)
 	@mkdir -p $(OUT)
 	$(FASM) $< $@
 
-$(BIOS_IMG): $(BIOS_S1) $(BIOS_S2) $(OUT)/kernel.elf tools/bios-img.rb
-	$(RUBY) tools/bios-img.rb $(BIOS_S1) $(BIOS_S2) $(OUT)/kernel.elf $@
+$(BIOS_IMG): $(BIOS_S1) $(BIOS_S2) tools/bios-img.rb
+	$(RUBY) tools/bios-img.rb $(BIOS_S1) $(BIOS_S2) $@
 
 $(BUILD)/bios_stage1.o: $(BIOS_S1)
 	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 \
@@ -511,16 +513,19 @@ $(EFI_IMG): $(OUT)/BOOTX64.EFI
 	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/EFI/BOOT
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
 
-$(ISO): $(OUT)/BOOTX64.EFI $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG) initramfs/data/wqy.ttc
+$(ISO): $(OUT)/BOOTX64.EFI $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG) \
+        initramfs/data/wqy.ttc tools/kernel-flat.rb tools/iso-bios.rb
 	@rm -rf $(ISO_ROOT)
 	@mkdir -p $(ISO_ROOT)/install
 	cp $(EFI_IMG) $(ISO_ROOT)/efi.img
 	cp $(BIOS_IMG) $(ISO_ROOT)/bios.img
+	$(RUBY) tools/kernel-flat.rb $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.BIN
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.ELF
 	cp initramfs/data/wqy.ttc $(ISO_ROOT)/install/WQY.TTC
 	xorriso -as mkisofs -o $@ -V ZHAOXU_OS -J -R \
-	  -b bios.img -eltorito-alt-boot \
+	  -b bios.img -no-emul-boot -eltorito-alt-boot \
 	  -e efi.img -no-emul-boot -isohybrid-gpt-basdat $(ISO_ROOT)
+	$(RUBY) tools/iso-bios.rb $@
 
 iso: $(ISO)
 

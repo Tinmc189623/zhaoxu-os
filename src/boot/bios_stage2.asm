@@ -84,23 +84,10 @@ stage2_start:
         jne     .bad_params
         cmp     dword [param_kernel_lba], 0
         je      .bad_params
-        cmp     dword [param_kernel_sectors], 0
+        cmp     dword [param_kernel_bytes], 0
         je      .bad_params
 
-        mov     dl, [boot_drive]
-        mov     ah, 0x08
-        int     0x13
-        jc      .disk_fail
-        and     cl, 0x3F
-        jz      .disk_fail
-        movzx   ax, cl
-        mov     [spt], ax
-        inc     dh
-        movzx   ax, dh
-        mov     [heads], ax
-
-        mov     si, msg_geo
-        call    print
+        call    probe_sector_size
         call    load_kernel
         jc      .disk_fail
 
@@ -180,66 +167,112 @@ print:
         pop     ax
         ret
 
-; ES:BX <- CX sectors from LBA AX (CHS reads, crosses track boundaries).
-read_chs:
+; The device sector size decides the unit of param_*_lba.  A no-emulation
+; El Torito CD reports 2048-byte sectors; a disk reports 512.  Keep the
+; shift (9 or 11) and convert every transfer into device sectors.
+probe_sector_size:
+        push    ax
+        push    dx
+        push    si
+        mov     byte [disk_shift], 9
+        mov     word [dap_geom], 0x1E   ; returned length 30 (EDD 3.0 table)
+        mov     si, dap_geom
+        mov     ah, 0x48
+        mov     dl, [boot_drive]
+        int     0x13
+        jc      .done
+        mov     ax, word [dap_geom + 0x18]   ; bytes per logical sector
+        cmp     ax, 2048
+        jne     .done
+        mov     byte [disk_shift], 11
+.done:
+        pop     si
+        pop     dx
+        pop     ax
+        ret
+
+; ES:BX <- CX device sectors from 64-bit LBA in EDX:EAX (INT 13h extensions).
+; The kernel lives on ext4 past the first CHS-addressable region, so reads
+; must use EDD LBA48 rather than 16-bit CHS.  Every chunk stops at the next
+; 64 KiB linear boundary because the destination is a real-mode ES:BX pair.
+; When param_cd is set the LBA is expressed in 2048-byte units (ISO9660).
+read_lba:
         pusha
         push    es
-        mov     [io_lba], ax
-        mov     [io_count], cx
+        mov     dword [io_lba64], eax
+        mov     dword [io_lba64+4], edx
+        mov     word [io_rem], cx
+        cmp     dword [param_cd], 0
+        je      .no_cd
+        mov     cl, 11
+        sub     cl, byte [disk_shift]   ; 2048 >> shift
+        jz      .no_cd
+        mov     eax, dword [io_lba64]
+        mov     edx, dword [io_lba64+4]
+        shld    edx, eax, cl
+        shl     eax, cl
+        mov     dword [io_lba64], eax
+        mov     dword [io_lba64+4], edx
+.no_cd:
         mov     [io_buf], bx
         mov     [io_seg], es
-
-        mov     ax, [io_lba]
-        xor     dx, dx
-        div     word [spt]
-        inc     dx
-        mov     [io_sector], dx
-        xor     dx, dx
-        div     word [heads]
-        mov     [io_cyl], ax
-        mov     [io_head], dx
-.loop:
-        mov     ax, [io_count]
+.chunk:
+        mov     ax, [io_rem]
         test    ax, ax
         jz      .ok
-        mov     di, [spt]
-        sub     di, [io_sector]
-        inc     di
-        cmp     ax, di
-        jbe     .chunk
-        mov     ax, di
-.chunk:
-        mov     [io_chunk], ax
-        mov     es, [io_seg]
-        mov     bx, [io_buf]
+        ; max sectors that fit before the next 64 KiB boundary
+        push    ax
+        mov     ax, [io_seg]
+        shl     ax, 4
+        add     ax, [io_buf]
+        neg     ax                      ; bytes left in this 64 KiB page
+        mov     cl, byte [disk_shift]
+        shr     ax, cl
+        test    ax, ax
+        jnz     .cap
+        mov     ax, 1
+        mov     cl, 16
+        sub     cl, byte [disk_shift]
+        shl     ax, cl                  ; 0x10000 >> shift
+.cap:
+        cmp     ax, 0x7F                ; EDD transfers are 7-bit (128 max)
+        jbe     .cap_ok
+        mov     ax, 0x7F
+.cap_ok:
+        mov     cx, ax
+        pop     ax
+        cmp     ax, cx
+        jbe     .size_ok
+        mov     ax, cx
+.size_ok:
+        mov     word [io_chunk], ax
+        mov     byte [disk_dap], 0x10
+        mov     byte [disk_dap+1], 0
+        mov     word [disk_dap+2], ax
+        mov     ax, word [io_buf]
+        mov     word [disk_dap+4], ax
+        mov     ax, [io_seg]
+        mov     word [disk_dap+6], ax
+        mov     eax, dword [io_lba64]
+        mov     dword [disk_dap+8], eax
+        mov     eax, dword [io_lba64+4]
+        mov     dword [disk_dap+12], eax
+        mov     si, disk_dap
         mov     dl, byte [boot_drive]
-        mov     ch, byte [io_cyl]
-        mov     cl, byte [io_sector]
-        mov     dh, byte [io_head]
-        mov     al, byte [io_chunk]
-        mov     ah, 0x02
+        mov     ah, 0x42
         int     0x13
         jc      .error
-        mov     si, [io_chunk]
-        mov     ax, si
-        shl     ax, 5
-        add     [io_seg], ax
-        mov     word [io_buf], 0
-        sub     [io_count], si
-        jz      .ok
-        add     [io_sector], si
-        mov     ax, [spt]
-        inc     ax
-        cmp     [io_sector], ax
-        jb      .loop
-        mov     word [io_sector], 1
-        inc     word [io_head]
-        mov     al, byte [heads]
-        cmp     byte [io_head], al
-        jb      .loop
-        mov     word [io_head], 0
-        inc     word [io_cyl]
-        jmp     .loop
+        movzx   eax, word [io_chunk]
+        add     dword [io_lba64], eax
+        adc     dword [io_lba64+4], 0
+        mov     ax, [io_chunk]
+        mov     cl, byte [disk_shift]
+        sub     cl, 4                   ; sectors * (1 << shift) / 16
+        shl     ax, cl
+        add     word [io_seg], ax
+        mov     ax, [io_chunk]
+        sub     word [io_rem], ax
+        jmp     .chunk
 .ok:
         pop     es
         popa
@@ -253,22 +286,32 @@ read_chs:
 
 ; ------------------------------------------------------------- kernel load
 ; Real mode cannot address memory above 1 MiB, so the whole kernel is read
-; once into the low buffer at 0x10000 with CHS reads (ES advances across
-; tracks) and copied to KERNEL_PHYS later from flat protected mode.  The
-; buffer must stay below the EBDA, hence the 448 KiB size cap.
-MAX_KERNEL_SECTORS = 0x380
+; once into the low buffer at 0x10000 with EDD reads (ES advances) and copied
+; to KERNEL_PHYS later from flat protected mode.  The buffer must stay below
+; the EBDA, hence the 448 KiB size cap.  The sector count is derived from the
+; byte size because it depends on the device sector size.
+MAX_KERNEL_BYTES = 0x70000
 load_kernel:
         mov     si, msg_load
         call    print
-        mov     eax, dword [param_kernel_sectors]
-        cmp     eax, MAX_KERNEL_SECTORS
+        cmp     dword [param_kernel_bytes + 4], 0
+        jne     .error
+        mov     eax, dword [param_kernel_bytes]
+        cmp     eax, MAX_KERNEL_BYTES
         ja      .error
+        mov     cl, byte [disk_shift]
+        mov     edx, 1
+        shl     edx, cl                 ; device sector size
+        dec     edx
+        add     eax, edx
+        shr     eax, cl                 ; device sectors, rounded up
         mov     cx, ax
         mov     ax, 0x1000
         mov     es, ax
         xor     bx, bx
-        mov     ax, word [param_kernel_lba]
-        call    read_chs
+        mov     eax, dword [param_kernel_lba]
+        mov     edx, dword [param_kernel_lba+4]
+        call    read_lba
         jc      .error
         mov     si, msg_loaded
         call    print
@@ -714,15 +757,13 @@ long_entry:
 ; ------------------------------------------------------------------- data
 use16
 boot_drive      db 0
-spt             dw 18
-heads           dw 2
-io_lba          dw 0
-io_count        dw 0
+disk_shift      db 9
 io_buf          dw 0
 io_seg          dw 0
-io_sector       dw 0
-io_cyl          dw 0
-io_head         dw 0
+io_rem          dw 0
+io_lba64        dq 0
+disk_dap        db 16 dup 0    ; INT 13h AH=42h disk address packet
+dap_geom        db 30 dup 0    ; INT 13h AH=48h drive parameter table
 io_chunk        dw 0
 
 list_seg        dw 0
@@ -749,7 +790,10 @@ align 8
 param_magic     dq 0x4D5250544F4F425A   ; 'ZBOOTPRM', patched by the image builder
 param_kernel_lba dq 0
 param_kernel_bytes dq 0
-param_kernel_sectors dq 0
+param_kernel_sectors dq 0               ; informational (installer only)
+param_cd        dq 0                    ; 1 = LBAs are ISO9660 2 KiB units
+param_font_lba  dq 0
+param_font_bytes dq 0
 
 align 8
 gdt:
@@ -772,7 +816,6 @@ msg_e820        db 'E820 memory map collected.',13,10,0
 msg_rsdp        db 'ACPI RSDP located.',13,10,0
 msg_norsdp      db 'ACPI RSDP not found.',13,10,0
 msg_kernel      db 'Kernel image loaded, entering long mode.',13,10,0
-msg_geo         db 'Disk geometry acquired.',13,10,0
 msg_load        db 'Reading kernel image.',13,10,0
 msg_loaded      db 'Kernel image read.',13,10,0
 msg_params      db 'stage2: parameter block missing.',13,10,0

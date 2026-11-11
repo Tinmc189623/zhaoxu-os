@@ -1,9 +1,12 @@
 ; ZhaoxuBootloader - legacy BIOS stage 1
 ;
 ; 512-byte boot sector used both as an MBR (installed disk) and as the
-; El Torito floppy-emulation boot image (ISO).  It loads stage 2 with INT 13h
-; CHS reads and jumps to it.  Only the first 446 bytes are copied into an
-; installed MBR, so the partition table and 0x55AA stay untouched there.
+; El Torito no-emulation boot image (ISO).  On an installed disk it loads
+; stage 2 with INT 13h CHS reads; the ISO image builder marks this sector
+; with stage2_lba = 0xFFFF instead, because the firmware already loaded the
+; whole boot image (stage 2 sits at image offset 1024 = 0x8000).  Only the
+; first 446 bytes are copied into an installed MBR, so the partition table
+; and 0x55AA stay untouched there.
 
 org 0x7C00
 use16
@@ -27,6 +30,10 @@ start:
         mov     si, msg_banner
         call    print
 
+        mov     ax, [stage2_lba]
+        cmp     ax, 0xFFFF              ; no-emulation ISO: stage 2 is resident
+        je      .enter
+
         mov     dl, [boot_drive]
         mov     ah, 0x08
         int     0x13
@@ -47,6 +54,7 @@ start:
         call    read_chs
         jc      fail
 
+.enter:
         mov     dl, [boot_drive]
         db      0EAh                    ; jmp far 0x0000:0x8000
         dw      STAGE2_LOAD
@@ -183,7 +191,7 @@ print:
         ret
 
 stage2_marker   db 'ZSLBA'
-stage2_lba      dw 1
+stage2_lba      dw 1                    ; 0xFFFF = stage 2 already in memory (ISO)
 boot_drive      db 0
 spt             dw 18
 heads           dw 2
@@ -195,7 +203,7 @@ io_sector       dw 0
 io_cyl          dw 0
 io_head         dw 0
 io_chunk        dw 0
-msg_banner      db 13,10,'ZhaoxuBootloader stage1 (legacy BIOS)',13,10,0
+msg_banner      db 13,10,'ZhaoxuBootloader stage1',13,10,0
 msg_fail        db 'stage1: disk read failed',13,10,0
 
 assert ($ - $$) <= 446
