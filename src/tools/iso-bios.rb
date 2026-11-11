@@ -17,6 +17,14 @@
 iso = ARGV[0]
 abort "usage: iso-bios.rb <iso>" unless iso
 
+# Success marker.  Under WSL this script usually runs as the Windows ruby.exe,
+# and the interop layer can report exit 0 even when abort fires (it depends on
+# the WSL build), so the Makefile cannot trust the exit status.  The marker is
+# dropped up front and only re-created once the patched image is on disk; the
+# ISO rule asserts it.
+marker = "#{iso}.patched"
+File.delete(marker) if File.exist?(marker)
+
 SECTOR = 2048
 STAGE2_OFFSET = 1024          # stage 2 sits 1 KiB into the El Torito image
 FINAL_EXTENT = 0x80           # file flags bit 7: not the last extent
@@ -119,5 +127,6 @@ patch = [kernel[:lba], kernel[:size], sectors, 1, font[:lba], font[:size]]
 data[index + 8, patch.bytesize] = patch
 
 File.binwrite(iso, data)
+File.write(marker, "kernel_lba=#{kernel[:lba]} font_lba=#{font[:lba]}\n")
 puts "iso-bios: kernel LBA #{kernel[:lba]} (#{kernel[:size]} bytes), " \
      "font LBA #{font[:lba]} (#{font[:size]} bytes)"

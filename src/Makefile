@@ -126,6 +126,12 @@ USER_LDFLAGS := -nostdlib -static -no-pie -Wl,--build-id=none \
                 -Wl,-T,user/user.ld -Wl,-z,max-page-size=0x1000
 RUBY ?= /mnt/c/Ruby40-x64/bin/ruby.exe
 
+# A recipe that dies half way must not leave its target behind: some WSL
+# interop builds report exit 0 for a Windows binary that aborted, so the ISO
+# rule detects failure through $@.patched instead, and a failed patch has to
+# invalidate the half-written ISO rather than look up to date next time.
+.DELETE_ON_ERROR:
+
 $(BUILD)/%.uelf: user/%.c user/userlib.c user/userlib.h user/user.ld
 	@mkdir -p $(BUILD)
 	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -o $@ user/$*.c user/userlib.c
@@ -472,6 +478,7 @@ clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin $(OUT)/BOOTX64.EFI \
 	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/initramfs.tar \
 	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu_*_installer.iso \
+	       $(OUT)/*.patched \
 	       $(OUT)/bios_stage1.bin $(OUT)/bios_stage2.bin $(OUT)/bios.img \
 	       $(OUT)/target.img $(ESP)/BOOTX64.EFI $(ESP)/KERNEL.ELF
 
@@ -526,6 +533,8 @@ $(ISO): $(OUT)/BOOTX64.EFI $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG) \
 	  -b bios.img -no-emul-boot -eltorito-alt-boot \
 	  -e efi.img -no-emul-boot -isohybrid-gpt-basdat $(ISO_ROOT)
 	$(RUBY) tools/iso-bios.rb $@
+	test -f $@.patched
+	rm -f $@.patched
 
 iso: $(ISO)
 
