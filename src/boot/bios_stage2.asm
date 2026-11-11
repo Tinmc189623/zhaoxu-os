@@ -9,6 +9,16 @@
 org 0x8000
 use16
 
+; HEADLESS=1 tells the kernel there is no framebuffer, so a serial-only guest
+; (headless install regression) boots the Ring3 csh instead of ADE.  The VBE
+; probe itself still runs: on q35/SeaBIOS an SMI that arrives during the first
+; CD read hangs the firmware's own SMM handler unless the VGA was initialised,
+; and that read is what boots the kernel.  The Makefile passes
+; -dHEADLESS=$(HEADLESS); a plain `fasm bios_stage2.asm` keeps the default.
+if ~ defined HEADLESS
+  HEADLESS = 0
+end if
+
 KERNEL_PHYS      = 0x02000000           ; 2 MiB aligned kernel window
 KERNEL_VMA       = 0xffffffff80000000
 KERNEL_MAP_SIZE  = 0x01000000
@@ -49,6 +59,7 @@ stage2_start:
         mov     si, msg_a20
         call    print
 
+if HEADLESS = 0
         call    vbe_probe
         cmp     byte [fb_format], 0
         je      .no_vbe
@@ -59,6 +70,23 @@ stage2_start:
         mov     si, msg_novbe
         call    print
 .vbe_done:
+else
+        ; q35 + SeaBIOS hangs inside its own SMM handler when the first CD
+        ; read happens without the VGA ever having been initialised (the
+        ; frame buffer probe is what does it), so the probe still runs here.
+        ; The kernel is told otherwise: dropping the frame buffer sends it to
+        ; the serial csh instead of ADE.
+        call    vbe_probe
+        xor     eax, eax
+        mov     dword [fb_base], eax
+        mov     dword [fb_size], eax
+        mov     dword [fb_width], eax
+        mov     dword [fb_height], eax
+        mov     dword [fb_pitch], eax
+        mov     byte [fb_format], al
+        mov     si, msg_headless
+        call    print
+end if
 
         call    collect_e820
         mov     si, msg_e820
@@ -827,6 +855,7 @@ msg_a20         db 'A20 gate enabled.',13,10,0
 msg_a20_off     db 'stage2: A20 gate still disabled.',13,10,0
 msg_vbe         db 'VESA framebuffer selected.',13,10,0
 msg_novbe       db 'No 32-bit VESA mode, serial console only.',13,10,0
+msg_headless    db 'Headless build: no framebuffer, kernel uses the serial console.',13,10,0
 msg_e820        db 'E820 memory map collected.',13,10,0
 msg_rsdp        db 'ACPI RSDP located.',13,10,0
 msg_norsdp      db 'ACPI RSDP not found.',13,10,0

@@ -57,8 +57,8 @@ void csh_install(int argc, char **argv)
         }
     }
 
-    csh_out(gpt ? "Installing GPT + FAT32 ESP; this may take a while...\n"
-                : "Installing MBR + FAT32 ESP; this may take a while...\n");
+    csh_out(gpt ? "Installing GPT + ext4 root; this may take a while...\n"
+                : "Installing MBR + ext4 root; this may take a while...\n");
     long result = sys_install(target, gpt);
     if (result == 0) {
         csh_outln("Install complete. Boot the target disk directly.");

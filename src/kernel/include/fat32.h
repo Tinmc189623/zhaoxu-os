@@ -20,7 +20,7 @@ int fat32_mount_at(int disk, u64 volume_base);
 int fat32_format_volume(int disk, u64 volume_base, u32 sectors,
                         const char *label);
 int fat32_make_esp(int disk, u64 volume_base, u32 sectors, const u8 *bootx64,
-                   u64 bootx64_size, const u8 *kernel, u64 kernel_size);
+                   u64 bootx64_size);
 int fat32_make_data(int disk, u64 volume_base, u32 sectors, const u8 *font,
                     u64 font_size);
 

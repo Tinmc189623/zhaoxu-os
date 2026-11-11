@@ -165,12 +165,12 @@ int fat32_format_volume(int disk, u64 volume_base, u32 sectors,
 }
 
 int fat32_make_esp(int disk, u64 volume_base, u32 sectors, const u8 *bootx64,
-                   u64 bootx64_size, const u8 *kernel, u64 kernel_size)
+                   u64 bootx64_size)
 {
     struct fat32_fs saved = *fat32_state();
     int result = -1;
 
-    if (!bootx64 || !bootx64_size || !kernel || !kernel_size)
+    if (!bootx64 || !bootx64_size)
         return -1;
     if (fat32_format_volume(disk, volume_base, sectors, "ZHAOXUEFI") != 0)
         return -1;
@@ -182,15 +182,10 @@ int fat32_make_esp(int disk, u64 volume_base, u32 sectors, const u8 *bootx64,
         goto restore;
     if (fat32_write_file("/EFI/BOOT/BOOTX64.EFI", bootx64, bootx64_size) != 0)
         goto restore;
-    if (fat32_write_file("/EFI/BOOT/KERNEL.ELF", kernel, kernel_size) != 0)
-        goto restore;
 
     struct fat_entry entry;
     if (fat32_find("/EFI/BOOT/BOOTX64.EFI", &entry) != 0 ||
         entry.size != (u32)bootx64_size)
-        goto restore;
-    if (fat32_find("/EFI/BOOT/KERNEL.ELF", &entry) != 0 ||
-        entry.size != (u32)kernel_size)
         goto restore;
 
     result = 0;

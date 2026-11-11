@@ -396,9 +396,9 @@ BIOS_S2 := $(OUT)/bios_stage2.bin
 BIOS_IMG := $(OUT)/bios.img
 BIOS1_INC := $(BUILD)/bios_stage1.inc
 
-$(BIOS_S2): boot/bios_stage2.asm
+$(BIOS_S2): boot/bios_stage2.asm $(HEADLESS_HEADER)
 	@mkdir -p $(OUT)
-	$(FASM) $< $@
+	$(FASM) -dHEADLESS=$(HEADLESS) $< $@
 
 $(BIOS1_INC): $(BIOS_S2)
 	@mkdir -p $(BUILD)

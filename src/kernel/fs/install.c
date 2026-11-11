@@ -3,17 +3,21 @@
  *
  * No extra installation media is required (rule 27): the UEFI loader comes
  * from the initramfs (/boot/BOOTX64.EFI) and the kernel is the running
- * image.  The installer builds both FAT32 volumes itself (EFI/BOOT files on
- * the ESP, runtime assets on ZHAOXUDATA) and writes either an MBR or a GPT
- * layout (rule 15):
+ * image.  The installer formats the FAT32 ESP itself (EFI/BOOT files only)
+ * and delegates the ext4 root volume to the Ring3 /bin/ext4fs service over
+ * the fs RPC channel, then writes either an MBR or a GPT layout (rule 15):
  *
- *   MBR: LBA0 stage1, LBA1 stage2, kernel, gap, ESP at LBA 2048, data after.
+ *   MBR: LBA0 stage1, LBA1 stage2, gap, ESP at LBA 2048, ext4 root after.
  *   GPT: LBA0 stage1 + protective MBR, LBA1/2 header+entries, stage2 at
- *        LBA34, kernel, gap, ESP at LBA 2048, data, backup GPT at the end.
+ *        LBA34, gap, ESP at LBA 2048, ext4 root, backup GPT at the end.
+ *
+ * The kernel lives in the ext4 root filesystem, never in the ESP or the
+ * boot sectors; stage2 gets a block list pointing at KERNEL.BIN.
  */
 #include <block.h>
 #include <boot.h>
 #include <fat32.h>
+#include <fs_rpc.h>
 #include <install.h>
 #include <kprintf.h>
 #include <mem.h>
@@ -27,7 +31,7 @@
 
 #define ESP_MAX_SECTORS 131072u        /* 64 MiB */
 #define ESP_MIN_SECTORS 70000u         /* FAT32 needs >= 65525 clusters */
-#define DATA_MIN_SECTORS 70000u        /* second FAT32 volume, same rule */
+#define EXT4_MIN_SECTORS 32768u        /* room for kernel + CJK font */
 #define GPT_HEADER_LBA 1u
 #define GPT_ENTRIES_LBA 2u
 #define GPT_ENTRY_COUNT 128u
@@ -56,9 +60,9 @@ static const u8 g_guid_part[16] = {
     0x5A, 0x4F, 0x53, 0x2D, 0x50, 0x41, 0x52, 0x54,
     0x9A, 0x4F, 0x53, 0x31, 0x00, 0x00, 0x00, 0x02
 };
-static const u8 g_guid_data[16] = {
-    0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44,
-    0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7
+static const u8 g_guid_root[16] = {
+    0xAF, 0x3D, 0xC6, 0x0F, 0x84, 0x83, 0x72, 0x47,
+    0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4
 };
 
 extern const u8 bios_stage1_start[];
@@ -197,7 +201,9 @@ static u64 blob_sectors(const u8 *start, const u8 *end)
 }
 
 /* A previous Zhaoxu install: our MBR (0xEF/0x0C/0x0E first partition at
- * LBA 2048) or our GPT hybrid. */
+ * LBA 2048) or our GPT hybrid (stage1's ZSLBA marker in the protective MBR).
+ * The full stage1 bytes are not compared: bootloader builds legitimately
+ * differ between releases and an older install must stay a valid target. */
 static int sector_is_our_mbr(const u8 *sector)
 {
     if (sector[510] != 0x55 || sector[511] != 0xAA)
@@ -206,15 +212,10 @@ static int sector_is_our_mbr(const u8 *sector)
     if (type == 0xEF || type == 0x0C || type == 0x0E)
         return get_le32(sector + 446 + 8) == INSTALL_PARTITION_LBA;
     if (type == 0xEE) {
-        usize size = (usize)(bios_stage1_end - bios_stage1_start);
         static const u8 marker[5] = {'Z', 'S', 'L', 'B', 'A'};
-        for (usize i = 0; i + 7 <= 446 && i + 7 <= size; i++) {
-            if (memcmp(bios_stage1_start + i, marker, 5) != 0)
-                continue;
-            if (memcmp(sector, bios_stage1_start, i) != 0)
-                return 0;
-            return memcmp(sector + i + 7, bios_stage1_start + i + 7,
-                          446 - (i + 7)) == 0;
+        for (usize i = 0; i + 5 <= 446; i++) {
+            if (memcmp(sector + i, marker, 5) == 0)
+                return 1;
         }
         return 0;
     }
@@ -247,12 +248,13 @@ int install_scan(struct install_disk_info *out, int capacity)
             label_from_sector(g_sector, info->label);
         }
         info->is_esp = strcmp(info->label, "ZHAOXUEFI") == 0;
-        info->is_data = strcmp(info->label, "ZHAOXUDATA") == 0;
+        info->is_data = strcmp(info->label, "ZHAOXUDATA") == 0 ||
+                        strcmp(info->label, "ZHAOXUROOT") == 0;
         info->is_target = !info->is_esp && !info->is_data &&
                           (blank || installed) &&
                           info->sectors >=
                               INSTALL_PARTITION_LBA + ESP_MIN_SECTORS +
-                                  DATA_MIN_SECTORS;
+                                  EXT4_MIN_SECTORS;
     }
     return count;
 }
@@ -367,7 +369,7 @@ static void mbr_entry(u8 *entry, u8 type, u64 start, u32 sectors)
 }
 
 static int write_mbr(int target, u64 total, u32 esp_sectors,
-                     u32 data_sectors, int gpt)
+                     u32 root_sectors, int gpt)
 {
     memset(g_sector, 0, SECTOR_SIZE);
     memcpy(g_sector, g_stage1, 446);
@@ -389,8 +391,8 @@ static int write_mbr(int target, u64 total, u32 esp_sectors,
     } else {
         mbr_entry(entry, 0xEF, INSTALL_PARTITION_LBA, esp_sectors);
         entry[0] = 0x80;
-        mbr_entry(entry + 16, 0x0C,
-                  (u64)INSTALL_PARTITION_LBA + esp_sectors, data_sectors);
+        mbr_entry(entry + 16, 0x83,
+                  (u64)INSTALL_PARTITION_LBA + esp_sectors, root_sectors);
     }
     g_sector[510] = 0x55;
     g_sector[511] = 0xAA;
@@ -428,7 +430,7 @@ static int write_gpt_header(int disk, u64 lba, u64 current, u64 backup,
     return block_disk_write(disk, lba, 1, g_sector);
 }
 
-static int write_gpt(int disk, u64 total, u32 esp_sectors, u32 data_sectors)
+static int write_gpt(int disk, u64 total, u32 esp_sectors, u32 root_sectors)
 {
     u64 esp_start = INSTALL_PARTITION_LBA;
     u64 esp_end = esp_start + esp_sectors - 1;
@@ -439,8 +441,8 @@ static int write_gpt(int disk, u64 total, u32 esp_sectors, u32 data_sectors)
               INSTALL_PARTITION_LBA - 1);
     gpt_entry(g_gpt_entries + GPT_ENTRY_SIZE, g_guid_esp, g_guid_part,
               esp_start, esp_end);
-    gpt_entry(g_gpt_entries + 2 * GPT_ENTRY_SIZE, g_guid_data, g_guid_part,
-              data_start, data_start + data_sectors - 1);
+    gpt_entry(g_gpt_entries + 2 * GPT_ENTRY_SIZE, g_guid_root, g_guid_part,
+              data_start, data_start + root_sectors - 1);
 
     u32 entries_crc = crc32(g_gpt_entries, sizeof(g_gpt_entries));
     u64 backup_entries = total - GPT_BACKUP_SECTORS;
@@ -492,18 +494,18 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     u64 total = block_disk_sectors(target_disk);
     u64 usable = total - INSTALL_PARTITION_LBA -
                  (gpt ? GPT_BACKUP_SECTORS : 0);
-    if (usable < ESP_MIN_SECTORS + DATA_MIN_SECTORS) {
+    if (usable < ESP_MIN_SECTORS + EXT4_MIN_SECTORS) {
         set_error("target disk is too small");
         return -1;
     }
     u32 esp_sectors = ESP_MAX_SECTORS;
-    if ((u64)esp_sectors > usable - DATA_MIN_SECTORS)
-        esp_sectors = (u32)(usable - DATA_MIN_SECTORS);
-    u32 data_sectors = (u32)(usable - esp_sectors);
-    u64 data_lba = INSTALL_PARTITION_LBA + esp_sectors;
-    kprintf("[install] esp %u sectors, data %u sectors @ %llu "
+    if ((u64)esp_sectors > usable - EXT4_MIN_SECTORS)
+        esp_sectors = (u32)(usable - EXT4_MIN_SECTORS);
+    u32 root_sectors = (u32)(usable - esp_sectors);
+    u64 root_lba = INSTALL_PARTITION_LBA + esp_sectors;
+    kprintf("[install] esp %u sectors, ext4 root %u sectors @ %llu "
             "(target %llu sectors, %s)\n",
-            esp_sectors, data_sectors, (unsigned long long)data_lba,
+            esp_sectors, root_sectors, (unsigned long long)root_lba,
             (unsigned long long)total, gpt ? "GPT" : "MBR");
 
     const struct boot_info *bi = boot_get_info();
@@ -511,6 +513,11 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     u64 kernel_bytes = bi->kernel_size;
     if (!kernel || kernel_bytes == 0) {
         set_error("running kernel image is unavailable");
+        return -1;
+    }
+    u64 kernel_sectors = blob_sectors(kernel, kernel + kernel_bytes);
+    if (kernel_sectors > 0x380) {
+        set_error("kernel too large for the legacy BIOS loader");
         return -1;
     }
 
@@ -533,71 +540,11 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
 
     u64 stage2_sectors = blob_sectors(bios_stage2_start, bios_stage2_end);
     u64 stage2_lba = gpt ? GPT_BIOS_START : 1;
-    u64 kernel_lba = stage2_lba + stage2_sectors;
-    u64 kernel_sectors = blob_sectors(kernel, kernel + kernel_bytes);
-    if (kernel_sectors > 0x380) {
-        set_error("kernel too large for the legacy BIOS loader");
+    if (stage2_lba + stage2_sectors > INSTALL_PARTITION_LBA) {
+        set_error("bootloader stage 2 does not fit before the partition");
         kfree(loader);
         return -1;
     }
-    if (kernel_lba + kernel_sectors > INSTALL_PARTITION_LBA) {
-        set_error("kernel does not fit before the partition");
-        kfree(loader);
-        return -1;
-    }
-    if (patch_stage1((u16)stage2_lba) != 0 ||
-        prepare_stage2(kernel_lba, kernel_bytes, kernel_sectors) != 0) {
-        set_error("stage 1/2 parameter blocks are missing");
-        kfree(loader);
-        return -1;
-    }
-
-    u64 gap_start = kernel_lba + kernel_sectors;
-    u32 steps = 8;
-    u32 step = 0;
-
-    if (write_mbr(target_disk, total, esp_sectors, data_sectors, gpt) != 0) {
-        set_error("failed to write the MBR");
-        kfree(loader);
-        return -1;
-    }
-    step++;
-    if (progress)
-        progress(step, steps);
-
-    if (gpt && write_gpt(target_disk, total, esp_sectors,
-                         data_sectors) != 0) {
-        set_error("failed to write the GPT");
-        kfree(loader);
-        return -1;
-    }
-
-    if (write_blob(target_disk, stage2_lba, g_stage2, stage2_bytes) != 0) {
-        set_error("failed to write bootloader stage 2");
-        kfree(loader);
-        return -1;
-    }
-    step++;
-    if (progress)
-        progress(step, steps);
-
-    if (write_blob(target_disk, kernel_lba, kernel, kernel_bytes) != 0) {
-        set_error("failed to write the kernel image");
-        kfree(loader);
-        return -1;
-    }
-    step++;
-    if (progress)
-        progress(step, steps);
-
-    if (zero_gap(target_disk, gap_start, INSTALL_PARTITION_LBA) != 0) {
-        set_error("failed to clear the partition gap");
-        kfree(loader);
-        return -1;
-    }
-    step++;
-    if (progress)
-        progress(step, steps);
 
     u64 kernel_file_size = 0;
     u8 *kernel_file = build_kernel_elf(kernel, kernel_bytes, &kernel_file_size);
@@ -606,6 +553,7 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
         kfree(loader);
         return -1;
     }
+
     const struct boot_info *info = boot_get_info();
     const u8 *font = (const u8 *)(uintptr_t)info->font_phys;
     u64 font_size = info->font_size;
@@ -621,11 +569,80 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
         }
     }
 
-    if (fat32_make_esp(target_disk, INSTALL_PARTITION_LBA, esp_sectors, loader,
-                       loader_bytes, kernel_file, kernel_file_size) != 0) {
-        set_error("failed to build the FAT32 ESP");
-        kfree(font_copy);
-        kfree(kernel_file);
+    u32 bin_block = 0;
+    u32 bin_blocks = 0;
+    if (fs_call_format(target_disk, root_lba, root_sectors,
+                       "ZHAOXUROOT") != 0) {
+        set_error("ext4 service could not format the root volume");
+        kfree(loader);
+        return -1;
+    }
+    for (u64 offset = 0; offset < kernel_bytes;) {
+        u32 chunk = (u32)(kernel_bytes - offset);
+        if (chunk > FS_DATA_SIZE)
+            chunk = FS_DATA_SIZE;
+        if (fs_call_write_contig("/KERNEL.BIN", kernel_bytes, offset,
+                                 kernel + offset, chunk, &bin_block,
+                                 &bin_blocks) != 0) {
+            set_error("ext4 service could not write KERNEL.BIN");
+            kfree(loader);
+            return -1;
+        }
+        offset += chunk;
+    }
+    for (u64 offset = 0; offset < kernel_file_size;) {
+        u32 chunk = (u32)(kernel_file_size - offset);
+        if (chunk > FS_DATA_SIZE)
+            chunk = FS_DATA_SIZE;
+        if (fs_call_write("/KERNEL.ELF", kernel_file_size, offset,
+                          kernel_file + offset, chunk, offset == 0) != 0) {
+            set_error("ext4 service could not write KERNEL.ELF");
+            kfree(loader);
+            return -1;
+        }
+        offset += chunk;
+    }
+    for (u64 offset = 0; font && offset < font_size;) {
+        u32 chunk = (u32)(font_size - offset);
+        if (chunk > FS_DATA_SIZE)
+            chunk = FS_DATA_SIZE;
+        if (fs_call_write("/WQY.TTC", font_size, offset, font + offset, chunk,
+                          offset == 0) != 0) {
+            set_error("ext4 service could not write WQY.TTC");
+            kfree(loader);
+            return -1;
+        }
+        offset += chunk;
+    }
+    if (fs_call_sync() != 0) {
+        set_error("ext4 service could not sync the root volume");
+        kfree(loader);
+        return -1;
+    }
+    kfree(font_copy);
+    kfree(kernel_file);
+
+    u64 bin_lba = root_lba + (u64)bin_block * 8u;
+    if ((u64)bin_blocks * 8u < kernel_sectors ||
+        (u64)bin_blocks * 8u > root_sectors ||
+        bin_lba + kernel_sectors > root_lba + root_sectors) {
+        set_error("KERNEL.BIN is not contiguous inside ext4");
+        kfree(loader);
+        return -1;
+    }
+
+    if (patch_stage1((u16)stage2_lba) != 0 ||
+        prepare_stage2(bin_lba, kernel_bytes, kernel_sectors) != 0) {
+        set_error("stage 1/2 parameter blocks are missing");
+        kfree(loader);
+        return -1;
+    }
+
+    u32 steps = 7;
+    u32 step = 0;
+
+    if (write_mbr(target_disk, total, esp_sectors, root_sectors, gpt) != 0) {
+        set_error("failed to write the MBR");
         kfree(loader);
         return -1;
     }
@@ -633,16 +650,38 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     if (progress)
         progress(step, steps);
 
-    if (fat32_make_data(target_disk, data_lba, data_sectors, font,
-                        font_size) != 0) {
-        set_error("failed to build the data partition");
-        kfree(font_copy);
-        kfree(kernel_file);
+    if (gpt && write_gpt(target_disk, total, esp_sectors,
+                         root_sectors) != 0) {
+        set_error("failed to write the GPT");
         kfree(loader);
         return -1;
     }
-    kfree(font_copy);
-    kfree(kernel_file);
+
+    if (write_blob(target_disk, stage2_lba, g_stage2, stage2_bytes) != 0) {
+        set_error("failed to write bootloader stage 2");
+        kfree(loader);
+        return -1;
+    }
+    step++;
+    if (progress)
+        progress(step, steps);
+
+    if (zero_gap(target_disk, stage2_lba + stage2_sectors,
+                 INSTALL_PARTITION_LBA) != 0) {
+        set_error("failed to clear the partition gap");
+        kfree(loader);
+        return -1;
+    }
+    step++;
+    if (progress)
+        progress(step, steps);
+
+    if (fat32_make_esp(target_disk, INSTALL_PARTITION_LBA, esp_sectors, loader,
+                       loader_bytes) != 0) {
+        set_error("failed to build the FAT32 ESP");
+        kfree(loader);
+        return -1;
+    }
     kfree(loader);
     step++;
     if (progress)
@@ -658,11 +697,10 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
         set_error("verification failed: ESP is not FAT32");
         return -1;
     }
-    if (block_disk_read(target_disk, data_lba, 1, g_sector) != 0 ||
-        g_sector[510] != 0x55 || g_sector[511] != 0xAA ||
-        memcmp(g_sector + 82, "FAT32   ", 8) != 0 ||
-        memcmp(g_sector + 71, "ZHAOXUDATA ", 11) != 0) {
-        set_error("verification failed: data partition is not FAT32");
+    u8 super[1024];
+    if (block_disk_read(target_disk, root_lba + 2, 2, super) != 0 ||
+        super[0x38] != 0x53 || super[0x39] != 0xEF) {
+        set_error("verification failed: root partition is not ext4");
         return -1;
     }
     step++;
