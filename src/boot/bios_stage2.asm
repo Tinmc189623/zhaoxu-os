@@ -88,6 +88,7 @@ stage2_start:
         je      .bad_params
 
         call    probe_sector_size
+        jc      .sector_fail
         call    load_kernel
         jc      .disk_fail
 
@@ -97,6 +98,10 @@ stage2_start:
 
 .bad_params:
         mov     si, msg_params
+        call    print
+        jmp     halt
+.sector_fail:
+        mov     si, msg_sector
         call    print
         jmp     halt
 .disk_fail:
@@ -168,27 +173,37 @@ print:
         ret
 
 ; The device sector size decides the unit of param_*_lba.  A no-emulation
-; El Torito CD reports 2048-byte sectors; a disk reports 512.  Keep the
-; shift (9 or 11) and convert every transfer into device sectors.
+; El Torito CD reports 2048-byte sectors; a disk reports 512.  Only those two
+; are representable: shift 9 or 11.  Anything else (or a failed AH=48h) is an
+; error rather than a silent guess, since the wrong unit would read garbage.
 probe_sector_size:
         push    ax
         push    dx
         push    si
-        mov     byte [disk_shift], 9
         mov     word [dap_geom], 0x1E   ; returned length 30 (EDD 3.0 table)
         mov     si, dap_geom
         mov     ah, 0x48
         mov     dl, [boot_drive]
         int     0x13
-        jc      .done
+        jc      .fail
         mov     ax, word [dap_geom + 0x18]   ; bytes per logical sector
-        cmp     ax, 2048
-        jne     .done
+        mov     byte [disk_shift], 9
+        cmp     ax, 512
+        je      .ok
         mov     byte [disk_shift], 11
-.done:
+        cmp     ax, 2048
+        je      .ok
+.fail:
         pop     si
         pop     dx
         pop     ax
+        stc
+        ret
+.ok:
+        pop     si
+        pop     dx
+        pop     ax
+        clc
         ret
 
 ; ES:BX <- CX device sectors from 64-bit LBA in EDX:EAX (INT 13h extensions).
@@ -819,6 +834,7 @@ msg_kernel      db 'Kernel image loaded, entering long mode.',13,10,0
 msg_load        db 'Reading kernel image.',13,10,0
 msg_loaded      db 'Kernel image read.',13,10,0
 msg_params      db 'stage2: parameter block missing.',13,10,0
+msg_sector      db 'stage2: unsupported sector size.',13,10,0
 msg_disk        db 'stage2: disk read failed.',13,10,0
 msg_pm          db 'ZhaoxuBootloader handing off to Yuanshuo kernel.',13,10,0
 

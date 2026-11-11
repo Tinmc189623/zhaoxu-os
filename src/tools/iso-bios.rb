@@ -5,7 +5,9 @@
 # kernel travels as the ordinary ISO9660 file install/KERNEL.BIN.  Its extents
 # are only known after xorriso has laid the ISO out, so this script walks the
 # ISO9660 primary volume descriptor, finds the file and writes the 48-byte
-# ZBOOTPRM block of the stage 2 copy embedded in bios.img:
+# ZBOOTPRM block of the stage 2 copy embedded in bios.img.  The El Torito boot
+# catalog is parsed first, so the patched extent is proven to be the image the
+# firmware is told to load:
 #
 #   kernel_lba (2 KiB units), kernel_bytes, kernel_sectors,
 #   cd flag (1), font_lba, font_bytes
@@ -18,6 +20,9 @@ abort "usage: iso-bios.rb <iso>" unless iso
 SECTOR = 2048
 STAGE2_OFFSET = 1024          # stage 2 sits 1 KiB into the El Torito image
 FINAL_EXTENT = 0x80           # file flags bit 7: not the last extent
+BOOT_RECORD = 17              # boot record volume descriptor sector
+CATALOG_ENTRY = 32            # initial/default entry after the 32-byte validation entry
+CATALOG_ENTRY_LBA = 8         # within the entry: load RBA in 2048-byte units
 
 data = File.binread(iso)
 
@@ -79,6 +84,29 @@ end
 stage2 = boot[:lba] * SECTOR + STAGE2_OFFSET
 image_end = boot[:lba] * SECTOR + boot[:size]
 abort "iso-bios: BIOS.IMG extent outside the ISO" if image_end > data.bytesize
+
+# The El Torito catalog is what the firmware actually loads, so the patch must
+# land in the image the catalog points at -- cross-check it against the
+# BIOS.IMG directory entry instead of trusting the tree alone.
+boot_record = data[BOOT_RECORD * SECTOR, SECTOR]
+unless boot_record && boot_record.getbyte(0).zero? && boot_record[1, 5] == "CD001"
+  abort "iso-bios: no El Torito boot record volume descriptor"
+end
+unless boot_record[7, 32].to_s.start_with?("EL TORITO")
+  abort "iso-bios: boot record is not an El Torito descriptor"
+end
+
+catalog_lba = le32(boot_record, 71)
+catalog = data[catalog_lba * SECTOR, SECTOR]
+abort "iso-bios: boot catalog outside the ISO" unless catalog && catalog.bytesize == SECTOR
+unless catalog.getbyte(0) == 1 && catalog.getbyte(30) == 0x55 && catalog.getbyte(31) == 0xAA
+  abort "iso-bios: boot catalog validation entry missing"
+end
+
+image_lba = le32(catalog, CATALOG_ENTRY + CATALOG_ENTRY_LBA)
+unless image_lba == boot[:lba]
+  abort "iso-bios: catalog boots LBA #{image_lba}, BIOS.IMG is at LBA #{boot[:lba]}"
+end
 
 magic = "ZBOOTPRM".b
 index = data.index(magic, stage2)
