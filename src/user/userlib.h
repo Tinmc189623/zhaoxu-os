@@ -44,6 +44,11 @@ typedef unsigned long long u64;
 #define SYS_DEV_ALLOC       35
 #define SYS_BOOT_FONT       36
 #define SYS_SPAWN_ARG       37
+#define SYS_BLK_COUNT       38
+#define SYS_BLK_INFO        39
+#define SYS_BLK_READ        40
+#define SYS_BLK_WRITE       41
+#define SYS_BLK_FLUSH       42
 
 struct zos_fb_info {
     unsigned long address;
@@ -271,6 +276,33 @@ static inline void sys_exit(int status)
     syscall3(SYS_EXIT, status, 0, 0);
     for (;;)
         __asm__ volatile("hlt");
+}
+
+/* Trusted whole-device block I/O; only /bin/ext4fs holds the capability. */
+static inline long sys_blk_count(void)
+{
+    return syscall3(SYS_BLK_COUNT, 0, 0, 0);
+}
+
+static inline long sys_blk_info(int disk, u64 *sectors, u64 *port)
+{
+    return syscall3(SYS_BLK_INFO, disk, (long)sectors, (long)port);
+}
+
+static inline long sys_blk_read(int disk, u64 lba, u32 count, void *buffer)
+{
+    return syscall4(SYS_BLK_READ, disk, (long)lba, count, (long)buffer);
+}
+
+static inline long sys_blk_write(int disk, u64 lba, u32 count,
+                                 const void *buffer)
+{
+    return syscall4(SYS_BLK_WRITE, disk, (long)lba, count, (long)buffer);
+}
+
+static inline long sys_blk_flush(int disk)
+{
+    return syscall3(SYS_BLK_FLUSH, disk, 0, 0);
 }
 
 void u_puts(const char *text);

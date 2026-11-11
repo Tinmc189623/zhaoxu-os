@@ -65,6 +65,14 @@
 #define SYS_DEV_ALLOC       35
 #define SYS_BOOT_FONT       36
 #define SYS_SPAWN_ARG       37
+#define SYS_BLK_COUNT       38
+#define SYS_BLK_INFO        39
+#define SYS_BLK_READ        40
+#define SYS_BLK_WRITE       41
+#define SYS_BLK_FLUSH       42
+
+#define BLK_SECTOR_BYTES 512u
+#define BLK_MAX_SECTORS  8u
 
 #define FB_USER_BASE    0x0000010040000000ULL
 #define FB_MAX_PAGES    8192
@@ -452,6 +460,90 @@ static long syscall_rtc(struct process *process, u64 time_pointer)
     return 0;
 }
 
+/* ---- trusted block I/O (only the ext4 service holds the capability) ----
+ *
+ * The payload always goes through a kernel scratch buffer: the driver RPC
+ * can sleep while waiting for the busy lock, and a sleeping kernel thread may
+ * be rescheduled onto another process's CR3, where a user pointer is no
+ * longer valid. */
+static long syscall_blk_count(struct process *process)
+{
+    return process->block_cap ? dev_disk_count() : -1;
+}
+
+static long syscall_blk_info(struct process *process, u64 disk,
+                             u64 sectors_pointer, u64 port_pointer)
+{
+    if (!process->block_cap ||
+        user_range_ok(process, sectors_pointer, sizeof(u64)) != 1 ||
+        user_range_ok(process, port_pointer, sizeof(u64)) != 1)
+        return -1;
+    u64 sectors = dev_disk_sectors((int)disk);
+    u64 port = (u64)(i64)dev_disk_port((int)disk);
+    if (process_user_write(process, sectors_pointer, &sectors,
+                           sizeof(u64)) != 0 ||
+        process_user_write(process, port_pointer, &port, sizeof(u64)) != 0)
+        return -1;
+    return 0;
+}
+
+static int blk_user_bytes(struct process *process, u64 buffer, u64 count,
+                          u8 **scratch)
+{
+    u64 bytes = 0;
+    *scratch = NULL;
+    if (count == 0 || count > BLK_MAX_SECTORS)
+        return -1;
+    bytes = count * BLK_SECTOR_BYTES;
+    if (user_range_ok(process, buffer, bytes) != 1)
+        return -1;
+    *scratch = kmalloc(bytes);
+    return *scratch ? 0 : -1;
+}
+
+static long syscall_blk_read(struct process *process, u64 disk, u64 lba,
+                             u64 count, u64 buffer)
+{
+    if (!process->block_cap)
+        return -1;
+    u8 *scratch = NULL;
+    if (blk_user_bytes(process, buffer, count, &scratch) != 0)
+        return -1;
+
+    long result = -1;
+    if (dev_disk_read((int)disk, lba, (u32)count, scratch) == 0 &&
+        process_user_write(process, buffer, scratch,
+                           count * BLK_SECTOR_BYTES) == 0)
+        result = (long)count;
+    kfree(scratch);
+    return result;
+}
+
+static long syscall_blk_write(struct process *process, u64 disk, u64 lba,
+                              u64 count, u64 buffer)
+{
+    if (!process->block_cap)
+        return -1;
+    u8 *scratch = NULL;
+    if (blk_user_bytes(process, buffer, count, &scratch) != 0)
+        return -1;
+
+    memcpy(scratch, (const void *)(uintptr_t)buffer,
+           (usize)(count * BLK_SECTOR_BYTES));
+    long result = dev_disk_write((int)disk, lba, (u32)count, scratch) == 0
+                      ? (long)count
+                      : -1;
+    kfree(scratch);
+    return result;
+}
+
+static long syscall_blk_flush(struct process *process, u64 disk)
+{
+    if (!process->block_cap)
+        return -1;
+    return dev_disk_flush((int)disk) == 0 ? 0 : -1;
+}
+
 static long syscall_port_listen(struct process *process, u64 name_pointer)
 {
     char name[IPC_NAME_MAX];
@@ -638,6 +730,23 @@ void syscall_dispatch(struct interrupt_frame *frame)
         break;
     case SYS_SPAWN_ARG:
         result = syscall_spawn_arg(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_BLK_COUNT:
+        result = syscall_blk_count(process);
+        break;
+    case SYS_BLK_INFO:
+        result = syscall_blk_info(process, frame->rdi, frame->rsi, frame->rdx);
+        break;
+    case SYS_BLK_READ:
+        result = syscall_blk_read(process, frame->rdi, frame->rsi, frame->rdx,
+                                  frame->r10);
+        break;
+    case SYS_BLK_WRITE:
+        result = syscall_blk_write(process, frame->rdi, frame->rsi,
+                                   frame->rdx, frame->r10);
+        break;
+    case SYS_BLK_FLUSH:
+        result = syscall_blk_flush(process, frame->rdi);
         break;
     default:
         result = -1;

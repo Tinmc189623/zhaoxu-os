@@ -10,6 +10,7 @@
 #include <console.h>
 #include <cpu.h>
 #include <dev.h>
+#include <fs_rpc.h>
 #include <gdt.h>
 #include <idt.h>
 #include <io.h>
@@ -119,6 +120,12 @@ void kernel_main(struct boot_info *boot)
         kprintf("[dev ] driver service ready\n");
     else
         kprintf("[dev ] driver service unavailable\n");
+
+    kprintf("[fs  ] starting Ring3 ext4 service\n");
+    if (fs_service_start() == 0)
+        kprintf("[fs  ] ext4 service ready\n");
+    else
+        kprintf("[fs  ] ext4 service unavailable\n");
 
     struct pmm_stats pmm;
     pmm_get_stats(&pmm);

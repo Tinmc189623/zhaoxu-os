@@ -438,11 +438,16 @@ static u64 spawn_image(const u8 *image, u64 image_size, const char *name,
         return 0;
 
     process->parent_pid = parent ? parent->pid : 0;
-    process->space = vmm_space_create(name && strcmp(name, "/bin/drivers") == 0);
+    /* Services that touch raw device memory (AHCI DMA, ext4 blocks) get the
+     * 0..4 GiB user identity map so a physical address is a valid pointer. */
+    int service = name && (strcmp(name, "/bin/drivers") == 0 ||
+                           strcmp(name, "/bin/ext4fs") == 0);
+    process->space = vmm_space_create(service);
     if (!process->space) {
         process_fail(process);
         return 0;
     }
+    process->block_cap = name && strcmp(name, "/bin/ext4fs") == 0;
 
     const char *default_argv[1] = { name ? name : "<memory>" };
     const char **stack_argv = (argc > 0) ? (const char **)argv : default_argv;
@@ -584,6 +589,14 @@ struct address_space *process_current_space(void)
 int process_active(void)
 {
     return current_process() != NULL;
+}
+
+/* Only /bin/ext4fs may issue the trusted block syscalls: they bypass the VFS
+ * and touch whole devices. */
+int process_block_capable(void)
+{
+    struct process *process = current_process();
+    return process && process->block_cap;
 }
 
 const struct process_info *process_get_info(void)

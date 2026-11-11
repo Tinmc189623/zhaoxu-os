@@ -1,6 +1,10 @@
 #include "userlib.h"
 
-void *memset(void *destination, int value, u64 length)
+/* Weak: services that also link kernel/lib/string.c (e.g. /bin/ext4fs, which
+ * needs strlen/strcmp for the ext4 core) must not collide with these.  A
+ * single-program link still gets exactly one definition, so behaviour is
+ * unchanged for every existing executable. */
+__attribute__((weak)) void *memset(void *destination, int value, u64 length)
 {
     u8 *bytes = (u8 *)destination;
     while (length--)
@@ -8,7 +12,8 @@ void *memset(void *destination, int value, u64 length)
     return destination;
 }
 
-void *memcpy(void *destination, const void *source, u64 length)
+__attribute__((weak)) void *memcpy(void *destination, const void *source,
+                                   u64 length)
 {
     u8 *out = (u8 *)destination;
     const u8 *in = (const u8 *)source;
@@ -17,7 +22,8 @@ void *memcpy(void *destination, const void *source, u64 length)
     return destination;
 }
 
-void *memmove(void *destination, const void *source, u64 length)
+__attribute__((weak)) void *memmove(void *destination, const void *source,
+                                    u64 length)
 {
     u8 *out = (u8 *)destination;
     const u8 *in = (const u8 *)source;

@@ -26,6 +26,7 @@ int process_run_image(const u8 *image, u64 size, const char *name,
 u64 process_self_pid(void);
 struct address_space *process_current_space(void);
 int process_active(void);
+int process_block_capable(void);
 const struct process_info *process_get_info(void);
 void process_thread_reaped(struct thread *thread);
 

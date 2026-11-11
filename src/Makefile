@@ -61,6 +61,7 @@ C_SRCS := kernel/main.c \
           kernel/proc/process.c \
           kernel/proc/syscall.c \
           kernel/proc/dev.c \
+          kernel/proc/fsrpc.c \
           kernel/proc/thread.c \
           kernel/ipc/port.c \
           kernel/ipc/shm.c \
@@ -208,6 +209,24 @@ $(BUILD)/csh.uelf: $(CSH_SRCS) $(CSH_HDRS) user/user.ld
 	$(CC) $(USER_CFLAGS) -Iapps/csh -Iuser -Ikernel/include \
 	  $(USER_LDFLAGS) -o $@ $(CSH_SRCS)
 
+# ---- ext4fs: the Ring3 ext4 service --------------------------------
+# Owns the OS-independent ext4 core (fs/ext4) and talks to the kernel over
+# the fs_rpc page; the kernel keeps its own copy until the VFS is forwarded.
+EXT4FS_SRCS := apps/ext4fs/main.c apps/ext4fs/service.c \
+               apps/ext4fs/blk.c apps/ext4fs/arena.c \
+               fs/ext4/ext4_env.c fs/ext4/ext4_mount.c \
+               fs/ext4/ext4_extent.c fs/ext4/ext4_dir.c \
+               fs/ext4/ext4_read.c fs/ext4/ext4_alloc.c \
+               fs/ext4/ext4_write.c fs/ext4/ext4_format.c \
+               user/userlib.c kernel/lib/string.c kernel/lib/printf.c
+EXT4FS_HDRS := $(wildcard fs/ext4/*.h) apps/ext4fs/ext4fs.h \
+               kernel/include/fs_rpc.h user/userlib.h
+
+$(BUILD)/ext4fs.uelf: $(EXT4FS_SRCS) $(EXT4FS_HDRS) user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -Ifs/ext4 -Iapps/ext4fs -Iuser -Ikernel/include \
+	  $(USER_LDFLAGS) -o $@ $(EXT4FS_SRCS)
+
 # ---- Ring3 driver service -------------------------------------------
 DRV_BUILD := $(BUILD)/drv
 DRV_ADAFLAGS := -c -gnatp -gnat2022 -O2 -fno-pie -fno-stack-protector \
@@ -240,7 +259,7 @@ $(BUILD)/drivers.uelf: $(DRV_OBJS) user/user.ld
 # ---- initramfs -------------------------------------------------------
 RAMFS := $(BUILD)/initramfs
 RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/ade $(RAMFS)/bin/csh \
-               $(RAMFS)/bin/drivers \
+               $(RAMFS)/bin/drivers $(RAMFS)/bin/ext4fs \
                $(RAMFS)/bin/apps/welcome.zxe $(RAMFS)/bin/apps/calc.zxe \
                $(RAMFS)/bin/apps/install.zxe \
                $(RAMFS)/boot/BOOTX64.EFI \
@@ -264,6 +283,10 @@ $(RAMFS)/bin/csh: $(OUT)/csh.zxe
 	cp $< $@
 
 $(RAMFS)/bin/drivers: $(OUT)/drivers.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/bin/ext4fs: $(OUT)/ext4fs.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 

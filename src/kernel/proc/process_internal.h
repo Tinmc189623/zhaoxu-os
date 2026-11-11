@@ -26,6 +26,7 @@ struct process {
     int state;
     int exit_code;
     int thread_reaped;
+    int block_cap;   /* trusted block I/O (syscalls 38..42) */
     struct address_space *space;
     int mapping_count;
     struct user_mapping mappings[USER_MAX_PAGES];

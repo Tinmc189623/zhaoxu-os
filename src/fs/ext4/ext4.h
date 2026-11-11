@@ -25,6 +25,7 @@ int ext4_write_file(const char *path, const u8 *data, u64 size);
 int ext4_write_file_contig(const char *path, const u8 *data, u64 size,
                            u32 *first, u32 *blocks);
 int ext4_unlink(const char *path);
+int ext4_sync(void);
 int ext4_mount_at(int disk, u64 volume_base);
 int ext4_format_volume(int disk, u64 volume_base, u32 sectors,
                        const char *label);
