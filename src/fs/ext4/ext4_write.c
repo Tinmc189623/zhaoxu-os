@@ -466,6 +466,13 @@ int ext4_write_file_contig(const char *path, const u8 *data, u64 size,
     return ext4_sync();
 }
 
+/* e2fsck reads i_dtime as the orphan list's "next inode" pointer and reports
+ * any deleted inode whose i_dtime is below s_inodes_count as part of a
+ * corrupted orphan list (PR_1_LOW_DTIME).  The core has no clock, so stamp
+ * deletion with a fixed epoch: above any inode number and safely in the
+ * past. */
+#define EXT4_DELETED_DTIME 946684800u
+
 int ext4_unlink(const char *path)
 {
     if (!g_ext4.writable)
@@ -492,9 +499,20 @@ int ext4_unlink(const char *path)
         return -1;
     if (ext4_read_inode_raw(ino, inode) != 0)
         return -1;
+
+    /* Rewrite the inode as a clean deleted inode before dropping its bitmap
+     * bit: e2fsck treats links=0/dtime!=0 with a live i_mode or extent root
+     * as an orphan and refuses the filesystem.  i_block is cleared whole so
+     * no extent pointers survive. */
+    memset(inode + EXT4_INODE_BLOCK_OFF, 0, 60);
+    ext4_put32(inode + EXT4_INODE_FLAGS_OFF, 0);
+    ext4_put16(inode, 0);
     ext4_put16(inode + 0x1A, 0);
-    ext4_put32(inode + 0x14, 1);
-    ext4_write_inode_raw(ino, inode);
+    inode_set_size(inode, 0);
+    ext4_put32(inode + EXT4_INODE_BLOCKS_OFF, 0);
+    ext4_put32(inode + 0x14, EXT4_DELETED_DTIME);
+    if (ext4_write_inode_raw(ino, inode) != 0)
+        return -1;
     if (ext4_dir_remove(parent, name) != 0)
         return -1;
     ext4_free_inode(ino);
