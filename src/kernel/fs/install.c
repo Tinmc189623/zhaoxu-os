@@ -454,13 +454,15 @@ static int write_gpt(int disk, u64 total, u32 esp_sectors, u32 root_sectors)
     if (write_blob(disk, backup_entries, g_gpt_entries,
                    sizeof(g_gpt_entries)) != 0)
         return -1;
+    /* Both headers carry the same raw LBAs: first usable right after the
+     * 128 entries, last usable just before the backup entries. */
     if (write_gpt_header(disk, GPT_HEADER_LBA, GPT_HEADER_LBA, total - 1,
-                         GPT_ENTRIES_LBA, GPT_BIOS_START,
-                         last_usable - GPT_BIOS_START + 1, entries_crc) != 0)
+                         GPT_ENTRIES_LBA, GPT_BIOS_START, last_usable,
+                         entries_crc) != 0)
         return -1;
     return write_gpt_header(disk, total - 1, total - 1, GPT_HEADER_LBA,
-                            backup_entries, GPT_BIOS_START,
-                            last_usable - GPT_BIOS_START + 1, entries_crc);
+                            backup_entries, GPT_BIOS_START, last_usable,
+                            entries_crc);
 }
 
 static int read_stage1_verify(int disk)
@@ -472,8 +474,19 @@ static int read_stage1_verify(int disk)
     return 0;
 }
 
+/* Every failure after the ext4 FORMAT must leave the service in a clean
+ * state: one SYNC commits the chunks already sent and restores the volume
+ * that was mounted before the install (ext4fs does the restore on SYNC).
+ * The three heap buffers are freed in exactly one place each. */
 int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
 {
+#if HEADLESS
+    /* The installed stage2 and loader are copies of this build, so a
+     * headless install produces a headless system: no ADE, csh only. */
+    kprintf("[install] warning: headless build; the installed system will "
+            "not start ADE\n");
+#endif
+
     if (target_disk < 0) {
         set_error("invalid target disk");
         return -1;
@@ -523,10 +536,15 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
 
     u8 *loader = NULL;
     u64 loader_bytes = 0;
+    u8 *kernel_file = NULL;
+    u64 kernel_file_size = 0;
+    u8 *font_copy = NULL;
+    int fs_dirty = 0;
+
     if (vfs_read_all("/boot/BOOTX64.EFI", &loader, &loader_bytes) != 0 ||
         !loader || !loader_bytes) {
         set_error("embedded BOOTX64.EFI is missing");
-        return -1;
+        goto fail;
     }
 
     u64 stage1_bytes = (u64)(bios_stage1_end - bios_stage1_start);
@@ -534,30 +552,25 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     if (stage1_bytes != SECTOR_SIZE || stage2_bytes == 0 ||
         stage2_bytes > sizeof(g_stage2)) {
         set_error("ZhaoxuBootloader payload is not embedded");
-        kfree(loader);
-        return -1;
+        goto fail;
     }
 
     u64 stage2_sectors = blob_sectors(bios_stage2_start, bios_stage2_end);
     u64 stage2_lba = gpt ? GPT_BIOS_START : 1;
     if (stage2_lba + stage2_sectors > INSTALL_PARTITION_LBA) {
         set_error("bootloader stage 2 does not fit before the partition");
-        kfree(loader);
-        return -1;
+        goto fail;
     }
 
-    u64 kernel_file_size = 0;
-    u8 *kernel_file = build_kernel_elf(kernel, kernel_bytes, &kernel_file_size);
+    kernel_file = build_kernel_elf(kernel, kernel_bytes, &kernel_file_size);
     if (!kernel_file) {
         set_error("cannot build the kernel ELF image");
-        kfree(loader);
-        return -1;
+        goto fail;
     }
 
     const struct boot_info *info = boot_get_info();
     const u8 *font = (const u8 *)(uintptr_t)info->font_phys;
     u64 font_size = info->font_size;
-    u8 *font_copy = NULL;
     if (!font || font_size < 13) {
         u64 read = 0;
         if (vfs_read_all("/mnt/WQY.TTC", &font_copy, &read) == 0) {
@@ -574,9 +587,11 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     if (fs_call_format(target_disk, root_lba, root_sectors,
                        "ZHAOXUROOT") != 0) {
         set_error("ext4 service could not format the root volume");
-        kfree(loader);
-        return -1;
+        goto fail;
     }
+    /* The service now has the target mounted: every later failure must
+     * SYNC (commit + restore the previous mount) in the cleanup path. */
+    fs_dirty = 1;
     for (u64 offset = 0; offset < kernel_bytes;) {
         u32 chunk = (u32)(kernel_bytes - offset);
         if (chunk > FS_DATA_SIZE)
@@ -585,8 +600,7 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
                                  kernel + offset, chunk, &bin_block,
                                  &bin_blocks) != 0) {
             set_error("ext4 service could not write KERNEL.BIN");
-            kfree(loader);
-            return -1;
+            goto fail;
         }
         offset += chunk;
     }
@@ -597,8 +611,7 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
         if (fs_call_write("/KERNEL.ELF", kernel_file_size, offset,
                           kernel_file + offset, chunk, offset == 0) != 0) {
             set_error("ext4 service could not write KERNEL.ELF");
-            kfree(loader);
-            return -1;
+            goto fail;
         }
         offset += chunk;
     }
@@ -609,33 +622,29 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
         if (fs_call_write("/WQY.TTC", font_size, offset, font + offset, chunk,
                           offset == 0) != 0) {
             set_error("ext4 service could not write WQY.TTC");
-            kfree(loader);
-            return -1;
+            goto fail;
         }
         offset += chunk;
     }
     if (fs_call_sync() != 0) {
         set_error("ext4 service could not sync the root volume");
-        kfree(loader);
-        return -1;
+        /* The cleanup retries the (idempotent) sync once. */
+        goto fail;
     }
-    kfree(font_copy);
-    kfree(kernel_file);
+    fs_dirty = 0;
 
     u64 bin_lba = root_lba + (u64)bin_block * 8u;
     if ((u64)bin_blocks * 8u < kernel_sectors ||
         (u64)bin_blocks * 8u > root_sectors ||
         bin_lba + kernel_sectors > root_lba + root_sectors) {
         set_error("KERNEL.BIN is not contiguous inside ext4");
-        kfree(loader);
-        return -1;
+        goto fail;
     }
 
     if (patch_stage1((u16)stage2_lba) != 0 ||
         prepare_stage2(bin_lba, kernel_bytes, kernel_sectors) != 0) {
         set_error("stage 1/2 parameter blocks are missing");
-        kfree(loader);
-        return -1;
+        goto fail;
     }
 
     u32 steps = 7;
@@ -643,8 +652,7 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
 
     if (write_mbr(target_disk, total, esp_sectors, root_sectors, gpt) != 0) {
         set_error("failed to write the MBR");
-        kfree(loader);
-        return -1;
+        goto fail;
     }
     step++;
     if (progress)
@@ -653,14 +661,12 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     if (gpt && write_gpt(target_disk, total, esp_sectors,
                          root_sectors) != 0) {
         set_error("failed to write the GPT");
-        kfree(loader);
-        return -1;
+        goto fail;
     }
 
     if (write_blob(target_disk, stage2_lba, g_stage2, stage2_bytes) != 0) {
         set_error("failed to write bootloader stage 2");
-        kfree(loader);
-        return -1;
+        goto fail;
     }
     step++;
     if (progress)
@@ -669,8 +675,7 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     if (zero_gap(target_disk, stage2_lba + stage2_sectors,
                  INSTALL_PARTITION_LBA) != 0) {
         set_error("failed to clear the partition gap");
-        kfree(loader);
-        return -1;
+        goto fail;
     }
     step++;
     if (progress)
@@ -679,29 +684,27 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     if (fat32_make_esp(target_disk, INSTALL_PARTITION_LBA, esp_sectors, loader,
                        loader_bytes) != 0) {
         set_error("failed to build the FAT32 ESP");
-        kfree(loader);
-        return -1;
+        goto fail;
     }
-    kfree(loader);
     step++;
     if (progress)
         progress(step, steps);
 
     if (read_stage1_verify(target_disk) != 0) {
         set_error("verification failed: bootloader MBR differs");
-        return -1;
+        goto fail;
     }
     if (block_disk_read(target_disk, INSTALL_PARTITION_LBA, 1, g_sector) != 0 ||
         g_sector[510] != 0x55 || g_sector[511] != 0xAA ||
         memcmp(g_sector + 82, "FAT32   ", 8) != 0) {
         set_error("verification failed: ESP is not FAT32");
-        return -1;
+        goto fail;
     }
     u8 super[1024];
     if (block_disk_read(target_disk, root_lba + 2, 2, super) != 0 ||
         super[0x38] != 0x53 || super[0x39] != 0xEF) {
         set_error("verification failed: root partition is not ext4");
-        return -1;
+        goto fail;
     }
     step++;
     if (progress)
@@ -709,12 +712,23 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
 
     if (block_disk_flush(target_disk) != 0) {
         set_error("failed to flush the target disk");
-        return -1;
+        goto fail;
     }
     step++;
     if (progress)
         progress(step, steps);
 
     g_error[0] = 0;
+    kfree(font_copy);
+    kfree(kernel_file);
+    kfree(loader);
     return 0;
+
+fail:
+    if (fs_dirty)
+        fs_call_sync();
+    kfree(font_copy);
+    kfree(kernel_file);
+    kfree(loader);
+    return -1;
 }

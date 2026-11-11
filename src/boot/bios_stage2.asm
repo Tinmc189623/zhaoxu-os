@@ -14,10 +14,9 @@ use16
 ; probe itself still runs: on q35/SeaBIOS an SMI that arrives during the first
 ; CD read hangs the firmware's own SMM handler unless the VGA was initialised,
 ; and that read is what boots the kernel.  The Makefile passes
-; -dHEADLESS=$(HEADLESS); a plain `fasm bios_stage2.asm` keeps the default.
-if ~ defined HEADLESS
-  HEADLESS = 0
-end if
+; -dHEADLESS=$(HEADLESS); a plain `fasm bios_stage2.asm` knows no HEADLESS
+; symbol and assembles the normal (framebuffer) path - fasm treats an
+; undefined symbol in `defined X & X` as zero and does not evaluate the rest.
 
 KERNEL_PHYS      = 0x02000000           ; 2 MiB aligned kernel window
 KERNEL_VMA       = 0xffffffff80000000
@@ -59,18 +58,7 @@ stage2_start:
         mov     si, msg_a20
         call    print
 
-if HEADLESS = 0
-        call    vbe_probe
-        cmp     byte [fb_format], 0
-        je      .no_vbe
-        mov     si, msg_vbe
-        call    print
-        jmp     .vbe_done
-.no_vbe:
-        mov     si, msg_novbe
-        call    print
-.vbe_done:
-else
+if defined HEADLESS & HEADLESS
         ; q35 + SeaBIOS hangs inside its own SMM handler when the first CD
         ; read happens without the VGA ever having been initialised (the
         ; frame buffer probe is what does it), so the probe still runs here.
@@ -86,6 +74,17 @@ else
         mov     byte [fb_format], al
         mov     si, msg_headless
         call    print
+else
+        call    vbe_probe
+        cmp     byte [fb_format], 0
+        je      .no_vbe
+        mov     si, msg_vbe
+        call    print
+        jmp     .vbe_done
+.no_vbe:
+        mov     si, msg_novbe
+        call    print
+.vbe_done:
 end if
 
         call    collect_e820

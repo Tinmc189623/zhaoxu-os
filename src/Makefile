@@ -387,6 +387,13 @@ $(OUT)/BOOTX64.EFI: $(BUILD)/efi_main.o
 	@mkdir -p $(OUT)
 	$(BOOT_LD) $(BOOT_LDFLAGS) $(BUILD)/efi_main.o /out:$@
 
+# The installer warns when the build is headless: the loader and stage 2 it
+# copies to the target would then boot straight to csh.  The flag only lives
+# in -DHEADLESS, so this object must follow $(HEADLESS_HEADER) too.
+$(BUILD)/kernel/fs/install.o: kernel/fs/install.c $(HEADLESS_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -DHEADLESS=$(HEADLESS) -c $< -o $@
+
 # ---- ZhaoxuBootloader legacy BIOS chain ------------------------------
 # bios.img is a no-emulation El Torito image holding only stage1 + stage2;
 # the kernel is an ordinary ISO9660 file (install/KERNEL.BIN) whose extent is

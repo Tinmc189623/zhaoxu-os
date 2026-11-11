@@ -2,8 +2,9 @@
  * Zhaoxu OS - FAT32 formatting for the installer.
  *
  * Builds a 32-bit FAT volume from scratch (BPB, FSInfo, two FATs, root
- * cluster) and populates EFI/BOOT with the UEFI loader and the running
- * kernel.  The mounted /mnt volume is saved and restored around the work.
+ * cluster) and populates EFI/BOOT with the UEFI loader; the kernel lives in
+ * the ext4 root, not in the ESP.  The mounted /mnt volume is saved and
+ * restored around the work.
  */
 #include "fat32_internal.h"
 
@@ -187,37 +188,6 @@ int fat32_make_esp(int disk, u64 volume_base, u32 sectors, const u8 *bootx64,
     if (fat32_find("/EFI/BOOT/BOOTX64.EFI", &entry) != 0 ||
         entry.size != (u32)bootx64_size)
         goto restore;
-
-    result = 0;
-
-restore:
-    *fat32_state() = saved;
-    return result;
-}
-
-/* The data partition keeps runtime assets (currently the CJK font) out of
- * the ESP, so an installed system still renders Chinese without any extra
- * disk (rule 27). */
-int fat32_make_data(int disk, u64 volume_base, u32 sectors, const u8 *font,
-                    u64 font_size)
-{
-    struct fat32_fs saved = *fat32_state();
-    int result = -1;
-
-    if (fat32_format_volume(disk, volume_base, sectors, "ZHAOXUDATA") != 0)
-        return -1;
-    if (fat32_mount_at(disk, volume_base) != 0)
-        goto restore;
-    fat32_alloc_reset();
-
-    if (font && font_size > 12) {
-        if (fat32_write_file("/WQY.TTC", font, font_size) != 0)
-            goto restore;
-        struct fat_entry entry;
-        if (fat32_find("/WQY.TTC", &entry) != 0 ||
-            entry.size != (u32)font_size)
-            goto restore;
-    }
 
     result = 0;
 

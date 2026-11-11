@@ -15,7 +15,7 @@ const struct csh_command csh_commands[] = {
     { "rm",       csh_rm,       "remove a file under /mnt" },
     { "run",      csh_run,      "execute a .zxe or ELF64 program in ring 3" },
     { "disks",    csh_disks,    "list AHCI disks and installer roles" },
-    { "install",  csh_install,  "install to a blank target disk (MBR + FAT32 ESP)" },
+    { "install",  csh_install,  "install to a blank target disk (MBR/GPT + ext4 root)" },
     { "neofetch", csh_neofetch, "show a system summary" },
     { "exit",     csh_exit,     "leave the shell" },
 };
