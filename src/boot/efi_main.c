@@ -77,6 +77,34 @@ void *memcpy(void *dst, const void *src, UINTN n)
     return dst;
 }
 
+static UINTN boot_strlen(const char *text)
+{
+    UINTN length = 0;
+    while (text[length])
+        length++;
+    return length;
+}
+
+static int boot_strcmp(const char *a, const char *b)
+{
+    while (*a && *a == *b) {
+        a++;
+        b++;
+    }
+    return (UINT8)*a - (UINT8)*b;
+}
+
+static int boot_memcmp(const void *a, const void *b, UINTN n)
+{
+    const UINT8 *x = (const UINT8 *)a;
+    const UINT8 *y = (const UINT8 *)b;
+    for (UINTN i = 0; i < n; i++) {
+        if (x[i] != y[i])
+            return x[i] - y[i];
+    }
+    return 0;
+}
+
 static int guid_equal(const EFI_GUID *a, const EFI_GUID *b)
 {
     if (a->Data1 != b->Data1 || a->Data2 != b->Data2 || a->Data3 != b->Data3)
@@ -360,6 +388,9 @@ struct elf64_phdr {
 #define ELF_PT_LOAD 1
 
 static UINT64 load_kernel_from_iso(EFI_HANDLE image_handle, UINT64 staging);
+static UINT64 load_kernel_from_ext4(EFI_HANDLE image_handle, UINT64 staging);
+static UINT64 load_font_from_ext4(EFI_HANDLE image_handle,
+                                  UINT64 *physical);
 
 static UINT64 load_elf_image(const void *buffer, UINT64 file_size,
                              UINT64 staging)
@@ -408,8 +439,12 @@ static UINT64 load_kernel_elf(EFI_HANDLE image_handle, UINT64 staging)
     EFI_STATUS status;
     void *buffer = 0;
 
-    /* ISO boots take the kernel from the CD root, outside the El Torito ESP. */
+    /* Live ISO boots take the kernel from the CD root even when an installed
+     * ext4 target is attached; installed disks fall back to ext4. */
     UINT64 span = load_kernel_from_iso(image_handle, staging);
+    if (span)
+        return span;
+    span = load_kernel_from_ext4(image_handle, staging);
     if (span)
         return span;
 
@@ -714,21 +749,477 @@ static UINT64 load_kernel_from_iso(EFI_HANDLE image_handle, UINT64 staging)
     return span;
 }
 
-static void load_boot_font(EFI_HANDLE image_handle, UINT64 *physical,
-                           UINT64 *bytes)
+/* ---- minimal ext4 reader for installed systems ------------------- */
+
+struct ext4_geometry {
+    UINT32 block_size;
+    UINT32 inode_size;
+    UINT32 inodes_per_group;
+    UINT32 blocks_per_group;
+    UINT32 blocks_count;
+    UINT32 groups;
+    UINT32 desc_size;
+    UINT32 gdt_block;
+    UINT32 first_data_block;
+    char label[17];
+};
+
+static struct ext4_geometry g_ext4g;
+static EFI_BLOCK_IO_PROTOCOL *g_ext4d_bio;
+static UINT64 g_ext4d_base;
+static int g_ext4d_valid;
+static int g_ext4d_tried;
+
+static UINT16 ex_le16(const UINT8 *p)
+{
+    return (UINT16)(p[0] | ((UINT16)p[1] << 8));
+}
+
+static UINT32 ex_le32(const UINT8 *p)
+{
+    return (UINT32)p[0] | ((UINT32)p[1] << 8) | ((UINT32)p[2] << 16) |
+           ((UINT32)p[3] << 24);
+}
+
+static UINT64 ex_le64(const UINT8 *p)
+{
+    return (UINT64)ex_le32(p) | ((UINT64)ex_le32(p + 4) << 32);
+}
+
+static int ext4_read(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 base, UINT64 offset,
+                     void *destination, UINTN length)
+{
+    if (!bio || !bio->Media || !bio->Media->BlockSize)
+        return 0;
+    UINTN media = bio->Media->BlockSize;
+    UINT64 bytes = base * 512ULL + offset;
+    UINT64 lba = bytes / media;
+    UINTN inner = (UINTN)(bytes % media);
+    UINTN total = inner + length;
+    UINTN blocks = (total + media - 1) / media;
+    void *buffer = 0;
+    if (EFI_ERROR(g_bs->AllocatePool(EFI_LOADER_DATA, blocks * media,
+                                     &buffer)) || !buffer)
+        return 0;
+    if (EFI_ERROR(bio->ReadBlocks(bio, bio->Media->MediaId, lba,
+                                  blocks * media, buffer))) {
+        g_bs->FreePool(buffer);
+        return 0;
+    }
+    memcpy(destination, (UINT8 *)buffer + inner, length);
+    g_bs->FreePool(buffer);
+    return 1;
+}
+
+static int ext4_probe_at(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 base, int *score)
+{
+    UINT8 sb[1024];
+    if (!ext4_read(bio, base, 1024, sb, sizeof(sb)))
+        return 0;
+    if (ex_le16(sb + 0x38) != 0xEF53)
+        return 0;
+    UINT32 log = ex_le32(sb + 0x18);
+    if (log > 2)
+        return 0;
+    UINT32 incompat = ex_le32(sb + 0x60);
+    if (!(incompat & 0x40))
+        return 0;
+
+    struct ext4_geometry g;
+    memset(&g, 0, sizeof(g));
+    g.block_size = 1024u << log;
+    g.inode_size = ex_le32(sb + 0x4C) >= 1 ? ex_le16(sb + 0x58) : 128;
+    if (g.inode_size < 128 || g.inode_size > 1024)
+        return 0;
+    g.inodes_per_group = ex_le32(sb + 0x28);
+    g.blocks_per_group = ex_le32(sb + 0x20);
+    g.blocks_count = ex_le32(sb + 0x04);
+    g.first_data_block = ex_le32(sb + 0x14);
+    if (!g.inodes_per_group || !g.blocks_per_group || !g.blocks_count)
+        return 0;
+    g.desc_size = (incompat & 0x80) ? ex_le16(sb + 0xFE) : 32;
+    if (g.desc_size < 32)
+        g.desc_size = 32;
+    if (g.desc_size > 64)
+        g.desc_size = 64;
+    g.gdt_block = g.first_data_block + 1;
+    UINT32 data_blocks = g.blocks_count > g.first_data_block
+                             ? g.blocks_count - g.first_data_block
+                             : 0;
+    g.groups = (data_blocks + g.blocks_per_group - 1) / g.blocks_per_group;
+    if (!g.groups)
+        return 0;
+    for (int i = 0; i < 16 && sb[0x78 + i]; i++)
+        g.label[i] = (char)sb[0x78 + i];
+    g.label[16] = 0;
+
+    *score = boot_strcmp(g.label, "ZHAOXUROOT") == 0 ? 2 : 1;
+    g_ext4g = g;
+    return 1;
+}
+
+static void ext4_scan_handle(EFI_BLOCK_IO_PROTOCOL *bio, int *best,
+                             EFI_BLOCK_IO_PROTOCOL **best_bio,
+                             UINT64 *best_base, int *best_score)
+{
+    if (!bio || !bio->Media)
+        return;
+    int score = 0;
+    if (ext4_probe_at(bio, 0, &score)) {
+        if (score > *best_score) {
+            *best_score = score;
+            *best_bio = bio;
+            *best_base = 0;
+            *best = 1;
+            return;
+        }
+    }
+
+    UINT8 sector[512];
+    if (!ext4_read(bio, 0, 0, sector, sizeof(sector)))
+        return;
+    if (sector[510] != 0x55 || sector[511] != 0xAA)
+        return;
+
+    if (sector[446 + 4] == 0xEE) {
+        UINT8 header[512];
+        if (!ext4_read(bio, 0, 512, header, sizeof(header)) ||
+            boot_memcmp(header, "EFI PART", 8) != 0)
+            return;
+        UINT64 entries_lba = ex_le64(header + 72);
+        UINT32 entries = ex_le32(header + 80);
+        UINT32 entry_size = ex_le32(header + 84);
+        if (entry_size < 128 || entries > 128)
+            return;
+        for (UINT32 i = 0; i < entries; i++) {
+            UINT8 entry[128];
+            if (!ext4_read(bio, 0,
+                           entries_lba * 512ULL + (UINT64)i * entry_size,
+                           entry, sizeof(entry)))
+                continue;
+            int used = 0;
+            for (int k = 0; k < 16; k++)
+                used |= entry[k];
+            if (!used)
+                continue;
+            UINT64 start = ex_le64(entry + 32);
+            if (!start)
+                continue;
+            if (ext4_probe_at(bio, start, &score) && score > *best_score) {
+                *best_score = score;
+                *best_bio = bio;
+                *best_base = start;
+                *best = 1;
+            }
+        }
+    } else {
+        for (int i = 0; i < 4; i++) {
+            const UINT8 *entry = sector + 446 + i * 16;
+            UINT8 type = entry[4];
+            UINT64 start = ex_le32(entry + 8);
+            UINT32 count = ex_le32(entry + 12);
+            if (!type || !count || !start)
+                continue;
+            if (ext4_probe_at(bio, start, &score) && score > *best_score) {
+                *best_score = score;
+                *best_bio = bio;
+                *best_base = start;
+                *best = 1;
+            }
+        }
+    }
+}
+
+static int ext4_find_partition(EFI_HANDLE image_handle)
+{
+    if (g_ext4d_tried)
+        return g_ext4d_valid;
+    g_ext4d_tried = 1;
+
+    static const EFI_GUID loaded_guid = ZHAOXU_LOADED_IMAGE_GUID;
+    static const EFI_GUID block_guid = ZHAOXU_BLOCK_IO_GUID;
+    EFI_LOADED_IMAGE_PROTOCOL *image = 0;
+    int best = 0;
+    EFI_BLOCK_IO_PROTOCOL *best_bio = 0;
+    UINT64 best_base = 0;
+    int best_score = 0;
+
+    if (!EFI_ERROR(g_bs->HandleProtocol(image_handle, &loaded_guid,
+                                        (void **)&image)) &&
+        image && image->DeviceHandle) {
+        EFI_BLOCK_IO_PROTOCOL *bio = 0;
+        if (!EFI_ERROR(g_bs->HandleProtocol(image->DeviceHandle, &block_guid,
+                                            (void **)&bio)))
+            ext4_scan_handle(bio, &best, &best_bio, &best_base,
+                             &best_score);
+    }
+
+    LOCATE_HANDLE_BUFFER locate =
+        (LOCATE_HANDLE_BUFFER)g_bs->LocateHandleBuffer;
+    EFI_HANDLE *handles = 0;
+    UINTN count = 0;
+    if (!EFI_ERROR(locate(EFI_BY_PROTOCOL, &block_guid, 0, &count, &handles)) &&
+        handles) {
+        for (UINTN i = 0; i < count; i++) {
+            EFI_BLOCK_IO_PROTOCOL *bio = 0;
+            if (!EFI_ERROR(g_bs->HandleProtocol(handles[i], &block_guid,
+                                                (void **)&bio)))
+                ext4_scan_handle(bio, &best, &best_bio, &best_base,
+                                 &best_score);
+        }
+        g_bs->FreePool(handles);
+    }
+
+    if (!best || !best_bio)
+        return 0;
+    g_ext4d_bio = best_bio;
+    g_ext4d_base = best_base;
+    g_ext4d_valid = 1;
+    return 1;
+}
+
+static int ext4_read_inode(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 base,
+                           UINT32 ino, UINT8 *inode)
+{
+    if (ino == 0 || !g_ext4d_valid)
+        return 0;
+    UINT32 group = (ino - 1) / g_ext4g.inodes_per_group;
+    UINT32 index = (ino - 1) % g_ext4g.inodes_per_group;
+    if (group >= g_ext4g.groups)
+        return 0;
+
+    UINT8 desc[64];
+    if (!ext4_read(bio, base,
+                   (UINT64)g_ext4g.gdt_block * g_ext4g.block_size +
+                       (UINT64)group * g_ext4g.desc_size,
+                   desc, g_ext4g.desc_size))
+        return 0;
+
+    UINT64 table = ex_le32(desc + 8);
+    if (g_ext4g.desc_size >= 64)
+        table |= (UINT64)ex_le32(desc + 0x28) << 32;
+    UINT32 bytes = g_ext4g.inode_size < 256 ? g_ext4g.inode_size : 256;
+    memset(inode, 0, 256);
+    return ext4_read(bio, base,
+                     table * g_ext4g.block_size +
+                         (UINT64)index * g_ext4g.inode_size,
+                     inode, bytes);
+}
+
+static int ext4_map_node(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 base,
+                         const UINT8 *node, UINT16 depth, UINT32 logical,
+                         UINT64 *physical, UINT32 *count)
+{
+    if (ex_le16(node) != 0xF30A)
+        return 0;
+    UINT16 entries = ex_le16(node + 2);
+    if (entries > 1024)
+        return 0;
+
+    if (depth == 0) {
+        for (UINT16 i = 0; i < entries; i++) {
+            const UINT8 *entry = node + 12 + (UINT32)i * 12;
+            UINT32 start = ex_le32(entry);
+            UINT16 length = ex_le16(entry + 4);
+            if (length > 0x8000)
+                length = (UINT16)(length - 0x8000);
+            if (!length || logical < start || logical >= start + length)
+                continue;
+            *physical = ((UINT64)ex_le16(entry + 6) << 32) |
+                        ex_le32(entry + 8);
+            *physical += logical - start;
+            *count = start + length - logical;
+            return 1;
+        }
+        return 0;
+    }
+
+    for (UINT16 i = 0; i < entries; i++) {
+        const UINT8 *entry = node + 12 + (UINT32)i * 12;
+        UINT32 start = ex_le32(entry);
+        UINT32 next = i + 1 < entries ? ex_le32(entry + 12) : 0xFFFFFFFFu;
+        if (logical < start || logical >= next)
+            continue;
+        UINT64 leaf = ((UINT64)ex_le16(entry + 8) << 32) | ex_le32(entry + 4);
+        UINT8 block[4096];
+        if (g_ext4g.block_size > sizeof(block))
+            return 0;
+        if (!ext4_read(bio, base, leaf * g_ext4g.block_size, block,
+                       g_ext4g.block_size))
+            return 0;
+        return ext4_map_node(bio, base, block, (UINT16)(depth - 1), logical,
+                             physical, count);
+    }
+    return 0;
+}
+
+static int ext4_map_inode(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 base,
+                          const UINT8 *inode, UINT32 logical,
+                          UINT64 *physical, UINT32 *count)
+{
+    if (!(ex_le32(inode + 0x20) & 0x00080000))
+        return 0;
+    const UINT8 *node = inode + 0x28;
+    if (ex_le16(node) != 0xF30A)
+        return 0;
+    return ext4_map_node(bio, base, node, ex_le16(node + 6), logical,
+                         physical, count);
+}
+
+static UINT64 ext4_inode_size(const UINT8 *inode)
+{
+    return ex_le32(inode + 0x04);
+}
+
+static int ext4_read_inode_data(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 base,
+                                const UINT8 *inode, void *destination,
+                                UINT64 length, UINT64 *read_out)
+{
+    UINT64 size = ext4_inode_size(inode);
+    if (length > size)
+        length = size;
+    UINT8 block[4096];
+    if (g_ext4g.block_size > sizeof(block))
+        return 0;
+    UINT8 *out = destination;
+    UINT64 done = 0;
+    while (done < length) {
+        UINT32 logical = (UINT32)(done / g_ext4g.block_size);
+        UINT32 within = (UINT32)(done % g_ext4g.block_size);
+        UINT64 physical = 0;
+        UINT32 count = 0;
+        if (!ext4_map_inode(bio, base, inode, logical, &physical, &count))
+            return 0;
+        if (!ext4_read(bio, base, physical * g_ext4g.block_size, block,
+                       g_ext4g.block_size))
+            return 0;
+        UINT64 chunk = length - done;
+        if (chunk > g_ext4g.block_size - within)
+            chunk = g_ext4g.block_size - within;
+        memcpy(out + done, block + within, (UINTN)chunk);
+        done += chunk;
+    }
+    if (read_out)
+        *read_out = done;
+    return 1;
+}
+
+static int ext4_dir_find(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 base,
+                         const UINT8 *inode, const char *name, UINT32 *ino)
+{
+    UINT64 size = ext4_inode_size(inode);
+    UINT8 block[4096];
+    if (g_ext4g.block_size > sizeof(block))
+        return 0;
+    UINT32 name_len = (UINT32)boot_strlen(name);
+
+    for (UINT32 logical = 0;
+         (UINT64)logical * g_ext4g.block_size < size; logical++) {
+        UINT64 physical = 0;
+        UINT32 count = 0;
+        if (!ext4_map_inode(bio, base, inode, logical, &physical, &count))
+            return 0;
+        if (!ext4_read(bio, base, physical * g_ext4g.block_size, block,
+                       g_ext4g.block_size))
+            return 0;
+        UINT32 offset = 0;
+        while (offset + 8 <= g_ext4g.block_size) {
+            const UINT8 *entry = block + offset;
+            UINT32 child = ex_le32(entry);
+            UINT16 rec_len = ex_le16(entry + 4);
+            UINT8 child_len = entry[6];
+            if (rec_len < 8 || offset + rec_len > g_ext4g.block_size)
+                break;
+            if (child && child_len == name_len &&
+                boot_memcmp(entry + 8, name, name_len) == 0) {
+                *ino = child;
+                return 1;
+            }
+            offset += rec_len;
+        }
+    }
+    return 0;
+}
+
+static int ext4_lookup(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 base,
+                       const char *path, UINT32 *ino)
+{
+    UINT32 current = 2;
+    UINT8 inode[256];
+    if (!ext4_read_inode(bio, base, current, inode))
+        return 0;
+
+    const char *cursor = path;
+    while (*cursor == '/')
+        cursor++;
+    while (*cursor) {
+        char component[256];
+        UINT32 length = 0;
+        while (*cursor && *cursor != '/') {
+            if (length + 1 >= sizeof(component))
+                return 0;
+            component[length++] = *cursor++;
+        }
+        component[length] = 0;
+        while (*cursor == '/')
+            cursor++;
+        UINT32 next = 0;
+        if (!ext4_dir_find(bio, base, inode, component, &next))
+            return 0;
+        current = next;
+        if (!ext4_read_inode(bio, base, current, inode))
+            return 0;
+    }
+    *ino = current;
+    return 1;
+}
+
+static UINT64 load_kernel_from_ext4(EFI_HANDLE image_handle, UINT64 staging)
+{
+    if (!ext4_find_partition(image_handle))
+        return 0;
+    UINT32 ino = 0;
+    if (!ext4_lookup(g_ext4d_bio, g_ext4d_base, "/KERNEL.ELF", &ino))
+        return 0;
+    UINT8 inode[256];
+    if (!ext4_read_inode(g_ext4d_bio, g_ext4d_base, ino, inode))
+        return 0;
+    UINT64 size = ext4_inode_size(inode);
+    if (size < sizeof(struct elf64_ehdr) || size > KERNEL_FILE_MAX)
+        return 0;
+
+    void *buffer = 0;
+    if (EFI_ERROR(g_bs->AllocatePool(EFI_LOADER_DATA, (UINTN)size,
+                                     &buffer)) || !buffer)
+        return 0;
+    UINT64 read = 0;
+    if (!ext4_read_inode_data(g_ext4d_bio, g_ext4d_base, inode, buffer, size,
+                              &read) ||
+        read != size) {
+        g_bs->FreePool(buffer);
+        return 0;
+    }
+    UINT64 span = load_elf_image(buffer, size, staging);
+    g_bs->FreePool(buffer);
+    if (span)
+        boot_print("Kernel: /KERNEL.ELF from ext4.\r\n");
+    return span;
+}
+
+static UINT64 load_font_from_ext4(EFI_HANDLE image_handle, UINT64 *physical)
 {
     *physical = 0;
-    *bytes = 0;
-
-    EFI_BLOCK_IO_PROTOCOL *bio = iso_device(image_handle);
-    if (!bio)
-        return;
-
-    UINT32 extent = 0;
-    UINT32 size = 0;
-    if (!iso_find_path(bio, "INSTALL/WQY.TTC", &extent, &size) ||
-        size < 13 || size > FONT_FILE_MAX)
-        return;
+    if (!ext4_find_partition(image_handle))
+        return 0;
+    UINT32 ino = 0;
+    if (!ext4_lookup(g_ext4d_bio, g_ext4d_base, "/WQY.TTC", &ino))
+        return 0;
+    UINT8 inode[256];
+    if (!ext4_read_inode(g_ext4d_bio, g_ext4d_base, ino, inode))
+        return 0;
+    UINT64 size = ext4_inode_size(inode);
+    if (size < 13 || size > FONT_FILE_MAX)
+        return 0;
 
     UINT64 pages = (size + 4095) / 4096;
     EFI_PHYSICAL_ADDRESS address = 0xFFFFFFFFULL;
@@ -738,13 +1229,54 @@ static void load_boot_font(EFI_HANDLE image_handle, UINT64 *physical,
         status = g_bs->AllocatePages(EFI_ALLOCATE_ANY_PAGES, EFI_LOADER_DATA,
                                      pages, &address);
     if (EFI_ERROR(status) || !address)
-        return;
+        return 0;
 
-    if (!iso_read_file(bio, extent, size, (void *)(UINTN)address))
-        return;
+    UINT64 read = 0;
+    if (!ext4_read_inode_data(g_ext4d_bio, g_ext4d_base, inode,
+                              (void *)(UINTN)address, size, &read) ||
+        read != size)
+        return 0;
     *physical = (UINT64)address;
-    *bytes = size;
-    boot_print("Font: /install/WQY.TTC from the ISO.\r\n");
+    return size;
+}
+
+static void load_boot_font(EFI_HANDLE image_handle, UINT64 *physical,
+                           UINT64 *bytes)
+{
+    *physical = 0;
+    *bytes = 0;
+
+    EFI_BLOCK_IO_PROTOCOL *bio = iso_device(image_handle);
+    if (bio) {
+        UINT32 extent = 0;
+        UINT32 size = 0;
+        if (iso_find_path(bio, "INSTALL/WQY.TTC", &extent, &size) &&
+            size >= 13 && size <= FONT_FILE_MAX) {
+            UINT64 pages = (size + 4095) / 4096;
+            EFI_PHYSICAL_ADDRESS address = 0xFFFFFFFFULL;
+            EFI_STATUS status = g_bs->AllocatePages(
+                EFI_ALLOCATE_MAX_ADDRESS, EFI_LOADER_DATA, pages, &address);
+            if (EFI_ERROR(status) || !address)
+                status = g_bs->AllocatePages(EFI_ALLOCATE_ANY_PAGES,
+                                             EFI_LOADER_DATA, pages,
+                                             &address);
+            if (!EFI_ERROR(status) && address &&
+                iso_read_file(bio, extent, size, (void *)(UINTN)address)) {
+                *physical = (UINT64)address;
+                *bytes = size;
+                boot_print("Font: /install/WQY.TTC from the ISO.\r\n");
+                return;
+            }
+        }
+    }
+
+    UINT64 address = 0;
+    UINT64 size = load_font_from_ext4(image_handle, &address);
+    if (size && address) {
+        *physical = address;
+        *bytes = size;
+        boot_print("Font: /WQY.TTC from ext4.\r\n");
+    }
 }
 
 EFI_STATUS EFIAPI efi_start(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
