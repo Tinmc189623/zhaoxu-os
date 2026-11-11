@@ -19,6 +19,21 @@
 static u8 *g_write_buf;
 static struct ext4_state g_saved;
 static int g_install_active;
+/* Next offset the kernel must send for a streamed write.  A dropped or
+ * reordered chunk breaks the chain instead of overwriting good bytes with
+ * stale ones. */
+static u64 g_write_expected;
+
+/* Reject a chunk the write buffer cannot hold.  The comparisons are ordered
+ * so the sum can never wrap. */
+static int write_range_ok(const struct fs_rpc *rpc)
+{
+    if (rpc->length > FS_DATA_SIZE || rpc->offset > FS_WRITE_MAX)
+        return -1;
+    if (rpc->offset > FS_WRITE_MAX - (u64)rpc->length)
+        return -1;
+    return 0;
+}
 
 struct list_item {
     u8 name_len;
@@ -74,10 +89,8 @@ static int ensure_write_buf(void)
     return g_write_buf ? 0 : -1;
 }
 
-static int handle_mount(struct fs_rpc *rpc)
+static void publish_label(struct fs_rpc *rpc)
 {
-    if (!ext4_mounted() && ext4_mount() != 0)
-        return -1;
     const char *label = ext4_label();
     usize n = 0;
     while (label && label[n] && n + 1 < sizeof(rpc->label)) {
@@ -85,6 +98,13 @@ static int handle_mount(struct fs_rpc *rpc)
         n++;
     }
     rpc->label[n] = 0;
+}
+
+static int handle_mount(struct fs_rpc *rpc)
+{
+    if (!ext4_mounted() && ext4_mount() != 0)
+        return -1;
+    publish_label(rpc);
     return 0;
 }
 
@@ -117,34 +137,60 @@ static int handle(struct fs_rpc *rpc, u8 *data)
 
     case FS_OP_READ: {
         u64 got = 0;
-        if (!rpc->length)
+        u32 length = rpc->length;
+        rpc->length = 0;
+        if (length > FS_DATA_SIZE)
+            length = FS_DATA_SIZE;
+        if (!length)
             return 0;
-        if (ext4_read_at(rpc->path, rpc->offset, data, rpc->length,
-                         &got) != 0)
+        if (ext4_read_at(rpc->path, rpc->offset, data, length, &got) != 0)
             return -1;
+        if (got > FS_DATA_SIZE)
+            got = FS_DATA_SIZE;
         rpc->length = (u32)got;
         return 0;
     }
 
     case FS_OP_WRITE: {
-        u64 end = rpc->offset + rpc->length;
-        if (end > FS_WRITE_MAX || rpc->length > FS_DATA_SIZE ||
-            ensure_write_buf() != 0)
+        /* The kernel streams one file in ascending order; a chunk that
+         * arrives out of order means data was lost, so fail instead of
+         * committing a mixed buffer. */
+        if (!ext4_mounted() || write_range_ok(rpc) != 0)
+            return -1;
+        if (rpc->flags & FS_FLAG_TRUNCATE)
+            g_write_expected = 0;
+        if (rpc->offset != g_write_expected) {
+            g_write_expected = 0;
+            return -1;
+        }
+        if (ensure_write_buf() != 0)
             return -1;
         memcpy(g_write_buf + rpc->offset, data, rpc->length);
+        u64 end = rpc->offset + rpc->length;
+        g_write_expected = end;
         if (end < rpc->value0)
             return 0;
+        g_write_expected = 0;
         return ext4_write_file(rpc->path, g_write_buf, rpc->value0);
     }
 
     case FS_OP_WRITE_CONTIG: {
-        u64 end = rpc->offset + rpc->length;
-        if (end > FS_WRITE_MAX || rpc->length > FS_DATA_SIZE ||
-            ensure_write_buf() != 0)
+        if (!ext4_mounted() || write_range_ok(rpc) != 0)
+            return -1;
+        if (rpc->flags & FS_FLAG_TRUNCATE)
+            g_write_expected = 0;
+        if (rpc->offset != g_write_expected) {
+            g_write_expected = 0;
+            return -1;
+        }
+        if (ensure_write_buf() != 0)
             return -1;
         memcpy(g_write_buf + rpc->offset, data, rpc->length);
+        u64 end = rpc->offset + rpc->length;
+        g_write_expected = end;
         if (end < rpc->value0)
             return 0;
+        g_write_expected = 0;
         u32 first = 0;
         u32 blocks = 0;
         if (ext4_write_file_contig(rpc->path, g_write_buf, rpc->value0,
@@ -165,6 +211,9 @@ static int handle(struct fs_rpc *rpc, u8 *data)
             ext4_state_restore(g_saved);
             g_install_active = 0;
         }
+        /* The volume in use may just have changed back: republish the label
+         * so the kernel's cache never describes a volume that is gone. */
+        publish_label(rpc);
         return 0;
 
     case FS_OP_FORMAT: {
@@ -188,21 +237,28 @@ static int handle(struct fs_rpc *rpc, u8 *data)
     }
 }
 
-/* Announce readiness first (the kernel waits for FS_STATE_READY), then probe
- * once so the boot log shows whether a volume is actually there. */
+/* Readiness is announced only after the block environment is armed and the
+ * startup probe has finished, so the kernel cannot issue a request while the
+ * probe still owns the volume. */
 void ext4fs_service(struct fs_rpc *rpc, u8 *data)
 {
     ext4fs_block_env_install();
+    ext4fs_probe();
 
     __sync_synchronize();
     rpc->state = FS_STATE_READY;
-    __sync_synchronize();
-
-    ext4fs_probe();
 
     for (;;) {
         if (rpc->state == FS_STATE_REQUEST) {
-            rpc->status = handle(rpc, data);
+            /* Echo the request generation: status first, then the release
+             * barrier, then seq and state, so the kernel never observes a
+             * DONE that belongs to a different request. */
+            u32 seq = rpc->seq;
+            __sync_synchronize();
+            i32 status = handle(rpc, data);
+            rpc->status = status;
+            __sync_synchronize();
+            rpc->seq = seq;
             __sync_synchronize();
             rpc->state = FS_STATE_DONE;
         } else {

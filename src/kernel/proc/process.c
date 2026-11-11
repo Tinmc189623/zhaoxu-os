@@ -439,15 +439,22 @@ static u64 spawn_image(const u8 *image, u64 image_size, const char *name,
 
     process->parent_pid = parent ? parent->pid : 0;
     /* Services that touch raw device memory (AHCI DMA, ext4 blocks) get the
-     * 0..4 GiB user identity map so a physical address is a valid pointer. */
-    int service = name && (strcmp(name, "/bin/drivers") == 0 ||
-                           strcmp(name, "/bin/ext4fs") == 0);
-    process->space = vmm_space_create(service);
+     * 0..4 GiB user identity map so a physical address is a valid pointer,
+     * and /bin/ext4fs is the only holder of the trusted block capability.
+     * Both are granted to kernel-initiated spawns only: a Ring3 process that
+     * spawns "/bin/ext4fs" itself (SYS_SPAWN_ARG with a forged control page)
+     * must not end up able to drive the raw disk.  Kernel boot spawns
+     * (dev_start, fs_service_start) run without a current process. */
+    int trusted = (parent == NULL) && name &&
+                  (strcmp(name, "/bin/drivers") == 0 ||
+                   strcmp(name, "/bin/ext4fs") == 0);
+    process->space = vmm_space_create(trusted);
     if (!process->space) {
         process_fail(process);
         return 0;
     }
-    process->block_cap = name && strcmp(name, "/bin/ext4fs") == 0;
+    process->block_cap = (parent == NULL) && name &&
+                         strcmp(name, "/bin/ext4fs") == 0;
 
     const char *default_argv[1] = { name ? name : "<memory>" };
     const char **stack_argv = (argc > 0) ? (const char **)argv : default_argv;

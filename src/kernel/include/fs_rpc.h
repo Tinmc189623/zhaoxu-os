@@ -31,6 +31,10 @@ enum fs_op {
 struct fs_rpc {
     volatile u32 magic;
     volatile u32 state;
+    /* Request generation.  The kernel writes it before flipping `state` to
+     * REQUEST; the service echoes it back before flipping `state` to DONE.
+     * A DONE whose seq does not match the caller's own request is stale. */
+    volatile u32 seq;
     u32 op;
     i32 status;
     u32 flags;
