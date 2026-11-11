@@ -1,13 +1,20 @@
 /*
  * Zhaoxu OS - virtual file system
  *
- * The initramfs ramfs provides the root filesystem.  A FAT32 volume, when
- * present, is mounted at /mnt.  When no FAT32 volume exists, /mnt falls
- * back to the embedded copy of the data volume under /data in the ramfs,
- * so ISO-only and disk-less boots still expose the same files.
- * File descriptors expose read-only access to either backend.
+ * The initramfs ramfs provides the root filesystem.  /mnt is served by the
+ * Ring3 ext4 service (/bin/ext4fs) through the shared-page RPC in fs_rpc.h;
+ * the kernel owns no ext4 code at all.  A FAT32 volume is still probed when
+ * the service has no ext4 volume, so existing ZHAOXUDATA data disks keep
+ * working as a compatibility fallback.  When neither backend is present,
+ * /mnt falls back to the embedded copy of the data volume under /data in the
+ * ramfs, so ISO-only and disk-less boots still expose the same files.
+ *
+ * File descriptors are read-only.  ramfs and FAT32 files are read into memory
+ * when opened; ext4 files are streamed in FS_DATA_SIZE chunks straight into
+ * the caller's buffer, so opening a multi-megabyte font costs no kernel heap.
  */
 #include <fat32.h>
+#include <fs_rpc.h>
 #include <kprintf.h>
 #include <mem.h>
 #include <string.h>
@@ -16,16 +23,30 @@
 
 #define VFS_MAX_FILES 8
 #define VFS_FD_BASE 3
+/* Upper bound for a whole-file read (vfs_read_all).  Anything larger is a
+ * caller bug: the only whole-file consumers are executables and fonts. */
+#define VFS_READ_ALL_MAX (16u * 1024u * 1024u)
+
+/* One record of an FS_OP_LIST reply, as written by the ext4 service. */
+struct list_item {
+    u8 name_len;
+    u8 is_dir;
+    u16 pad;
+    u64 size;
+    char name[];
+};
 
 struct vfs_file {
     int used;
+    int kind; /* 0 = buffer, 1 = ext4 stream */
     u8 *data;
     u64 size;
     u64 offset;
+    char path[256];
 };
 
 static struct vfs_file g_files[VFS_MAX_FILES];
-static int g_fat_mounted;
+static int g_data_fs; /* 0 = none, 1 = FAT32, 2 = ext4 */
 
 static int path_is_mnt(const char *path)
 {
@@ -36,31 +57,71 @@ static int path_is_mnt(const char *path)
     return path[4] == 0 || path[4] == '/';
 }
 
+/* Path inside the ext4 volume: "/mnt" -> "/", "/mnt/a" -> "/a". */
+static const char *mnt_inner(const char *path)
+{
+    return path[4] ? path + 4 : "/";
+}
+
 /*
- * With no FAT32 volume, translate /mnt/... to the embedded mirror at
+ * With no mounted volume, translate /mnt/... to the embedded mirror at
  * /data/....  Returns 1 when the translation was written to buffer.
  */
 static int mnt_fallback_path(const char *path, char *buffer, usize capacity)
 {
-    if (g_fat_mounted || !path_is_mnt(path))
+    if (g_data_fs || !path_is_mnt(path))
         return 0;
     int written = ksnprintf(buffer, capacity, "/data%s", path + 4);
     return written > 0 && (usize)written < capacity;
 }
 
+/* FS_OP_LIST, using rpc->offset as the entry cursor and handing each record
+ * to the caller's callback. */
+static int ext4_list(const char *path, vfs_list_cb callback, void *context)
+{
+    u32 cursor = 0;
+    for (;;) {
+        u32 written = 0;
+        u32 next = 0;
+        u32 count = 0;
+        if (fs_call_list(path, cursor, fs_data(), FS_DATA_SIZE, &written,
+                         &next, &count) != 0)
+            return -1;
+
+        u8 *p = fs_data();
+        for (u32 i = 0; i < count; i++) {
+            struct list_item *item = (struct list_item *)p;
+            if ((u8 *)item->name + item->name_len + 1u >
+                fs_data() + FS_DATA_SIZE)
+                return -1;
+            callback(item->name, item->size, item->is_dir != 0, context);
+            p += (16u + item->name_len + 1u + 15u) & ~15u;
+        }
+        if (!count || next <= cursor)
+            break;
+        cursor = next;
+    }
+    return 0;
+}
+
 int vfs_init(void)
 {
     memset(g_files, 0, sizeof(g_files));
-    g_fat_mounted = 0;
+    g_data_fs = 0;
     return ramfs_init();
 }
 
 int vfs_mount_data(void)
 {
-    if (fat32_mount() != 0)
-        return -1;
-    g_fat_mounted = 1;
-    return 0;
+    if (fs_service_ready() && fs_call_mount() == 0) {
+        g_data_fs = 2;
+        return 0;
+    }
+    if (fat32_mount() == 0) {
+        g_data_fs = 1;
+        return 0;
+    }
+    return -1;
 }
 
 int vfs_list(const char *path, vfs_list_cb callback, void *context)
@@ -71,27 +132,57 @@ int vfs_list(const char *path, vfs_list_cb callback, void *context)
     char alt[300];
     if (mnt_fallback_path(path, alt, sizeof(alt)))
         return ramfs_list(alt, callback, context);
-    if (g_fat_mounted && path_is_mnt(path)) {
-        const char *inner = path + 4;
-        if (!*inner)
-            inner = "/";
-        return fat32_list(inner, callback, context);
+    if (g_data_fs && path_is_mnt(path)) {
+        const char *inner = mnt_inner(path);
+        return g_data_fs == 2 ? ext4_list(inner, callback, context)
+                              : fat32_list(inner, callback, context);
     }
     return ramfs_list(path, callback, context);
 }
 
 int vfs_read_all(const char *path, u8 **buffer, u64 *size)
 {
-    if (!path)
+    if (!path || !buffer || !size)
         return -1;
     char alt[300];
     if (mnt_fallback_path(path, alt, sizeof(alt)))
         return ramfs_read_all(alt, buffer, size);
-    if (g_fat_mounted && path_is_mnt(path)) {
-        const char *inner = path + 4;
-        if (!*inner)
-            inner = "/";
-        return fat32_read_all(inner, buffer, size);
+    if (g_data_fs == 1 && path_is_mnt(path))
+        return fat32_read_all(mnt_inner(path), buffer, size);
+    if (g_data_fs == 2 && path_is_mnt(path)) {
+        int is_dir = 0;
+        u64 total = 0;
+        if (fs_call_stat(mnt_inner(path), &is_dir, &total) != 0 || is_dir)
+            return -1;
+        if (total > VFS_READ_ALL_MAX)
+            return -1;
+
+        u8 *data = kmalloc(total ? (usize)total : 1);
+        if (!data)
+            return -1;
+
+        u64 offset = 0;
+        while (offset < total) {
+            u64 remaining = total - offset;
+            u32 chunk = remaining > FS_DATA_SIZE ? FS_DATA_SIZE
+                                                 : (u32)remaining;
+            u32 got = 0;
+            if (fs_call_read(mnt_inner(path), offset, fs_data(), chunk,
+                             &got) != 0 ||
+                !got)
+                break;
+            memcpy(data + offset, fs_data(), got);
+            offset += got;
+            if (got < chunk)
+                break;
+        }
+        if (offset != total) {
+            kfree(data);
+            return -1;
+        }
+        *buffer = data;
+        *size = total;
+        return 0;
     }
     return ramfs_read_all(path, buffer, size);
 }
@@ -103,31 +194,66 @@ int vfs_read_into(const char *path, u8 *dst, u64 cap, u64 *read_out)
     char alt[300];
     if (mnt_fallback_path(path, alt, sizeof(alt)))
         return ramfs_read_into(alt, dst, cap, read_out);
-    if (g_fat_mounted && path_is_mnt(path)) {
-        const char *inner = path + 4;
-        if (!*inner)
-            inner = "/";
-        return fat32_read_into(inner, dst, cap, read_out);
+    if (g_data_fs == 1 && path_is_mnt(path))
+        return fat32_read_into(mnt_inner(path), dst, cap, read_out);
+    if (g_data_fs == 2 && path_is_mnt(path)) {
+        if (!dst && cap)
+            return -1;
+        u64 offset = 0;
+        while (offset < cap) {
+            u64 remaining = cap - offset;
+            u32 chunk = remaining > FS_DATA_SIZE ? FS_DATA_SIZE
+                                                 : (u32)remaining;
+            u32 got = 0;
+            if (fs_call_read(mnt_inner(path), offset, fs_data(), chunk,
+                             &got) != 0)
+                return -1;
+            if (!got)
+                break;
+            memcpy(dst + offset, fs_data(), got);
+            offset += got;
+            if (got < chunk)
+                break;
+        }
+        if (read_out)
+            *read_out = offset;
+        return 0;
     }
     return ramfs_read_into(path, dst, cap, read_out);
 }
 
 int vfs_write_file(const char *path, const u8 *data, u64 size)
 {
-    if (!path || !g_fat_mounted)
+    if (!path || !g_data_fs)
         return -1;
     if (!path_is_mnt(path) || !path[4])
         return -1;
-    return fat32_write_file(path + 4, data, size);
+    if (g_data_fs == 1)
+        return fat32_write_file(path + 4, data, size);
+
+    /* The service commits the file when the last chunk arrives, so the chunks
+     * must be sent in ascending order with the total size as the stop mark. */
+    u64 offset = 0;
+    for (;;) {
+        u64 remaining = size - offset;
+        u32 chunk = remaining > FS_DATA_SIZE ? FS_DATA_SIZE : (u32)remaining;
+        if (fs_call_write(path + 4, size, offset, chunk ? data + offset : 0,
+                          chunk, offset == 0) != 0)
+            return -1;
+        offset += chunk;
+        if (offset >= size)
+            break;
+    }
+    return 0;
 }
 
 int vfs_unlink(const char *path)
 {
-    if (!path || !g_fat_mounted)
+    if (!path || !g_data_fs)
         return -1;
     if (!path_is_mnt(path) || !path[4])
         return -1;
-    return fat32_unlink(path + 4);
+    return g_data_fs == 2 ? fs_call_unlink(path + 4) : fat32_unlink(path + 4);
 }
 
 int vfs_stat(const char *path, int *is_dir, u64 *size)
@@ -137,17 +263,43 @@ int vfs_stat(const char *path, int *is_dir, u64 *size)
     char alt[300];
     if (mnt_fallback_path(path, alt, sizeof(alt)))
         return ramfs_stat(alt, is_dir, size);
-    if (g_fat_mounted && path_is_mnt(path)) {
-        const char *inner = path + 4;
-        if (!*inner)
-            inner = "/";
-        return fat32_stat(inner, is_dir, size);
+    if (g_data_fs && path_is_mnt(path)) {
+        const char *inner = mnt_inner(path);
+        return g_data_fs == 2 ? fs_call_stat(inner, is_dir, size)
+                              : fat32_stat(inner, is_dir, size);
     }
     return ramfs_stat(path, is_dir, size);
 }
 
 int vfs_open(const char *path)
 {
+    if (g_data_fs == 2) {
+        int is_dir = 0;
+        u64 size = 0;
+        if (!path || !path_is_mnt(path) || !path[4])
+            return -1;
+        if (fs_call_stat(path + 4, &is_dir, &size) != 0 || is_dir)
+            return -1;
+        for (int i = 0; i < VFS_MAX_FILES; i++) {
+            if (g_files[i].used)
+                continue;
+            g_files[i].used = 1;
+            g_files[i].kind = 1;
+            g_files[i].data = 0;
+            g_files[i].size = size;
+            g_files[i].offset = 0;
+            /* Store the path relative to the ext4 root ("/mnt/a" -> "/a"):
+             * every later FS_OP_READ is resolved inside the volume. */
+            const char *inner = path + 4;
+            usize n;
+            for (n = 0; inner[n] && n + 1 < sizeof(g_files[i].path); n++)
+                g_files[i].path[n] = inner[n];
+            g_files[i].path[n] = 0;
+            return i + VFS_FD_BASE;
+        }
+        return -1;
+    }
+
     u8 *data = NULL;
     u64 size = 0;
     if (vfs_read_all(path, &data, &size) != 0)
@@ -157,14 +309,39 @@ int vfs_open(const char *path)
         if (g_files[i].used)
             continue;
         g_files[i].used = 1;
+        g_files[i].kind = 0;
         g_files[i].data = data;
         g_files[i].size = size;
         g_files[i].offset = 0;
+        g_files[i].path[0] = 0;
         return i + VFS_FD_BASE;
     }
 
     kfree(data);
     return -1;
+}
+
+/* Stream an ext4 file straight into the caller's buffer. */
+static long ext4_read(struct vfs_file *file, u8 *buffer, u64 count)
+{
+    long total = 0;
+    while (count) {
+        u32 chunk = count > FS_DATA_SIZE ? FS_DATA_SIZE : (u32)count;
+        u32 got = 0;
+        if (fs_call_read(file->path, file->offset, fs_data(), chunk, &got) !=
+            0)
+            return -1;
+        if (!got)
+            break;
+        memcpy(buffer, fs_data(), got);
+        file->offset += got;
+        buffer += got;
+        total += got;
+        count -= got;
+        if (got < chunk)
+            break;
+    }
+    return total;
 }
 
 long vfs_read(int fd, void *buffer, u64 count)
@@ -178,6 +355,8 @@ long vfs_read(int fd, void *buffer, u64 count)
     struct vfs_file *file = &g_files[index];
     if (file->offset >= file->size)
         return 0;
+    if (file->kind == 1)
+        return ext4_read(file, buffer, count);
 
     u64 available = file->size - file->offset;
     if (count > available)
@@ -196,7 +375,8 @@ int vfs_close(int fd)
     if (index < 0 || index >= VFS_MAX_FILES || !g_files[index].used)
         return -1;
 
-    kfree(g_files[index].data);
+    if (g_files[index].kind == 0)
+        kfree(g_files[index].data);
     memset(&g_files[index], 0, sizeof(g_files[index]));
     return 0;
 }
@@ -206,25 +386,39 @@ void vfs_close_all(void)
     for (int i = 0; i < VFS_MAX_FILES; i++) {
         if (!g_files[i].used)
             continue;
-        kfree(g_files[i].data);
+        if (g_files[i].kind == 0)
+            kfree(g_files[i].data);
         memset(&g_files[i], 0, sizeof(g_files[i]));
     }
 }
 
-int vfs_fat_mounted(void)
+int vfs_data_mounted(void)
 {
-    return g_fat_mounted;
+    return g_data_fs != 0;
+}
+
+const char *vfs_data_fs(void)
+{
+    if (g_data_fs == 2)
+        return "ext4";
+    if (g_data_fs == 1)
+        return "FAT32";
+    return 0;
 }
 
 int vfs_data_fallback(void)
 {
-    if (g_fat_mounted)
+    if (g_data_fs)
         return 0;
     int is_dir = 0;
     return ramfs_stat("/data", &is_dir, NULL) == 0 && is_dir;
 }
 
-const char *vfs_fat_label(void)
+const char *vfs_data_label(void)
 {
-    return g_fat_mounted ? fat32_label() : NULL;
+    if (g_data_fs == 2)
+        return fs_label();
+    if (g_data_fs == 1)
+        return fat32_label();
+    return 0;
 }

@@ -55,8 +55,6 @@ C_SRCS := kernel/main.c \
           kernel/fs/fat32.c \
           kernel/fs/fat32_write.c \
           kernel/fs/fat32_format.c \
-          kernel/fs/ext4.c \
-          kernel/fs/ext4_write.c \
           kernel/fs/vfs.c \
           kernel/fs/block.c \
           kernel/fs/install.c \
@@ -100,7 +98,9 @@ FORCE:
 
 .PHONY: all clean run iso run-iso run-install run-bios run-install-bios version fonts FORCE
 
-all: $(OUT)/BOOTX64.EFI $(ESP)/BOOTX64.EFI $(ESP)/KERNEL.ELF
+# The kernel is built for the ISO and the installer; rule 25 keeps it out of
+# BOOTX64.EFI and the ESP only carries the loader.
+all: $(OUT)/BOOTX64.EFI $(ESP)/BOOTX64.EFI $(OUT)/kernel.elf
 
 # MiSans/MiSans Global are not redistributable, so they are fetched here.
 FONT_FILES := initramfs/data/MiSans-Regular.ttf \
@@ -474,20 +474,13 @@ $(ESP)/BOOTX64.EFI: $(OUT)/BOOTX64.EFI
 	@mkdir -p $(ESP)
 	cp $< $@
 
-# Rule 25/26: the kernel is a separate ELF on the boot volume, never part of
-# BOOTX64.EFI.  The UEFI loader reads it through the Simple File System.
-$(ESP)/KERNEL.ELF: $(OUT)/kernel.elf
-	@mkdir -p $(dir $@)
-	cp $< $@
-
-
 clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin $(OUT)/BOOTX64.EFI \
 	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/initramfs.tar \
 	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu_*_installer.iso \
 	       $(OUT)/*.patched \
 	       $(OUT)/bios_stage1.bin $(OUT)/bios_stage2.bin $(OUT)/bios.img \
-	       $(OUT)/target.img $(ESP)/BOOTX64.EFI $(ESP)/KERNEL.ELF
+	       $(OUT)/target.img $(ESP)/BOOTX64.EFI
 
 OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd

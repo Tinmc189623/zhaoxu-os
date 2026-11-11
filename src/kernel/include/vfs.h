@@ -19,9 +19,10 @@ long vfs_read(int fd, void *buffer, u64 count);
 int vfs_close(int fd);
 void vfs_close_all(void);
 
-int vfs_fat_mounted(void);
+int vfs_data_mounted(void);
 int vfs_data_fallback(void);
-const char *vfs_fat_label(void);
+const char *vfs_data_fs(void);
+const char *vfs_data_label(void);
 
 /* initramfs (ustar) backed ramfs */
 int ramfs_init(void);

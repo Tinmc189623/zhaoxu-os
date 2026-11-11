@@ -138,7 +138,8 @@ void kernel_main(struct boot_info *boot)
 
     kprintf("\n[vfs ] mounting storage through the driver service\n");
     if (vfs_mount_data() == 0)
-        kprintf("[vfs ] /mnt mounted (FAT32 \"%s\")\n", vfs_fat_label());
+        kprintf("[vfs ] /mnt mounted (%s \"%s\")\n", vfs_data_fs(),
+                vfs_data_label());
     else if (vfs_data_fallback())
         kprintf("[vfs ] /mnt -> embedded data mirror (no volume attached)\n");
     else

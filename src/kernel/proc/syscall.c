@@ -394,7 +394,11 @@ static long syscall_install(u64 target, u64 gpt)
         destination = install_pick_target();
     if (destination < 0)
         return -3;
-    return install_run(destination, gpt != 0, NULL) == 0 ? 0 : -4;
+    if (install_run(destination, gpt != 0, NULL) != 0) {
+        kprintf("[install] %s\n", install_last_error());
+        return -4;
+    }
+    return 0;
 }
 
 static long syscall_write_file(struct process *process, u64 path_pointer,
@@ -429,8 +433,8 @@ static long syscall_unlink(struct process *process, u64 path_pointer)
 
 static long syscall_data_volume(void)
 {
-    const char *label = vfs_fat_label();
-    return label && strcmp(label, "ZHAOXUDATA") == 0 ? 1 : 0;
+    const char *label = vfs_data_label();
+    return label && label[0] ? 1 : 0;
 }
 
 static long syscall_boot_font(struct process *process, u64 buffer_pointer,
