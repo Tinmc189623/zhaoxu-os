@@ -972,6 +972,11 @@ static int ext4_find_partition(EFI_HANDLE image_handle)
 
     if (!best || !best_bio)
         return 0;
+    /* Re-probe the winner: ext4_probe_at() fills the global geometry, and the
+       scan above left it describing whichever volume was probed last. */
+    int chosen_score = 0;
+    if (!ext4_probe_at(best_bio, best_base, &chosen_score))
+        return 0;
     g_ext4d_bio = best_bio;
     g_ext4d_base = best_base;
     g_ext4d_valid = 1;
