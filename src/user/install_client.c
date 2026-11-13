@@ -1,8 +1,9 @@
 /*
  * Zhaoxu OS - graphical installer client for the Ring3 ADE server.
  *
- * Only appears when no ZHAOXUDATA volume is mounted and a blank install
- * target is attached, i.e. when the machine was booted from the ISO.
+ * Only appears when no data or root volume is mounted (sys_data_volume
+ * reports any mounted data/root volume) and a blank install target is
+ * attached, i.e. when the machine was booted from the ISO.
  */
 #include <ade_client.h>
 #include <ade_protocol.h>

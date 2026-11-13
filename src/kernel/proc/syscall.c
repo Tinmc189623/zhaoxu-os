@@ -407,7 +407,10 @@ static long syscall_write_file(struct process *process, u64 path_pointer,
     char path[256];
     if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
         return -1;
-    if (size > FAT32_MAX_FILE_SIZE)
+    /* Only /mnt is writable, and no backend takes a file above VFS_WRITE_MAX
+     * (the ext4 service buffer is exactly that big), so reject before copying
+     * the payload into the kernel. */
+    if (size > VFS_WRITE_MAX)
         return -1;
     if (size && user_range_ok(process, data_pointer, size) != 1)
         return -1;
@@ -431,6 +434,8 @@ static long syscall_unlink(struct process *process, u64 path_pointer)
     return vfs_unlink(path) == 0 ? 0 : -1;
 }
 
+/* 1 when a data/root volume is mounted at /mnt (ext4 or the FAT32
+ * compatibility volume), 0 when /mnt falls back to the embedded mirror. */
 static long syscall_data_volume(void)
 {
     const char *label = vfs_data_label();

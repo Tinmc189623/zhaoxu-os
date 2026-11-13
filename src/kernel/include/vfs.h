@@ -3,6 +3,11 @@
 
 #include <types.h>
 
+/* Largest file a single write may create through /mnt.  The ext4 service
+ * buffers one file in an 8 MiB shared arena and commits it on the last chunk,
+ * so the kernel must reject anything larger before streaming chunks into it. */
+#define VFS_WRITE_MAX (8u * 1024u * 1024u)
+
 typedef void (*vfs_list_cb)(const char *name, u64 size, int is_dir,
                             void *context);
 
