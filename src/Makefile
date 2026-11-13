@@ -207,6 +207,15 @@ $(BUILD)/install_client.uelf: $(INSTALL_SRCS) $(WELCOME_HDRS) user/user.ld
 	$(CC) $(USER_CFLAGS) -Iuser -Iuser/lib/include -Ikernel/include \
 	  $(USER_LDFLAGS) -o $@ $(INSTALL_SRCS)
 
+# ---- ZAF graphics (Z0) ----------------------------------------------
+ZAF_GFX_HDRS := user/lib/include/zaf_gfx.h user/userlib.h
+ZAF_GFX_SRCS := user/zaf_gfx_demo.c user/lib/zaf_gfx_soft.c user/userlib.c
+
+$(BUILD)/zaf_gfx_demo.uelf: $(ZAF_GFX_SRCS) $(ZAF_GFX_HDRS) user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -Iuser -Iuser/lib/include -Ikernel/include \
+	  $(USER_LDFLAGS) -o $@ $(ZAF_GFX_SRCS)
+
 # ---- csh: the ring 3 shell ------------------------------------------
 CSH_SRCS := apps/csh/main.c apps/csh/io.c apps/csh/commands.c \
             apps/csh/builtins.c apps/csh/files.c apps/csh/run.c \
