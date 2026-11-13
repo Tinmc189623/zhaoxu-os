@@ -1,0 +1,4 @@
+# ZhaoxuBootMgr environment block (consumed by the boot manager).
+lang = zh_CN
+video_mode = auto
+true_color = 24

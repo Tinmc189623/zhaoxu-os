@@ -1284,7 +1284,7 @@ static void load_boot_font(EFI_HANDLE image_handle, UINT64 *physical,
     }
 }
 
-EFI_STATUS EFIAPI efi_start(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
+EFI_STATUS EFIAPI osloader_start(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 {
     g_st = st;
     g_bs = st->BootServices;

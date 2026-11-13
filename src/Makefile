@@ -101,7 +101,7 @@ FORCE:
 
 # The kernel is built for the ISO and the installer; rule 25 keeps it out of
 # BOOTX64.EFI and the ESP only carries the loader.
-all: $(OUT)/BOOTX64.EFI $(ESP)/BOOTX64.EFI $(OUT)/kernel.elf
+all: $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(ESP)/BOOTX64.EFI $(OUT)/kernel.elf
 
 # MiSans/MiSans Global are not redistributable, so they are fetched here.
 FONT_FILES := initramfs/data/MiSans-Regular.ttf \
@@ -393,9 +393,19 @@ $(BUILD)/efi_main.o: boot/efi_main.c boot/uefi.h $(HEADLESS_HEADER)
 	@mkdir -p $(BUILD)
 	$(BOOT_CC) $(BOOT_CFLAGS) -c $< -o $@
 
-$(OUT)/BOOTX64.EFI: $(BUILD)/efi_main.o
+# ZhaoxuBootMgr: first stage, only loads and starts the osloader.
+$(BUILD)/efi_bootmgr.o: boot/efi_bootmgr.c boot/uefi.h $(HEADLESS_HEADER)
+	@mkdir -p $(BUILD)
+	$(BOOT_CC) $(BOOT_CFLAGS) -c $< -o $@
+
+$(OUT)/BOOTX64.EFI: $(BUILD)/efi_bootmgr.o
 	@mkdir -p $(OUT)
-	$(BOOT_LD) $(BOOT_LDFLAGS) $(BUILD)/efi_main.o /out:$@
+	$(BOOT_LD) $(BOOT_LDFLAGS) $(BUILD)/efi_bootmgr.o /out:$@
+
+# Second stage: owns the kernel hand-off (was the single BOOTX64.EFI loader).
+$(OUT)/OSLDRX64.efi: $(BUILD)/efi_main.o
+	@mkdir -p $(OUT)
+	$(BOOT_LD) $(BOOT_LDFLAGS) /entry:osloader_start $(BUILD)/efi_main.o /out:$@
 
 # The installer warns when the build is headless: the loader and stage 2 it
 # copies to the target would then boot straight to csh.  The flag only lives
@@ -480,17 +490,19 @@ $(OUT)/kernel.elf: $(OBJS) kernel/linker.ld
 	@mkdir -p $(OUT)
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
 
-$(ESP)/BOOTX64.EFI: $(OUT)/BOOTX64.EFI
+$(ESP)/BOOTX64.EFI: $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi
 	@mkdir -p $(ESP)
 	cp $< $@
+	cp $(OUT)/OSLDRX64.efi $(ESP)/OSLDRX64.efi
 
 clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin $(OUT)/BOOTX64.EFI \
+	       $(OUT)/OSLDRX64.efi \
 	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/initramfs.tar \
 	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu_*_installer.iso \
 	       $(OUT)/*.patched \
 	       $(OUT)/bios_stage1.bin $(OUT)/bios_stage2.bin $(OUT)/bios.img \
-	       $(OUT)/target.img $(ESP)/BOOTX64.EFI
+	       $(OUT)/target.img $(ESP)/BOOTX64.EFI $(ESP)/OSLDRX64.efi
 	rm -f $(ESP)/KERNEL.ELF
 
 OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
@@ -523,20 +535,32 @@ ISO_ESP_MB ?= 64
 
 # The El Torito ESP only holds the loader; the kernel is read from the CD
 # root by the loader's ISO9660 reader (not from the ESP).
-$(EFI_IMG): $(OUT)/BOOTX64.EFI
+$(EFI_IMG): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi boot/zhaoxu.cfg
 	@mkdir -p $(OUT)
 	dd if=/dev/zero of=$@ bs=1M count=$(ISO_ESP_MB) status=none
 	mkfs.vfat -F 32 -n ZHAOXUEFI $@ >/dev/null
 	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/EFI
 	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/EFI/BOOT
 	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/OSLDRX64.efi ::/EFI/BOOT/OSLDRX64.efi
+	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ boot/zhaoxu.cfg ::/EFI/BOOT/zhaoxu.cfg
 
-$(ISO): $(OUT)/BOOTX64.EFI $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG) \
-        initramfs/data/wqy.ttc tools/kernel-flat.rb tools/iso-bios.rb
+$(ISO): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG) \
+        initramfs/data/wqy.ttc tools/kernel-flat.rb tools/iso-bios.rb \
+        boot/zhaoxu.cfg boot/zhaoxuenv
 	@rm -rf $(ISO_ROOT)
 	@mkdir -p $(ISO_ROOT)/install
+	@mkdir -p $(ISO_ROOT)/boot/zhaoxu/fonts
+	@mkdir -p $(ISO_ROOT)/EFI/BOOT
+	@mkdir -p $(ISO_ROOT)/casper
 	cp $(EFI_IMG) $(ISO_ROOT)/efi.img
 	cp $(BIOS_IMG) $(ISO_ROOT)/bios.img
+	cp boot/zhaoxu.cfg $(ISO_ROOT)/boot/zhaoxu/zhaoxu.cfg
+	cp boot/zhaoxuenv $(ISO_ROOT)/boot/zhaoxu/zhaoxuenv
+	cp $(OUT)/OSLDRX64.efi $(ISO_ROOT)/boot/zhaoxu/osloader.elf
+	cp $(OUT)/BOOTX64.EFI $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
+	cp $(OUT)/OSLDRX64.efi $(ISO_ROOT)/EFI/BOOT/OSLDRX64.efi
+	cp $(OUT)/kernel.elf $(ISO_ROOT)/casper/kernel.elf
 	$(RUBY) tools/kernel-flat.rb $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.BIN
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.ELF
 	cp initramfs/data/wqy.ttc $(ISO_ROOT)/install/WQY.TTC

@@ -71,6 +71,15 @@ typedef struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL {
     void *Mode;
 } EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL;
 
+typedef struct EFI_DEVICE_PATH_PROTOCOL EFI_DEVICE_PATH_PROTOCOL;
+
+typedef EFI_STATUS (EFIAPI *EFI_IMAGE_LOAD)(
+    UINT8 BootPolicy, EFI_HANDLE ParentImageHandle,
+    EFI_DEVICE_PATH_PROTOCOL *DevicePath, void *SourceBuffer,
+    UINTN SourceSize, EFI_HANDLE *ImageHandle);
+typedef EFI_STATUS (EFIAPI *EFI_IMAGE_START)(
+    EFI_HANDLE ImageHandle, UINTN *ExitDataSize, CHAR16 **ExitData);
+
 typedef struct {
     EFI_TABLE_HEADER Hdr;                                   /* 0 */
     void *RaiseTPL;                                         /* 24 */
@@ -104,8 +113,8 @@ typedef struct {
     void *LocateHandle;                                    /* 176 */
     void *LocateDevicePath;                                /* 184 */
     void *InstallConfigurationTable;                       /* 192 */
-    void *LoadImage;                                       /* 200 */
-    void *StartImage;                                      /* 208 */
+    EFI_IMAGE_LOAD LoadImage;                               /* 200 */
+    EFI_IMAGE_START StartImage;                             /* 208 */
     void *Exit;                                            /* 216 */
     void *UnloadImage;                                     /* 224 */
     EFI_STATUS (EFIAPI *ExitBootServices)(EFI_HANDLE ImageHandle,
