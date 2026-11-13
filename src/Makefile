@@ -163,6 +163,23 @@ ADE_OBJS := $(patsubst %.c,$(ADE_BUILD)/%.o,$(ADE_C_SRCS)) \
             $(patsubst %.cpp,$(ADE_BUILD)/%.o,$(ADE_CXX_SRCS))
 ADE_DEPS := $(ADE_OBJS:.o=.d)
 
+# Rule 33: the default wallpaper is converted once at build time into a raw
+# RGB888 frame and linked into ADE as a read-only blob.
+WALLPAPER_SRC := apps/ADE/web/wallpaper/3pty/img0.jpg
+WALLPAPER_RAW := $(ADE_BUILD)/wallpaper.rgb
+WALLPAPER_OBJ := $(ADE_BUILD)/wallpaper.o
+
+$(WALLPAPER_RAW): $(WALLPAPER_SRC) tools/wallpaper-raw.rb
+	@mkdir -p $(dir $@)
+	$(RUBY) tools/wallpaper-raw.rb $< $@
+
+$(WALLPAPER_OBJ): $(WALLPAPER_RAW)
+	objcopy -I binary -O elf64-x86-64 -B i386:x86-64 \
+	  --rename-section .data=.rodata,alloc,load,readonly,data,contents \
+	  --redefine-sym _binary_build_ade_wallpaper_rgb_start=ade_wallpaper_rgb_start \
+	  --redefine-sym _binary_build_ade_wallpaper_rgb_end=ade_wallpaper_rgb_end \
+	  $< $@
+
 $(ADE_BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(ADE_CFLAGS) -c $< -o $@
@@ -547,23 +564,32 @@ $(EFI_IMG): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi boot/zhaoxu.cfg
 
 $(ISO): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG) \
         initramfs/data/wqy.ttc tools/kernel-flat.rb tools/iso-bios.rb \
-        boot/zhaoxu.cfg boot/zhaoxuenv
+        tools/iso-manifest.rb boot/zhaoxu.cfg boot/zhaoxuenv
 	@rm -rf $(ISO_ROOT)
 	@mkdir -p $(ISO_ROOT)/install
 	@mkdir -p $(ISO_ROOT)/boot/zhaoxu/fonts
 	@mkdir -p $(ISO_ROOT)/EFI/BOOT
 	@mkdir -p $(ISO_ROOT)/casper
+	@mkdir -p $(ISO_ROOT)/dists/jammy/main $(ISO_ROOT)/dists/jammy/restricted \
+	          $(ISO_ROOT)/dists/jammy/universe $(ISO_ROOT)/dists/jammy/multiverse
+	@mkdir -p $(ISO_ROOT)/pool/main $(ISO_ROOT)/pool/restricted \
+	          $(ISO_ROOT)/pool/universe $(ISO_ROOT)/pool/multiverse
 	cp $(EFI_IMG) $(ISO_ROOT)/efi.img
 	cp $(BIOS_IMG) $(ISO_ROOT)/bios.img
 	cp boot/zhaoxu.cfg $(ISO_ROOT)/boot/zhaoxu/zhaoxu.cfg
 	cp boot/zhaoxuenv $(ISO_ROOT)/boot/zhaoxu/zhaoxuenv
 	cp $(OUT)/OSLDRX64.efi $(ISO_ROOT)/boot/zhaoxu/osloader.elf
+	cp $(OUT)/bios_stage1.bin $(ISO_ROOT)/boot/zhaoxu/BOOTX16.BIN
 	cp $(OUT)/BOOTX64.EFI $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
-	cp $(OUT)/OSLDRX64.efi $(ISO_ROOT)/EFI/BOOT/OSLDRX64.efi
+	cp $(OUT)/OSLDRX64.efi $(ISO_ROOT)/EFI/BOOT/OSLDRX64.ELF
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/casper/kernel.elf
+	cp $(OUT)/initramfs.tar $(ISO_ROOT)/casper/initrd.img
+	mksquashfs $(BUILD)/initramfs $(ISO_ROOT)/casper/filesystem.squashfs \
+	  -noappend -comp gzip -no-progress >/dev/null
 	$(RUBY) tools/kernel-flat.rb $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.BIN
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.ELF
 	cp initramfs/data/wqy.ttc $(ISO_ROOT)/install/WQY.TTC
+	$(RUBY) tools/iso-manifest.rb $(ISO_ROOT) $(ZHAOXU_VERSION) Yuanshuo
 	xorriso -as mkisofs -o $@ -V ZHAOXU_OS -J -R \
 	  -b bios.img -no-emul-boot -eltorito-alt-boot \
 	  -e efi.img -no-emul-boot -isohybrid-gpt-basdat $(ISO_ROOT)
