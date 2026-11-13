@@ -145,6 +145,10 @@ void kernel_main(struct boot_info *boot)
     else
         kprintf("[vfs ] /mnt unavailable, using ramfs only\n");
 
+    if (g_boot.wallpaper_phys && g_boot.wallpaper_size)
+        kprintf("[boot] default wallpaper %llu bytes from the boot volume\n",
+                g_boot.wallpaper_size);
+
 #if PROC_SELFTEST == 1
     process_selftest();
 #elif PROC_SELFTEST == 2

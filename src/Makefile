@@ -580,7 +580,7 @@ $(ISO): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(OUT)/kernel.elf $(EFI_IMG) $(BI
 	cp boot/zhaoxuenv $(ISO_ROOT)/boot/zhaoxu/zhaoxuenv
 	cp $(OUT)/OSLDRX64.efi $(ISO_ROOT)/boot/zhaoxu/osloader.elf
 	cp $(OUT)/bios_stage1.bin $(ISO_ROOT)/boot/zhaoxu/BOOTX16.BIN
-	cp $(WALLPAPER_RAW) $(ISO_ROOT)/boot/zhaoxu/wallpaper.rgb
+	cp $(WALLPAPER_RAW) $(ISO_ROOT)/boot/zhaoxu/WALL.RGB
 	cp $(OUT)/BOOTX64.EFI $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
 	cp $(OUT)/OSLDRX64.efi $(ISO_ROOT)/EFI/BOOT/OSLDRX64.ELF
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/casper/kernel.elf

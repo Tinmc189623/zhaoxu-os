@@ -57,6 +57,8 @@ struct boot_info_blob {
     UINT64 flags;
     UINT64 font_phys;
     UINT64 font_size;
+    UINT64 wallpaper_phys;
+    UINT64 wallpaper_size;
 } __attribute__((packed));
 
 /* no libc: clang is built with -fno-builtin so these loops stay loops */
@@ -1284,6 +1286,38 @@ static void load_boot_font(EFI_HANDLE image_handle, UINT64 *physical,
     }
 }
 
+static void load_boot_wallpaper(EFI_HANDLE image_handle, UINT64 *physical,
+                                UINT64 *bytes)
+{
+    *physical = 0;
+    *bytes = 0;
+
+    EFI_BLOCK_IO_PROTOCOL *bio = iso_device(image_handle);
+    if (!bio)
+        return;
+    UINT32 extent = 0;
+    UINT32 size = 0;
+    if (!iso_find_path(bio, "BOOT/ZHAOXU/WALL.RGB", &extent, &size))
+        return;
+    if (size < 1920u * 1080u * 3u || size > 16u * 1024u * 1024u)
+        return;
+
+    UINT64 pages = (size + 4095) / 4096;
+    EFI_PHYSICAL_ADDRESS address = 0xFFFFFFFFULL;
+    EFI_STATUS status = g_bs->AllocatePages(EFI_ALLOCATE_MAX_ADDRESS,
+                                            EFI_LOADER_DATA, pages, &address);
+    if (EFI_ERROR(status) || !address)
+        status = g_bs->AllocatePages(EFI_ALLOCATE_ANY_PAGES, EFI_LOADER_DATA,
+                                     pages, &address);
+    if (EFI_ERROR(status) || !address)
+        return;
+    if (!iso_read_file(bio, extent, size, (void *)(UINTN)address))
+        return;
+    *physical = (UINT64)address;
+    *bytes = size;
+    boot_print("Wallpaper: /boot/zhaoxu/wallpaper.rgb from the ISO.\r\n");
+}
+
 EFI_STATUS EFIAPI osloader_start(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
 {
     g_st = st;
@@ -1336,6 +1370,10 @@ EFI_STATUS EFIAPI osloader_start(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     UINT64 font_phys = 0;
     UINT64 font_size = 0;
     load_boot_font(image_handle, &font_phys, &font_size);
+
+    UINT64 wallpaper_phys = 0;
+    UINT64 wallpaper_size = 0;
+    load_boot_wallpaper(image_handle, &wallpaper_phys, &wallpaper_size);
 
     EFI_PHYSICAL_ADDRESS pt_alloc = 0;
     status = alloc_below_4g(PAGE_TABLE_PAGES, &pt_alloc);
@@ -1392,6 +1430,8 @@ EFI_STATUS EFIAPI osloader_start(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     bi->flags = 1;
     bi->font_phys = font_phys;
     bi->font_size = font_size;
+    bi->wallpaper_phys = wallpaper_phys;
+    bi->wallpaper_size = wallpaper_size;
 
     UINTN mmap_size = MMAP_MAX;
     UINTN map_key = 0;

@@ -626,6 +626,22 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
         }
         offset += chunk;
     }
+    const u8 *wallpaper = (const u8 *)(uintptr_t)info->wallpaper_phys;
+    u64 wallpaper_size = info->wallpaper_size;
+    if (wallpaper && wallpaper_size >= 1920u * 1080u * 3u) {
+        for (u64 offset = 0; offset < wallpaper_size;) {
+            u32 chunk = (u32)(wallpaper_size - offset);
+            if (chunk > FS_DATA_SIZE)
+                chunk = FS_DATA_SIZE;
+            if (fs_call_write("/WALLPAPER.RAW", wallpaper_size, offset,
+                              wallpaper + offset, chunk,
+                              offset == 0) != 0) {
+                set_error("ext4 service could not write WALLPAPER.RAW");
+                goto fail;
+            }
+            offset += chunk;
+        }
+    }
     if (fs_call_sync() != 0) {
         set_error("ext4 service could not sync the root volume");
         /* The cleanup retries the (idempotent) sync once. */

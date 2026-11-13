@@ -28,6 +28,8 @@ struct boot_info {
     u64 flags;
     u64 font_phys;          /* preloaded WQY.TTC from the boot volume */
     u64 font_size;
+    u64 wallpaper_phys;     /* preloaded default wallpaper (raw RGB888) */
+    u64 wallpaper_size;
 } __attribute__((packed));
 
 #define BOOT_FLAG_HIGHER_HALF 1u
