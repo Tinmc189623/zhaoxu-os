@@ -564,7 +564,7 @@ $(EFI_IMG): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi boot/zhaoxu.cfg
 
 $(ISO): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG) \
         initramfs/data/wqy.ttc tools/kernel-flat.rb tools/iso-bios.rb \
-        tools/iso-manifest.rb boot/zhaoxu.cfg boot/zhaoxuenv
+        tools/iso-manifest.rb boot/zhaoxu.cfg boot/zhaoxuenv $(WALLPAPER_RAW)
 	@rm -rf $(ISO_ROOT)
 	@mkdir -p $(ISO_ROOT)/install
 	@mkdir -p $(ISO_ROOT)/boot/zhaoxu/fonts
@@ -580,6 +580,7 @@ $(ISO): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(OUT)/kernel.elf $(EFI_IMG) $(BI
 	cp boot/zhaoxuenv $(ISO_ROOT)/boot/zhaoxu/zhaoxuenv
 	cp $(OUT)/OSLDRX64.efi $(ISO_ROOT)/boot/zhaoxu/osloader.elf
 	cp $(OUT)/bios_stage1.bin $(ISO_ROOT)/boot/zhaoxu/BOOTX16.BIN
+	cp $(WALLPAPER_RAW) $(ISO_ROOT)/boot/zhaoxu/wallpaper.rgb
 	cp $(OUT)/BOOTX64.EFI $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
 	cp $(OUT)/OSLDRX64.efi $(ISO_ROOT)/EFI/BOOT/OSLDRX64.ELF
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/casper/kernel.elf

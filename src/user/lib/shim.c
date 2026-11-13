@@ -18,6 +18,7 @@
 #include "../userlib.h"
 
 #define FONT_SHARED_BYTES (8u * 1024u * 1024u)
+#define WALLPAPER_SHARED_BYTES (8u * 1024u * 1024u)
 
 static void emit_char(char *buffer, usize capacity, usize *length, char value)
 {
@@ -270,4 +271,28 @@ u8 *zos_load_font(u64 *size_out)
         return buffer;
     }
     return 0;
+}
+
+u8 *zos_load_wallpaper(u64 *size_out)
+{
+    if (size_out)
+        *size_out = 0;
+
+    long shm = sys_shm_create(WALLPAPER_SHARED_BYTES);
+    if (shm <= 0)
+        return 0;
+    u8 *buffer = (u8 *)sys_shm_map(shm);
+    if (!buffer)
+        return 0;
+
+    long total = sys_read_path("/mnt/WALLPAPER.RAW", buffer,
+                               WALLPAPER_SHARED_BYTES);
+    if (total < 1920L * 1080L * 3L) {
+        kprintf("[ade ] wallpaper: data volume has no WALLPAPER.RAW\n");
+        return 0;
+    }
+    kprintf("[ade ] wallpaper /mnt/WALLPAPER.RAW: %ld bytes\n", total);
+    if (size_out)
+        *size_out = (u64)total;
+    return buffer;
 }
