@@ -246,7 +246,7 @@ void apic_delay_ms(u32 ms)
     }
     u64 ticks = ((u64)ms * 3579545ULL) / 1000ULL;
     u32 start = inl(pm_timer_port) & 0xFFFFFFu;
-    for (;;) {
+    for (u64 spin = 0; spin < 50000000ULL; spin++) {
         u32 now = inl(pm_timer_port) & 0xFFFFFFu;
         u32 elapsed = (now - start) & 0xFFFFFFu;
         if (elapsed >= ticks)

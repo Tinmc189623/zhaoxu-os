@@ -33,7 +33,11 @@ struct ap_params {
     u64 stack;
     u64 entry;
     u64 cpu;
+    u64 ack;
+    u64 cpu_echo;
 };
+
+#define AP_ACK_MAGIC 0x5A4F41434B4E4F57ULL
 
 #if SCHED_STATS
 static volatile u64 worker_hits[MAX_CPUS];
@@ -113,22 +117,42 @@ static void start_cpu(u32 cpu)
         (TRAMPOLINE_PHYSICAL +
          (usize)(ap_trampoline_params - ap_trampoline_start));
 
-    params->cr3 = read_cr3();
-    params->stack = sched_idle_stack(cpu);
-    params->entry = (u64)(uintptr_t)ap_entry;
-    params->cpu = cpu;
-
-    if (!params->stack) {
+    u64 stack = sched_idle_stack(cpu);
+    if (!stack) {
         kprintf("[smp ] cpu%u has no idle stack, skipped\n", cpu);
         return;
     }
 
-    apic_start_cpu(g_percpu[cpu].apic_id, TRAMPOLINE_VECTOR);
+    for (u32 attempt = 0; attempt < 2; attempt++) {
+        params->ack = 0;
+        params->cpu_echo = 0;
+        params->cr3 = read_cr3();
+        params->stack = stack;
+        params->entry = (u64)(uintptr_t)ap_entry;
+        params->cpu = cpu;
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
 
-    for (u32 spin = 0; spin < 200; spin++) {
-        if (__atomic_load_n(&g_percpu[cpu].online, __ATOMIC_ACQUIRE))
-            return;
-        apic_delay_ms(1);
+        apic_start_cpu(g_percpu[cpu].apic_id, TRAMPOLINE_VECTOR);
+
+        /* Wait for the trampoline to publish its acknowledgement before the
+         * next AP reuses this page; then wait for ap_entry to go online. */
+        int acked = 0;
+        for (u32 spin = 0; spin < 200; spin++) {
+            if (__atomic_load_n(&params->ack, __ATOMIC_ACQUIRE) ==
+                    AP_ACK_MAGIC &&
+                __atomic_load_n(&params->cpu_echo, __ATOMIC_ACQUIRE) == cpu) {
+                acked = 1;
+                break;
+            }
+            apic_delay_ms(1);
+        }
+        if (acked) {
+            for (u32 spin = 0; spin < 200; spin++) {
+                if (__atomic_load_n(&g_percpu[cpu].online, __ATOMIC_ACQUIRE))
+                    return;
+                apic_delay_ms(1);
+            }
+        }
     }
 
     kprintf("[smp ] cpu%u did not come online\n", cpu);

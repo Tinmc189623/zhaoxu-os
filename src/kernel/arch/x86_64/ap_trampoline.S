@@ -82,6 +82,9 @@ protected64:
     movq    8(%rbx), %rsp
     movq    16(%rbx), %rax
     movq    24(%rbx), %rdi
+    movq    %rdi, 40(%rbx)                      /* cpu echo */
+    movq    $0x5A4F41434B4E4F57, %rcx           /* 'ZOA CKNOW' magic */
+    movq    %rcx, 32(%rbx)                      /* boot acknowledgement */
     jmp     *%rax
 
 .align 8
@@ -101,4 +104,6 @@ ap_trampoline_params:
     .quad   0                                   /* stack */
     .quad   0                                   /* entry */
     .quad   0                                   /* cpu index */
+    .quad   0                                   /* boot acknowledgement */
+    .quad   0                                   /* cpu echo */
 ap_trampoline_end:
