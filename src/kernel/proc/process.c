@@ -22,6 +22,7 @@
 #include <timer.h>
 #include <types.h>
 #include <vfs.h>
+#include <zxe_format.h>
 
 #define USER_LOAD_BASE      0x0000010000000000ULL   /* 1 TiB   */
 #define USER_STACK_TOP      0x0000010100000000ULL   /* 1 TiB + 4 GiB */
@@ -66,27 +67,6 @@ struct elf64_program_header {
 } __attribute__((packed));
 
 #define ELF_PT_LOAD 1
-
-struct zxe_header {
-    u8 magic[4];
-    u16 version;
-    u16 machine;
-    u16 seg_count;
-    u16 hdr_size;
-    u32 reserved;
-    u64 entry;
-    u64 file_size;
-} __attribute__((packed));
-
-struct zxe_segment {
-    u64 vaddr;
-    u64 file_off;
-    u64 file_size;
-    u64 mem_size;
-    u64 flags;
-} __attribute__((packed));
-
-#define ZXE_SEG_MAX 16
 
 static struct process *current_process(void)
 {
@@ -168,20 +148,37 @@ static int user_zero(struct process *process, u64 virtual_address, u64 length)
     return 0;
 }
 
-static u64 map_user_page(struct process *process, u64 virtual_address)
+u64 process_map_page(struct process *process, u64 virtual_address,
+                     u64 page_flags)
 {
-    for (int i = 0; i < process->mapping_count; i++) {
-        if (process->mappings[i].virtual_address == virtual_address)
-            return process->mappings[i].physical_address;
-    }
+    u64 existing = vmm_space_get_physical(process->space, virtual_address);
+    if (existing)
+        return existing;
     if (process->mapping_count >= USER_MAX_PAGES)
         return 0;
+    if (process->mapping_count == process->mapping_capacity) {
+        int capacity = process->mapping_capacity
+                           ? process->mapping_capacity * 2
+                           : USER_MAP_INITIAL_CAPACITY;
+        if (capacity > USER_MAX_PAGES)
+            capacity = USER_MAX_PAGES;
+        struct user_mapping *mappings =
+            kmalloc((usize)capacity * sizeof(*mappings));
+        if (!mappings)
+            return 0;
+        if (process->mapping_count)
+            memcpy(mappings, process->mappings,
+                   (usize)process->mapping_count * sizeof(*mappings));
+        kfree(process->mappings);
+        process->mappings = mappings;
+        process->mapping_capacity = capacity;
+    }
 
     u64 physical = pmm_alloc_page();
     if (!physical)
         return 0;
     if (vmm_space_map_page(process->space, virtual_address, physical,
-                           VMM_PRESENT | VMM_WRITABLE | VMM_USER) != 0) {
+                           VMM_PRESENT | VMM_USER | page_flags) != 0) {
         pmm_free_page(physical);
         return 0;
     }
@@ -195,17 +192,22 @@ static u64 map_user_page(struct process *process, u64 virtual_address)
 
 static void release_user_pages(struct process *process)
 {
-    if (!process || !process->space)
+    if (!process)
         return;
 
-    for (int i = 0; i < process->mapping_count; i++) {
-        u64 physical =
-            vmm_space_unmap_page(process->space,
-                                 process->mappings[i].virtual_address);
-        if (physical)
-            pmm_free_page(physical);
+    if (process->space) {
+        for (int i = 0; i < process->mapping_count; i++) {
+            u64 physical =
+                vmm_space_unmap_page(process->space,
+                                     process->mappings[i].virtual_address);
+            if (physical)
+                pmm_free_page(physical);
+        }
     }
     process->mapping_count = 0;
+    process->mapping_capacity = 0;
+    kfree(process->mappings);
+    process->mappings = NULL;
 }
 
 static int elf_load(struct process *process, const u8 *image, u64 image_size,
@@ -258,8 +260,13 @@ static int elf_load(struct process *process, const u8 *image, u64 image_size,
         u64 end = (program->virtual_address + program->memory_size +
                    0xFFFULL) & ~0xFFFULL;
 
+        u64 page_flags = (program->flags & 2) ? VMM_WRITABLE : 0;
+        if (!(program->flags & 1))
+            page_flags |= VMM_EXECUTE_DISABLE;
+        if ((program->flags & 3) == 3)
+            return -1;
         for (u64 page = start; page < end; page += PAGE_SIZE) {
-            if (!map_user_page(process, page))
+            if (!process_map_page(process, page, page_flags))
                 return -1;
         }
 
@@ -283,76 +290,18 @@ static int elf_load(struct process *process, const u8 *image, u64 image_size,
 }
 
 static int zxe_load(struct process *process, const u8 *image, u64 image_size,
-                    u64 *entry_out)
+                    const char *path, u64 *entry_out)
 {
-    if (!image || image_size < sizeof(struct zxe_header))
-        return -1;
-
-    const struct zxe_header *header = (const struct zxe_header *)image;
-    if (header->magic[0] != 'Z' || header->magic[1] != 'X' ||
-        header->magic[2] != 'E' || header->magic[3] != 1)
-        return -1;
-    if (header->version != 1 || header->machine != 62)
-        return -1;
-    if (header->seg_count == 0 || header->seg_count > ZXE_SEG_MAX)
-        return -1;
-
-    u64 expected_hdr = 32 + (u64)header->seg_count *
-                             sizeof(struct zxe_segment);
-    expected_hdr = (expected_hdr + 15) & ~15ULL;
-    if (header->hdr_size != expected_hdr || header->hdr_size > image_size)
-        return -1;
-    if (header->file_size != image_size)
-        return -1;
-
-    for (u16 i = 0; i < header->seg_count; i++) {
-        const struct zxe_segment *segment = (const struct zxe_segment *)
-            (image + 32 + (u64)i * sizeof(struct zxe_segment));
-        if (segment->vaddr < USER_LOAD_BASE)
-            return -1;
-        if (segment->vaddr & 0xFFF)
-            return -1;
-        if (segment->mem_size == 0 || segment->file_size > segment->mem_size)
-            return -1;
-        if (segment->vaddr + segment->mem_size < segment->vaddr)
-            return -1;
-        if (segment->vaddr + segment->mem_size > USER_ADDRESS_LIMIT)
-            return -1;
-        if (segment->file_off < header->hdr_size ||
-            segment->file_off + segment->file_size > image_size ||
-            segment->file_off + segment->file_size < segment->file_off)
-            return -1;
-
-        u64 end = (segment->vaddr + segment->mem_size + 0xFFFULL) & ~0xFFFULL;
-        for (u64 page = segment->vaddr; page < end; page += PAGE_SIZE) {
-            if (!map_user_page(process, page))
-                return -1;
-        }
-
-        if (segment->file_size &&
-            process_user_write(process, segment->vaddr, image + segment->file_off,
-                       segment->file_size) != 0)
-            return -1;
-        if (segment->mem_size > segment->file_size &&
-            user_zero(process, segment->vaddr + segment->file_size,
-                      segment->mem_size - segment->file_size) != 0)
-            return -1;
-    }
-
-    if (header->entry < USER_LOAD_BASE ||
-        header->entry >= USER_ADDRESS_LIMIT)
-        return -1;
-
-    *entry_out = header->entry;
-    return 0;
+    return zxe_load_image(process, image, image_size, path, entry_out);
 }
 
 static int image_load(struct process *process, const u8 *image, u64 image_size,
-                      u64 *entry_out)
+                      const char *path, u64 *entry_out)
 {
-    if (image_size >= 4 && image[0] == 'Z' && image[1] == 'X' &&
-        image[2] == 'E' && image[3] == 1)
-        return zxe_load(process, image, image_size, entry_out);
+    if (image_size >= 4 && memcmp(image, ZXE_MAGIC, 4) == 0)
+        return zxe_load(process, image, image_size, path, entry_out);
+    if (image_size >= 3 && image[0] == 'Z' && image[1] == 'X' && image[2] == 'E')
+        return -1;
     return elf_load(process, image, image_size, entry_out);
 }
 
@@ -390,15 +339,17 @@ static u64 build_user_stack(struct process *process, int argc,
 }
 
 static int prepare_image(struct process *process, const u8 *image,
-                         u64 image_size, int argc, const char **argv)
+                         u64 image_size, const char *path, int argc,
+                         const char **argv)
 {
     u64 entry = 0;
-    if (image_load(process, image, image_size, &entry) != 0)
+    if (image_load(process, image, image_size, path, &entry) != 0)
         return -1;
 
     for (u64 page = USER_STACK_TOP - USER_STACK_PAGES * PAGE_SIZE;
          page < USER_STACK_TOP; page += PAGE_SIZE) {
-        if (!map_user_page(process, page))
+        if (!process_map_page(process, page,
+                              VMM_WRITABLE | VMM_EXECUTE_DISABLE))
             return -1;
     }
 
@@ -461,7 +412,7 @@ static u64 spawn_image(const u8 *image, u64 image_size, const char *name,
     if (argc <= 0)
         argc = 1;
 
-    if (prepare_image(process, image, image_size, argc, stack_argv) != 0) {
+    if (prepare_image(process, image, image_size, name, argc, stack_argv) != 0) {
         kprintf("[proc] %s is not a valid ZXE/ELF64 executable\n",
                 name ? name : "<memory>");
         process_fail(process);
@@ -631,9 +582,18 @@ void process_handle_exception(struct interrupt_frame *frame)
         __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
 
     console_set_color(COLOR_LIGHT_RED, COLOR_BLACK);
-    kprintf("\n[proc] user exception %llu at rip 0x%llx, cr2 0x%llx\n",
-            frame->vector, frame->rip, cr2);
+    kprintf("\n[proc] user exception %llu at rip 0x%llx, cr2 0x%llx, error 0x%llx, rsp 0x%llx\n",
+            frame->vector, frame->rip, cr2, frame->error, frame->rsp);
+    if (frame->vector == 14 && process_current()) {
+        struct process *process = current_process();
+        for (u32 i = 0; i < 6; i++) {
+            u64 address = frame->rsp + (u64)i * sizeof(u64);
+            u64 physical = vmm_space_get_physical(process->space, address);
+            u64 value = physical ? *(u64 *)(uintptr_t)physical : 0;
+            kprintf("[proc] stack[%u] @ 0x%llx = 0x%llx\n", i,
+                    address, value);
+        }
+    }
     console_reset_color();
-
     process_exit_current(-(int)frame->vector);
 }

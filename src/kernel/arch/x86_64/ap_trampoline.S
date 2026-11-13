@@ -55,9 +55,9 @@ protected32:
     .long   ap_trampoline_params - ap_trampoline_start + TRAMP_BASE
     movl    %eax, %cr3
 
-    movl    $0xC0000080, %ecx                  /* EFER.LME */
+    movl    $0xC0000080, %ecx                  /* EFER.LME | EFER.NXE */
     rdmsr
-    orl     $0x00000100, %eax
+    orl     $0x00000900, %eax
     wrmsr
 
     movl    %cr0, %eax

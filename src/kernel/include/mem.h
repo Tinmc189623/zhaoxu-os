@@ -9,6 +9,7 @@
 #define VMM_PRESENT  (1ULL << 0)
 #define VMM_WRITABLE (1ULL << 1)
 #define VMM_USER     (1ULL << 2)
+#define VMM_EXECUTE_DISABLE (1ULL << 63)
 
 struct pmm_stats {
     u64 managed_pages;

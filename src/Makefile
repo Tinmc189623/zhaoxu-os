@@ -59,6 +59,7 @@ C_SRCS := kernel/main.c \
           kernel/fs/block.c \
           kernel/fs/install.c \
           kernel/proc/process.c \
+          kernel/proc/zxe_loader.c \
           kernel/proc/syscall.c \
           kernel/proc/dev.c \
           kernel/proc/fsrpc.c \
@@ -118,11 +119,11 @@ version:
 	$(RUBY) tools/version.rb
 
 # ---- Ring 3 programs -------------------------------------------------
-USER_CFLAGS := -m64 -std=gnu11 -O2 -ffreestanding -fno-pie -fno-pic \
+USER_CFLAGS := -m64 -std=gnu11 -O2 -ffreestanding -fpie \
                -fno-stack-protector -fno-asynchronous-unwind-tables \
-               -mno-red-zone -mcmodel=large -mno-sse -mno-sse2 \
+               -mno-red-zone -mno-sse -mno-sse2 \
                -mno-mmx -mno-avx -Wall -Wextra -Wno-unused-parameter
-USER_LDFLAGS := -nostdlib -static -no-pie -Wl,--build-id=none \
+USER_LDFLAGS := -nostdlib -shared -Wl,-Bsymbolic,--build-id=none \
                 -Wl,-T,user/user.ld -Wl,-z,max-page-size=0x1000
 RUBY ?= /mnt/c/Ruby40-x64/bin/ruby.exe
 
@@ -237,8 +238,8 @@ $(BUILD)/ext4fs.uelf: $(EXT4FS_SRCS) $(EXT4FS_HDRS) user/user.ld
 
 # ---- Ring3 driver service -------------------------------------------
 DRV_BUILD := $(BUILD)/drv
-DRV_ADAFLAGS := -c -gnatp -gnat2022 -O2 -fno-pie -fno-stack-protector \
-                -mno-red-zone -mcmodel=large -mgeneral-regs-only \
+DRV_ADAFLAGS := -c -gnatp -gnat2022 -O2 -fpie -fno-stack-protector \
+                -mno-red-zone -mgeneral-regs-only \
                 -mno-sse -mno-sse2 -mno-mmx -mno-avx -Idrivers
 DRV_ADA_SRCS := drivers/ahci.adb drivers/ps2.adb drivers/mouse.adb \
                 drivers/serial.adb
@@ -481,6 +482,7 @@ clean:
 	       $(OUT)/*.patched \
 	       $(OUT)/bios_stage1.bin $(OUT)/bios_stage2.bin $(OUT)/bios.img \
 	       $(OUT)/target.img $(ESP)/BOOTX64.EFI
+	rm -f $(ESP)/KERNEL.ELF
 
 OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd

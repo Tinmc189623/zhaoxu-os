@@ -71,7 +71,8 @@ static int map_in(u64 *root, u64 virtual_address, u64 physical_address,
         return -1;
 
     pt[pt_index] = (physical_address & PTE_ADDRESS_MASK) |
-                   (flags & 0xFFF) | VMM_PRESENT;
+                   (flags & 0xFFF) | (flags & VMM_EXECUTE_DISABLE) |
+                   VMM_PRESENT;
     __asm__ volatile("invlpg (%0)" :: "r"(virtual_address) : "memory");
     return 0;
 }
@@ -422,8 +423,33 @@ static u64 memory_map_physical_end(const struct boot_info *bi)
     return end > IDENTITY_MAX ? IDENTITY_MAX : end;
 }
 
+static int enable_nx(void)
+{
+    u32 eax, ebx, ecx, edx;
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                     : "a"(0x80000000U), "c"(0));
+    if (eax < 0x80000001U)
+        return -1;
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                     : "a"(0x80000001U), "c"(0));
+    if (!(edx & (1U << 20)))
+        return -1;
+
+    u32 low, high;
+    u32 msr = 0xC0000080U;
+    __asm__ volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
+    low |= 1U << 11;
+    __asm__ volatile("wrmsr" :: "a"(low), "d"(high), "c"(msr));
+    return 0;
+}
+
 void vmm_init(const struct boot_info *bi)
 {
+    if (enable_nx() != 0) {
+        kprintf("[vmm ] CPU lacks NX support; cannot enforce W^X\n");
+        for (;;)
+            __asm__ volatile("cli; hlt");
+    }
     u64 cr3;
     __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
     pml4 = (u64 *)(uintptr_t)(bi->page_table_root ? bi->page_table_root : cr3);

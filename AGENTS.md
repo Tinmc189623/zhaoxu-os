@@ -7,30 +7,33 @@
 3. Gitee 仓库（master）：https://gitee.com/Tinmc189623/zhaoxu-os
 4. GitCode 仓库（main）：https://gitcode.com/2503_94276351/zhaoxu-os
 5. 用 WSL2，可用：C（内核+UEFI引导）、C++（上层应用）、GAS（底层）、FASM（BIOS引导）、SPARK（驱动）。
-6. 脚本必须完全使用 ruby 来编写，必须完全使用 AI 来生成代码。
-7. 引导加载器必须支持 uefi 和 legacy bios 两种启动模式。 
-8. 引导加载器的名称必须得是：`ZhaoxuBootloader`。
+6. 脚本必须完全使用 Ruby 来编写，必须完全使用 AI 来生成代码，**禁止人类编写代码**。
+7. 引导加载器必须支持 UEFI 和 Legacy BIOS 两种启动模式。 
+8. 引导管理器的名称必须得是：`ZhaoxuBootMgr`。
 9. 内核必须得是微内核，用户程序必须得放在 Ring3，内核的二进制必须得是干净的二进制，不允许往里投放什么驱动/应用。
-10. 该操作系统必须遵循 unix 哲学和使用 unix 方式。 
-11. iso命名示例：`zhaoxu_{version}_installer.iso`。
+10. 该操作系统必须遵循 Unix 哲学和使用 Unix 方式。 
+11. iso命名示例：`zhaoxu-os_{version}_installer.iso`。
 12. 不得将所有功能挤在一个文件里，如 `apps/shell.cpp`。
-13. README.md 里只允许编写进一次版本更新，而不能编写所有版本，所有版本应放入 CHANGELOG.md 文件中。
-14. readme里必须拥有emoji和html以增加视觉效果。
+13. README.md 里只允许编写近一次版本更新，而不能编写所有版本，所有版本应放入 CHANGELOG.md 文件中。
+14. README.md 里必须拥有 Emoji 和 HTML 以增加视觉效果。
 15. 系统必须同时支持 MBR 和 GPT。
 16. **AI** 写代码时优先追求快与效果和稳定性，不要为了“稳定性”而在那块儿编写三千天的代码，却看不着任何效果。
 17. 字体：MiSans、MiSans Global、Inter。
-18. 必须使用此`stb_truetype.h`，`https://raw.githubusercontent.com/nothings/stb/master/stb_truetype.h`（必须得是**原文**，不允许自己写一份儿）。
-19. 写东西的时候先看见 stb 里头有没有需要的，如果有需要就直接复用，别自己自研。
+18. 必须使用此`stb_truetype.h`，`https://raw.githubusercontent.com/nothings/stb/master/stb_truetype.h`（必须得是**原文**，不允许自己写一份）。
+19. 写代码的时候先看 stb 里头有没有需要的，如果有需要就直接复用，别自己自研。
 20. 项目必须遵循 KISS 原则。
 21. 必须支持的文件系统：FAT32、ext4，且为完整支持。
-22. 应用图标必须得是svg图标。
+22. 应用图标必须得是 SVG 图标。
 23. 一个文件只允许做一个功能，不允许把所有东西塞到一个文件中。
 24. 系统 API：`Zhaoxu Operating System Application Programming Interface Version 1.0`
 25. 不得将内核写入 `BOOTX64.EFI`。
-26. 内核：`\EFI\BOOT\KERNEL.ELF`。
-27. 用户在安装系统时，只需要一个iso即可安装，不需要让用户挂载其他磁盘等一大堆什么应用程序需要外面软盘。
+26. 内核：`KERNEL.ELF`。
+27. 用户在安装系统时，只需要一个 ISO 即可安装，不需要让用户插入其他磁盘等需要外面软盘。
 28. ESP 分区必须得是 FAT32。
 29. 一个文件只能干一件事，一个文件不能干出超过一件事的事情，错误示例：`src/apps/cwsl/shell.cpp`。
+30. 禁止不使用 busybox。
+31. 引导流程：`BIOS 固件 → ZhaoxuBootMgr 引导管理器 → osloader.elf → kernel.elf → vga.ko 通用显卡驱动`。
+32. zhaoxuOS 的 GUI 采用经典 Aqua（Classic Aqua）视觉风格。计划构建独立的 Zhaoxu Aqua Framework（ZAF），以 Skia 为图形渲染基础，自研窗口管理器、桌面合成器、控件系统、动画引擎和主题引擎。要求具备深度自定义能力、可移植到自研操作系统，并尽量减少对其他操作系统 GUI 组件的依赖。Aqua 为默认主题，底层框架支持未来扩展其他视觉主题。
 
 ## 构建与运行
 
@@ -47,7 +50,7 @@
   make run-install-bios    # ISO + 单个空白目标盘（BIOS 安装测试）
   ```
   Windows 入口：`./src/build.ps1`、`./src/run.ps1`（PowerShell 7+），默认发行版 `Ubuntu-26.04`。
-- 单个用户程序：`make out/hello.zxe`（内部先链接 `build/hello.uelf`，再由 `tools/zxe-pack.rb` 转成 `.zxe`）。模式规则会自动编译 `user/hello.c` 并链接 `user/userlib.c`，不需要改 Makefile。程序入口是 `int user_main(long *stack)`，不是 `main`；`userlib.c` 的 `_start` 会把返回值作为退出码。ELF→.zxe 转换需要 Ruby：WSL 内没有时通过 Makefile 的 `RUBY` 变量指向 Windows 侧 ruby.exe（按本机位置覆盖，不要写死盘符）。
+- 单个用户程序：`make out/hello.zxe`（内部先链接 `build/hello.uelf`，再由 `tools/zxe-pack.rb` 转成 `.zxe`）。模式规则会自动编译 `user/hello.c` 并链接 `user/userlib.c`，不需要改 Makefile。程序入口是 `int user_main(long *stack)`，不是 `main`；`userlib.c` 的 `_start` 会把返回值作为退出码。ELF→.zxe 转换需要 Ruby：WSL 内没有时通过 Makefile 的 `RUBY` 变量指向 Windows 侧 ruby.exe（按本机位置覆盖，不要写死盘符）。ZXE v1 结构自检：`ruby tools/zxe-check.rb out/*.zxe`；动态链接冒烟用 `ruby tools/zxe-fixture-lib.rb out/libztest.zxe` 生成共享库，配合 `user/ztestmain.c`（导入 `ztest_value`）。
 - `make`/`make all` 的最终产物是 `out/BOOTX64.EFI` 与 `esp/EFI/BOOT/BOOTX64.EFI`；`make out/data.img` 只是手动生成一个 FAT32 数据盘镜像，测试一律走 ISO。
 - `make run-iso` 默认 q35、512 MiB、smp=4、`-display none` + 串口 stdio，只把 ISO 挂为 `ide.0` 光驱，不挂数据盘/安装盘；`make run-install` 额外挂一个 256 MiB 空白 `out/target.img`（首次创建）作为 `ide.1`。`make run` 现在就是 `run-iso` 的别名。带 `-no-reboot`，所以来宾发起重启会直接退出 QEMU。单核回归用 `make run-iso QEMU_SMP=1`。
 - `make iso` 生成 `out/zhaoxu_{version}_installer.iso`：El Torito ESP（`out/efi.img`）只含 `EFI/BOOT/BOOTX64.EFI`；内核与字体放在光盘根的 `install/KERNEL.ELF`、`install/WQY.TTC`（不在 ESP 内），legacy BIOS 另带展开后的 `install/KERNEL.BIN` 与引导镜像 `bios.img`，由 xorriso 以 El Torito 双入口（两者都是 no-emulation）+ GPT hybrid 打包，最后由 `tools/iso-bios.rb` 回填 stage2 参数块。UEFI 加载器用内置的极简 ISO9660 读取器从光盘根取内核与字体。
@@ -84,7 +87,7 @@
 - 迁移中：ADE 已作为 `/bin/ade` 在 Ring3 运行，csh 作为 `/bin/csh` 在 Ring3 运行，内核不再保留内核态桌面回退；Welcome 与 Calculator 已迁移为独立 `.zxe` 客户端，Files/Monitor 的 Ring3 客户端迁移待续；全部硬件驱动已下沉到 `/bin/drivers`。显示协议在 `user/lib/include/ade_protocol.h`，服务端在 `src/apps/ADE/display/server.cpp`，客户端库在 `src/user/lib/ade_client.c`。
 - 系统调用 ABI：`int 0x80`，`rax`=调用号，`rdi/rsi/rdx/r10`=参数；0=exit、1=write、2=getpid、3=open、4=read、5=close、6=uptime、7=spawn、8=wait、9=port_listen、10=port_connect、11=port_accept、12=port_send、13=port_recv、14=port_close、15=shm_create、16=shm_map、17=shm_unmap、18=shm_close、19=fb_map、20=mouse、21=key、22=sleep、23=cpus、24=rtc、25=read_path、26=port_try_accept、27=port_try_recv、28=serial_write、29=readdir、30=disks、31=install、32=write_file、33=unlink、34=data_volume、35=dev_alloc_page、36=boot_font、37=spawn_arg。调用号在 `kernel/proc/syscall.c` 与 `user/userlib.h` 各一份，必须同步；用户指针按当前进程地址空间逐页校验。
 - 用户线程经 `user_enter` `iretq` 进 Ring3；退出或用户异常调用 `process_exit_current()` → `kthread_exit()`，不再通过 `user_resume()` 返回。只有 `process_handle_exception` 声明 `noreturn`。
-- 用户 ELF 必须用 `src/user/user.ld` 链接到 `0x10000000000`（1 TiB）；该基址在 `process.c` 的 `USER_LOAD_BASE`、链接脚本、`tools/zxe-pack.rb` 与 `apps/zcc/main.cpp` 同步。用户代码用 `-mcmodel=large`，与内核一样禁用 SSE/red zone。
+- 用户 ELF 是链接到 RVA 0 的 PIE（`-fpie`/`-fPIC` + `src/user/user.ld`，无 `-mcmodel=large`），由 `tools/zxe-pack.rb` 转成 ZXE v1；内核 `proc/zxe_loader.c` 按 64 KiB 对齐在 `[USER_LOAD_BASE, USER_LOAD_BASE + 1 GiB)` 内随机选择映像基址（最多 64 次，失败即拒绝启动），用户栈仍在 `0x10100000000`。ZXE 段权限强制 W^X（CODE=RX、RODATA=R、DATA/ZERO=RW，页 NX 由 `vmm_init`/AP trampoline 打开 EFER.NXE 支持）。`tools/zxe-check.rb` 校验 ZXE v1 结构，`tools/zxe-fixture-lib.rb` 生成动态链接测试用的最小共享库；依赖只从 `/lib` 按简单文件名加载。内核与用户代码一样禁用 SSE/red zone（Ring3 字体源码例外）。
 - 内核是 freestanding：无 libc，常规文件禁用浮点/SSE/MMX/AVX（`-mgeneral-regs-only`）；`kernel/font/ttf.c`、`kernel/font/stbtt.c` 在内核通过 `FONT_CFLAGS`，Ring3 用**同一份**源码通过 `ADE_FONT_CFLAGS` 启用 SSE2/x87 供 stb_truetype 使用。C++ 关闭异常、RTTI、threadsafe statics，不要用 STL/iostream。字符串/打印用 `kernel/lib` 里的实现。
 - initramfs 源在 `src/initramfs/`，`src/Makefile` 的 `RAMFS_FILES` 是打包白名单；新增文件必须同时改 `RAMFS_FILES`。`src/initramfs/data/` 只用于生成 FAT32 数据盘，不进入 initramfs。
 - 存储经 Ring3 驱动服务（AHCI 在 `/bin/drivers`，内核通过共享页 RPC）；FAT32 支持文件级创建/覆盖/删除（`kernel/fs/fat32_write.c`），按卷标 `ZHAOXUDATA` 选盘并挂到 `/mnt`，`/` 是 initramfs；VFS 读取 fd 为只读，写入走 `write_file`/`unlink` 路径。没有数据盘时 `/mnt/...` 自动回退到 initramfs 内嵌镜像 `/data/...`（`RAMFS_FILES` 的 data 条目，名字必须用大写 8.3 风格与 FAT 卷一致）。ISO 启动时字体来自光盘根 `/install/WQY.TTC`；安装后的系统字体来自目标盘 `ZHAOXUDATA` 数据分区（UEFI 与 BIOS 启动相同）。数据盘上的 MiSans/MiSans Global/Inter 优先。

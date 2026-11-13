@@ -6,7 +6,8 @@
 
 struct address_space;
 
-#define USER_MAX_PAGES 1024
+#define USER_MAX_PAGES 65536
+#define USER_MAP_INITIAL_CAPACITY 64
 
 enum process_state {
     PROC_UNUSED = 0,
@@ -29,11 +30,16 @@ struct process {
     int block_cap;   /* trusted block I/O (syscalls 38..42) */
     struct address_space *space;
     int mapping_count;
-    struct user_mapping mappings[USER_MAX_PAGES];
+    int mapping_capacity;
+    struct user_mapping *mappings;
     u64 entry;
     u64 user_stack;
 };
 
+u64 process_map_page(struct process *process, u64 virtual_address,
+                     u64 page_flags);
+int zxe_load_image(struct process *process, const u8 *image, u64 image_size,
+                   const char *path, u64 *entry_out);
 int process_user_write(struct process *process, u64 virtual_address,
                         const void *source, u64 length);
 struct process *process_current(void);
