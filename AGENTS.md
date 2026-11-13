@@ -99,7 +99,7 @@
 
 ## 版本与发布
 
-- 版本号唯一来源是仓库根的 `version.php`。改版本只改这个文件，然后在 `src/` 运行 `make version`（Ruby 脚本 `tools/version.rb` 同步 `src/kernel/include/version.h`、`src/initramfs/etc/motd`、`src/initramfs/etc/version`、`README.md`）；C/C++ 代码统一 include `<version.h>` 使用 `ZHAOXU_VERSION`/`ZHAOXU_CODENAME`，不要手工单独改派生文件。
+- 版本号唯一来源是仓库根的 `version.cfg`（`key = value`，支持引号字符串、null 与行尾注释）。改版本只改这个文件，然后在 `src/` 运行 `make version`（Ruby 脚本 `tools/version.rb` 同步 `src/kernel/include/version.h`、`src/initramfs/etc/motd`、`src/initramfs/etc/version`、`README.md`）；C/C++ 代码统一 include `<version.h>` 使用 `ZHAOXU_VERSION`/`ZHAOXU_CODENAME`，不要手工单独改派生文件。`kernel_cn` 缺失或为 null 时 motd 回退使用英文内核名。
 - 三个远端分支不同：GitHub `main`、Gitee `master`、GitCode `main`。
 - WSL 内没有 Git 凭据，push 会报 `could not read Username`。从 Windows Git 推送：
   ```powershell
