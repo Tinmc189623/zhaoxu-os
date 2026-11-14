@@ -235,8 +235,10 @@ static u8 *map_capability(u32 bus, u32 slot, u8 bar, u32 offset, u32 length)
 static int virtio_modern_init(u32 bus, u32 slot)
 {
     u32 status = config32(bus, slot, 0x04);
-    if (!(status & 0x100000u))
+    if (!(status & 0x100000u)) {
+        u_puts("[display] no PCI capability list\n");
         return -1;
+    }
     u8 capability = config8(bus, slot, 0x34);
     u32 device_multiplier = 1;
     for (u32 guard = 0; guard < 48 && capability; guard++) {
@@ -248,6 +250,15 @@ static int virtio_modern_init(u32 bus, u32 slot)
             u8 bar = config8(bus, slot, capability + 4);
             u32 offset = config32(bus, slot, capability + 8);
             u32 region = config32(bus, slot, capability + 12);
+            u_puts("[display] cap type=");
+            u_putn((long)type);
+            u_puts(" bar=");
+            u_putn((long)bar);
+            u_puts(" off=");
+            u_puthex((u64)offset);
+            u_puts(" len=");
+            u_puthex((u64)region);
+            u_puts("\n");
             if (type == PCI_CAP_COMMON) {
                 g_gpu.common = map_capability(bus, slot, bar, offset, region);
             } else if (type == PCI_CAP_NOTIFY) {
@@ -259,8 +270,10 @@ static int virtio_modern_init(u32 bus, u32 slot)
         }
         capability = next;
     }
-    if (!g_gpu.common || !g_gpu.notify)
+    if (!g_gpu.common || !g_gpu.notify) {
+        u_puts("[display] missing common/notify PCI caps\n");
         return -1;
+    }
     g_gpu.notify_multiplier = device_multiplier ? device_multiplier : 1;
     u_puts("[display] common=");
     u_puthex((u64)(uintptr_t)g_gpu.common);
@@ -281,26 +294,39 @@ static int virtio_modern_init(u32 bus, u32 slot)
     /* Negotiate VIRGL when the host offers it, plus VIRTIO_F_VERSION_1
      * (driver feature page 1, bit 0). */
     g_gpu.virgl = (device_features0 & 1u) ? 1 : 0;
+    u_puts("[display] features0=");
+    u_puthex((u64)device_features0);
+    u_puts(" features1=");
+    u_puthex((u64)device_features1);
+    u_puts("\n");
     common32_write(0x08, 0);
     common32_write(0x0C, g_gpu.virgl ? 1u : 0u);
     common32_write(0x08, 1);
     common32_write(0x0C, 1);
     common8_write(0x14, 1 | 2 | 8);
-    if (!(common8(0x14) & 8))
+    __sync_synchronize();
+    if (!(common8(0x14) & 8)) {
+        u_puts("[display] features not accepted\n");
         return -1;
+    }
 
     common16_write(0x16, 0);
+    __sync_synchronize();
     g_gpu.queue_size = common16(0x18);
-    if (!g_gpu.queue_size || g_gpu.queue_size > 64)
+    if (!g_gpu.queue_size || g_gpu.queue_size > 64) {
+        u_puts("[display] invalid control queue size\n");
         return -1;
+    }
 
     g_gpu.queue_desc_phys = sys_dev_alloc_page();
     g_gpu.queue_avail_phys = sys_dev_alloc_page();
     g_gpu.queue_used_phys = sys_dev_alloc_page();
     g_gpu.response_phys = sys_dev_alloc_page();
     if (!g_gpu.queue_desc_phys || !g_gpu.queue_avail_phys ||
-        !g_gpu.queue_used_phys || !g_gpu.response_phys)
+        !g_gpu.queue_used_phys || !g_gpu.response_phys) {
+        u_puts("[display] queue page allocation failed\n");
         return -1;
+    }
     memzero((void *)(uintptr_t)g_gpu.queue_desc_phys, 4096);
     memzero((void *)(uintptr_t)g_gpu.queue_avail_phys, 4096);
     memzero((void *)(uintptr_t)g_gpu.queue_used_phys, 4096);
@@ -322,8 +348,10 @@ static int virtio_modern_init(u32 bus, u32 slot)
             contiguous = 1;
         }
     }
-    if (contiguous < REQ_PAGES)
+    if (contiguous < REQ_PAGES) {
+        u_puts("[display] no contiguous request pages\n");
         return -1;
+    }
     g_gpu.request_phys = base;
     memzero((void *)(uintptr_t)g_gpu.request_phys, REQ_BYTES);
 
@@ -369,9 +397,13 @@ static int gpu_init(void)
                 continue;
             if ((id >> 16) != 0x1050)
                 continue;
+            u_puts("[display] modern virtio-gpu found\n");
             u32 command = pci_config_read32(bus, slot, 0, 4);
             pci_config_write32(bus, slot, 0, 4, command | 0x2);
-            return virtio_modern_init(bus, slot);
+            int result = virtio_modern_init(bus, slot);
+            if (result != 0)
+                u_puts("[display] modern init failed\n");
+            return result;
         }
     }
     return -1;

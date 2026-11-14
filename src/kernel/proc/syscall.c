@@ -532,6 +532,7 @@ static long syscall_map_phys(struct process *process, u64 physical, u64 size)
         if (vmm_space_map_page(process->space, address + i * PAGE_SIZE,
                                physical + i * PAGE_SIZE,
                                VMM_PRESENT | VMM_WRITABLE | VMM_USER |
+                                   VMM_PWT | VMM_PCD |
                                    VMM_EXECUTE_DISABLE) != 0) {
             for (u64 undo = 0; undo < i; undo++)
                 vmm_space_unmap_page(process->space,
