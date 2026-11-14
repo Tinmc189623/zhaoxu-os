@@ -35,10 +35,10 @@ extern void console_write(const char *text);
 #define VIRTIO_GPU_F_VIRGL (1u << 0)
 
 #define VIRTIO_GPU_CMD_GET_DISPLAY_INFO 0x0100
-#define VIRTIO_GPU_CMD_GET_CAPSET_INFO 0x0101
+#define VIRTIO_GPU_CMD_GET_CAPSET_INFO 0x0108
 #define VIRTIO_GPU_CMD_CTX_CREATE 0x0200
-#define VIRTIO_GPU_CMD_RESOURCE_CREATE_3D 0x0202
-#define VIRTIO_GPU_CMD_SUBMIT_3D 0x0204
+#define VIRTIO_GPU_CMD_RESOURCE_CREATE_3D 0x0204
+#define VIRTIO_GPU_CMD_SUBMIT_3D 0x0207
 
 #define VIRTIO_GPU_FLAG_FENCE (1u << 0)
 #define VIRTIO_GPU_MAX_SCANOUTS 16
@@ -94,6 +94,7 @@ struct virtio_gpu_resource_create_3d {
     u32 last_level;
     u32 nr_samples;
     u32 flags;
+    u32 padding;
 } __attribute__((packed));
 
 struct virtio_gpu_submit_3d {

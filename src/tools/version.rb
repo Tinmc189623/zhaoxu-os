@@ -109,7 +109,7 @@ patch(File.join(src, "initramfs", "etc", "motd"), [
 ])
 
 patch(File.join(src, "initramfs", "etc", "version"), [
-  [/\A#{Regexp.escape(NAME)} [0-9.]+ "[^"]*"/,
+  [/\A#{Regexp.escape(NAME)}[^\n]*/,
    "#{NAME} #{OS_VERSION} \"#{CODENAME}\" build #{BUILD}"],
   [/^Kernel: .*$/,
    "Kernel: #{KERNEL} #{KERNEL_VERSION}"],

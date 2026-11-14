@@ -10,7 +10,7 @@
 
 [🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) · [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) · [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) · [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
-**当前版本：0.7.1 「Yuanshuo」 · 内核 0.7.1 · 构建 1** · 历史版本见 [CHANGELOG.md](CHANGELOG.md)
+**当前版本：0.7.1 「Yuanshuo」 · 内核 0.7.1 · 构建 2** · 历史版本见 [CHANGELOG.md](CHANGELOG.md)
 
 </div>
 
@@ -33,7 +33,7 @@
 - 修复 `sendmsg` 控制消息长度回绕；memfd 与内核堆按可用内存的 1/4 动态限额/增长
 - M1：新增 Ring3 `/bin/display` KMS 服务（modern virtio-pci、2D 扫描输出、双缓冲 flip）
 - M2：新增 `/bin/wayland` 与 `/bin/wldemo`，Wayland wire/对象/wl_shm + SCM_RIGHTS 帧提交并合成到 KMS 扫描输出，QEMU 已验证
-- M3：xdg-shell configure/ack、wl_seat/wl_pointer、wl_keyboard keymap/enter、服务端标题栏/关闭/拖动已实现；M4 virgl 上下文起步，GPU 合成与 dmabuf 待续
+- M3：xdg-shell configure/ack、wl_seat/wl_pointer、wl_keyboard keymap/enter、服务端标题栏/关闭/拖动已实现；M4 virgl 上下文、3D 资源创建与 `CTX_ATTACH_RESOURCE` 已通，Windows QEMU 的 virglrenderer 不注册扫描资源，GPU 合成与 dmabuf 待续
 
 <table>
 <tr>
@@ -356,7 +356,7 @@ Zhaoxu OS/
 - 🧱 兼容性：无 POSIX/libc 兼容层，系统调用为 ZOS API 1.0；ZXE v1 支持按文件名从 `/lib` 加载依赖，无 ELF 动态链接器；Wayland 是自研 wire/对象核心，stock libwayland 客户端尚不能直接运行
 - 🌐 网络：无 TCP/IP 协议栈；已有 AF_UNIX 流 socket、poll、SCM_RIGHTS、memfd，用于 Wayland 与 M0 传输
 - 🔌 外设：输入为 PS/2 键盘/鼠标与 COM1；存储覆盖 AHCI/IDE/NVMe/SDHCI/USB MSC；有 HDA、e1000、I2C/SPI 与温度传感器；无 USB HID 与完整网络协议栈
-- 🖼️ 图形：M1 virtio-gpu 2D KMS 扫描输出与双缓冲 flip；合成仍为软件光栅；M2/M3 Wayland 核心与 xdg-shell/seat 已通，virgl GPU 合成与 linux-dmabuf 待续；无多显示器
+- 🖼️ 图形：M1 virtio-gpu 2D KMS 扫描输出与双缓冲 flip；合成仍为软件光栅；M2/M3 Wayland 核心与 xdg-shell/seat 已通；M4 virgl 上下文与 3D 资源可创建并附着，Windows QEMU 的 virglrenderer 不注册 2D/3D 扫描资源（`SET_SCANOUT` 返回 `0x1203`），GPU 合成与 linux-dmabuf 待续；无多显示器
 - ⚡ 电源：ACPI 仅用于关机/重启，无睡眠与休眠
 - 🛡️ 启动：引导加载器未签名，开启 Secure Boot 的机器需要先关闭 Secure Boot 或自行签名
 - ⏱️ 时间：仅 RTC 本地时间，无 NTP 与时区处理

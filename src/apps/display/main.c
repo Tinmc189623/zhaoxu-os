@@ -26,8 +26,16 @@ extern void pci_config_write32(u32 bus, u32 slot, u32 function, u32 offset,
 #define GPU_CMD_RESOURCE_FLUSH 0x0104
 #define GPU_CMD_TRANSFER_TO_HOST_2D 0x0105
 #define GPU_CMD_RESOURCE_ATTACH_BACKING 0x0106
+#define GPU_CMD_CTX_CREATE 0x0200
+#define GPU_CMD_CTX_ATTACH_RESOURCE 0x0202
+#define GPU_CMD_RESOURCE_CREATE_3D 0x0204
 
 #define GPU_FORMAT_BGRA 1
+#define GPU_FORMAT_RGBA 67
+#define GPU_TARGET_TEXTURE_2D 2
+#define GPU_BIND_RENDER_TARGET 2
+#define GPU_BIND_SCANOUT 256
+#define GPU_BIND_SHARED 512
 #define GPU_MAX_SCANOUTS 16
 #define REQ_BYTES (64u * 1024u)
 #define REQ_PAGES (REQ_BYTES / 4096u)
@@ -103,7 +111,7 @@ struct virtq_desc {
 struct virtq_avail {
     u16 flags;
     u16 index;
-    u16 ring[64];
+    u16 ring[256];
 } __attribute__((packed));
 
 struct virtq_used_elem {
@@ -114,7 +122,7 @@ struct virtq_used_elem {
 struct virtq_used {
     u16 flags;
     u16 index;
-    struct virtq_used_elem ring[64];
+    struct virtq_used_elem ring[256];
 } __attribute__((packed));
 
 static struct {
@@ -136,6 +144,26 @@ struct gpu_ctx_create {
     u32 nlen;
     u32 context_init;
     char debug_name[64];
+} __attribute__((packed));
+
+struct gpu_resource_3d {
+    u32 resource_id;
+    u32 target;
+    u32 format;
+    u32 bind;
+    u32 width;
+    u32 height;
+    u32 depth;
+    u32 array_size;
+    u32 last_level;
+    u32 nr_samples;
+    u32 flags;
+    u32 padding;
+} __attribute__((packed));
+
+struct gpu_ctx_resource {
+    u32 resource_id;
+    u32 padding;
 } __attribute__((packed));
 
 static u8 g_attach[REQ_BYTES];
@@ -310,10 +338,27 @@ static int virtio_modern_init(u32 bus, u32 slot)
         return -1;
     }
 
+    u16 num_queues = common16(0x12);
+    u_puts("[display] num_queues=");
+    u_putn((long)num_queues);
+    u_puts("\n");
+    for (u16 q = 0; q < num_queues && q < 4; q++) {
+        common16_write(0x16, q);
+        __sync_synchronize();
+        u_puts("[display] queue ");
+        u_putn((long)q);
+        u_puts(" size=");
+        u_putn((long)common16(0x18));
+        u_puts("\n");
+    }
     common16_write(0x16, 0);
     __sync_synchronize();
     g_gpu.queue_size = common16(0x18);
-    if (!g_gpu.queue_size || g_gpu.queue_size > 64) {
+    /* The device owns this value: QEMU's virtio-gpu-gl control queue offers
+     * 256 entries while the 2D device offers 64.  One 4 KiB page holds up to
+     * 256 descriptors (16 bytes each), which is the largest size we accept. */
+    if (!g_gpu.queue_size || g_gpu.queue_size > 256 ||
+        (g_gpu.queue_size & (g_gpu.queue_size - 1)) != 0) {
         u_puts("[display] invalid control queue size\n");
         return -1;
     }
@@ -376,7 +421,8 @@ static int virtio_modern_init(u32 bus, u32 slot)
         const char *name = "zhaoxu";
         for (u32 i = 0; i < 7; i++)
             context.debug_name[i] = name[i];
-        if (gpu_command(0x0200, &context, sizeof(context), NULL, 0) == 0)
+        if (gpu_command(GPU_CMD_CTX_CREATE, &context, sizeof(context), NULL,
+                        0) == 0)
             u_puts("[display] virgl context ready\n");
         else
             u_puts("[display] virgl context failed\n");
@@ -458,6 +504,20 @@ static int gpu_command(u32 type, const void *payload, u32 payload_size,
         return -1;
     }
     g_gpu.last_used = used->index;
+
+    /* The virtio-gpu control queue reports failures in the response header.
+     * Treat a missing response and any 0x12xx code as command failure so a
+     * resource that never existed is not used for scanout later. */
+    struct gpu_hdr result;
+    memcopy(&result, (void *)(uintptr_t)g_gpu.response_phys, sizeof(result));
+    if (result.type == 0 || result.type >= 0x1200u) {
+        u_puts("[display] command 0x");
+        u_puthex((u64)type);
+        u_puts(" response 0x");
+        u_puthex((u64)result.type);
+        u_puts("\n");
+        return -1;
+    }
     if (response && response_size)
         memcopy(response, (void *)(uintptr_t)g_gpu.response_phys,
                 response_size);
@@ -501,6 +561,37 @@ static int create_resource(u32 id, u32 width, u32 height)
     request.width = width;
     request.height = height;
     return gpu_command(GPU_CMD_RESOURCE_CREATE_2D, &request, sizeof(request),
+                       NULL, 0);
+}
+
+/* Create a host-side 3D render target.  Unlike a 2D resource this has no
+ * guest backing: the compositor draws into it through SUBMIT_3D and the
+ * device scans it out directly. */
+static int create_resource_3d(u32 id, u32 width, u32 height)
+{
+    struct gpu_resource_3d request;
+    memzero(&request, sizeof(request));
+    request.resource_id = id;
+    request.target = GPU_TARGET_TEXTURE_2D;
+    /* GLES/ANGLE exposes RGBA8 natively; BGRA texture uploads are unreliable
+     * on that backend, so GPU-rendered scanouts use RGBA. */
+    request.format = GPU_FORMAT_RGBA;
+    request.bind = GPU_BIND_RENDER_TARGET | GPU_BIND_SCANOUT | GPU_BIND_SHARED;
+    request.width = width;
+    request.height = height;
+    request.depth = 1;
+    request.array_size = 1;
+    return gpu_command(GPU_CMD_RESOURCE_CREATE_3D, &request, sizeof(request),
+                       NULL, 0);
+}
+
+/* Bind a resource to the virgl context so SUBMIT_3D can reference it. */
+static int attach_ctx_resource(u32 id)
+{
+    struct gpu_ctx_resource request;
+    request.resource_id = id;
+    request.padding = 0;
+    return gpu_command(GPU_CMD_CTX_ATTACH_RESOURCE, &request, sizeof(request),
                        NULL, 0);
 }
 
@@ -708,6 +799,22 @@ int user_main(long *stack)
             attach_backing((u32)i + 1, fds[i], pages) != 0) {
             u_puts("[display] resource setup failed\n");
             return 1;
+        }
+    }
+
+    if (g_gpu.virgl) {
+        if (create_resource_3d(3, width, height) != 0) {
+            u_puts("[display] 3D resource create failed\n");
+        } else {
+            if (set_scanout(3, width, height) == 0)
+                u_puts("[display] 3D scanout ready\n");
+            else
+                u_puts("[display] 3D scanout failed\n");
+            if (attach_ctx_resource(3) == 0)
+                u_puts("[display] 3D context attached\n");
+            else
+                u_puts("[display] 3D context attach failed\n");
+            set_scanout(1, width, height);
         }
     }
 

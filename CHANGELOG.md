@@ -2,6 +2,19 @@
 
 Zhaoxu OS 全部版本记录。当前版本的功能说明见 [README.md](README.md)；版本号唯一来源是 `version.cfg`。
 
+## 0.7.1 「Yuanshuo」 · build 2
+
+### 显示
+- `/bin/display` 不再把控制队列大小写死为 64：`virtio-gpu-gl-pci` 的控制队列是 256，2D 设备是 64，队列大小按设备值校验并分配，修复 gl 设备上的 `invalid control queue size`
+- 控制命令现在检查响应头；`0x12xx` 响应视为失败，创建资源失败不会再被当成成功并继续扫描输出
+- 3D 资源按 72 字节的 `RESOURCE_CREATE_3D` 发送（多出的 4 字节 padding 是 QEMU 11.1 的 uapi 要求），`CTX_CREATE`、3D 资源创建与 `CTX_ATTACH_RESOURCE` 在 `virtio-gpu-gl-pci` 上成功；`SET_SCANOUT` 仍返回 `0x1203`，Windows QEMU 的 virglrenderer 对 2D/3D 资源都不注册，GPU 合成与 dmabuf 待续
+
+### 修复
+- 遗留 `apps/drivers/virtio_gpu.c` 的 virtio-gpu 命令号改回规范值：`GET_CAPSET_INFO` 0x0108、`RESOURCE_CREATE_3D` 0x0204、`SUBMIT_3D` 0x0207；3D 资源结构补 `padding`
+- `8sh` 目标显式依赖 `kernel/include/version.h`，`make version` 后 shell 启动横幅不再显示旧 build 号
+- `tools/version.rb` 更新 `/etc/version` 时会连旧的 `build N` 一起替换，不再出现 `build 2 build 1`
+- `virtio-gpu-pci` 回归：64 项控制队列、2D 资源、Wayland 帧提交与 compositor 连接均正常，无命令错误
+
 ## 0.7.1 「Yuanshuo」 · build 1
 
 ### 构建

@@ -394,7 +394,7 @@ $(BUILD)/zaf_gfx_demo.uelf: $(ZAF_GFX_SRCS) $(ZAF_GFX_HDRS) user/user.ld
 CSH_SRCS := apps/csh/main.c apps/csh/io.c apps/csh/commands.c \
             apps/csh/builtins.c apps/csh/files.c apps/csh/run.c \
             apps/csh/write.c apps/csh/install.c user/userlib.c
-CSH_HDRS := apps/csh/csh.h user/userlib.h
+CSH_HDRS := apps/csh/csh.h user/userlib.h kernel/include/version.h
 
 $(BUILD)/8sh.uelf: $(CSH_SRCS) $(CSH_HDRS) user/user.ld
 	@mkdir -p $(dir $@)

@@ -107,7 +107,7 @@ KMS 原子提交（plane + framebuffer + crtc）
 | M1 | `/bin/display` KMS 服务 + virtio-gpu 2D + GBM dumb | 已验证：modern virtio-pci、memfd 扫描缓冲、双缓冲 flip；QEMU 1280x800 两帧不同（`out/m1e.png` / `out/m1f.png`） |
 | M2 | Wayland 核心 + wl_shm + wl_compositor | 已验证到 KMS：`/bin/wayland` 提供 wl_display/registry/compositor/surface/wl_shm/wl_shm_pool/wl_buffer，`/bin/wldemo` 经 AF_UNIX + SCM_RIGHTS 提交 320x240 memfd；服务端把帧合成到 `/bin/display` 的 1280x800 扫描缓冲并翻页，`out/m2frame.png` 可见居中蓝块。stock `weston-simple-shm` 仍缺 libwayland/epoll/eventfd |
 | M3 | xdg-shell + wl_seat | 已验证：xdg configure/ack、wl_seat/wl_pointer、wl_keyboard keymap/enter、服务端标题栏/关闭按钮/拖动、demo toplevel 合成；按键事件与 welcome/calc 迁移待续 |
-| M4 | virgl GPU 合成 + linux-dmabuf | 进行中：modern virtio 已协商 VIRGL 并发 `CTX_CREATE`；QEMU `virtio-gpu-gl-pci` 实测 `ctrl 0x103 error 0x1203`，GPU 合成与 dmabuf 尚未完成 |
+| M4 | virgl GPU 合成 + linux-dmabuf | 进行中：modern virtio 控制队列按设备值接受 256/64，`CTX_CREATE`、3D 资源（72 字节命令含 padding）创建与 `CTX_ATTACH_RESOURCE` 在 `virtio-gpu-gl-pci` 上成功；Windows QEMU 的 virglrenderer 对 2D/3D 资源均不注册，`SET_SCANOUT` 返回 `0x1203`，GPU 合成与 dmabuf 未完成 |
 | M5 | stock 客户端与一致性回归 | `weston-terminal`、xdg-shell 测试套件全绿 |
 
 依赖关系：M0 是 M2 的前提；M1 是 M2 呈现的前提；M4 可以并行于 M3。
