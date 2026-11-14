@@ -27,7 +27,7 @@ Zhaoxu OS 全部版本记录。当前版本的功能说明见 [README.md](README
 - 修复 `sendmsg` 控制消息长度整数回绕：`cmsg_len` 现在与剩余控制缓冲区长度比较，不再能越界读内核栈
 - memfd 总量限制为可用内存的 1/4，内核堆从固定 16 MiB 改为按可用内存 1/4 动态增长，避免单进程耗尽全部物理页
 - ISO 补齐规则要求的 `boot/zhaoxu/fonts/unicode.pf2`、`casper/vga.ko`、`install/MiSans.ttf` 与 `install/Inter.otf`；`dists`/`pool` 目录保留
-- UEFI live ISO 优先加载 `/install/MiSans.ttf`（7.9 MB），不再只依赖 WQY 回退；`boot/zhaoxu/fonts/unicode.pf2` 由 MiSans 经 grub-mkfont 生成
+- UEFI live ISO 优先加载 `/install/MiSans.ttf`（7.9 MB），不再只依赖 WQY 回退；`boot/zhaoxu/fonts/unicode.pf2` 由 Inter（OFL）经 grub-mkfont 生成
 - 新增 M0 传输层：AF_UNIX 流 socket、每进程描述符表、memfd、mmap、poll、SCM_RIGHTS（memfd），`/data/NET_TEST.ZXE` 回归通过
 
 ## 0.7.0 「Yuanshuo」
