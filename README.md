@@ -151,20 +151,20 @@
 
 ## 🧠 架构
 
-**微内核结构**：`kernel.elf` 只包含 CPU/内存/调度/IPC/VFS 核心，不含任何驱动或应用；AHCI、PS/2、鼠标、RTC、串口由 Ring 3 `/bin/drivers` 独占，Aqua Desktop Environment、8sh 与全部应用同样是 Ring 3 程序（规则 9）。
+**微内核结构**：`kernel.elf` 只包含 CPU/内存/调度/IPC/VFS 核心，不含任何驱动或应用；AHCI、IDE、NVMe、SDHCI、USB MSC、PS/2、鼠标、RTC、串口、HDA、e1000、I2C/SPI/温度传感器由 Ring 3 `/bin/drivers` 独占，virtio-gpu 由 `/bin/display` 独占；Aqua Desktop Environment、8sh、`/bin/wayland` 与全部应用同样是 Ring 3 程序（规则 9）。
 
 <table>
 <tr><th>层</th><th>语言</th><th>实现</th></tr>
 <tr><td>UEFI 引导</td><td>🧩 C + GAS</td><td><code>efi_bootmgr.c</code>（ZhaoxuBootMgr）→ <code>efi_main.c</code>（OSLDRX64）：GOP、RSDP、内存映射、页表、<code>ExitBootServices</code></td></tr>
 <tr><td>Legacy BIOS 引导</td><td>⚙️ FASM</td><td><code>bios_stage1.asm</code> → <code>bios_stage2.asm</code>：VBE、E820、长模式</td></tr>
 <tr><td>内核</td><td>🔧 C</td><td><code>kernel/</code>：GDT/TSS、IDT、PMM/VMM、堆、进程、VFS；不含任何驱动</td></tr>
-<tr><td>文件系统</td><td>💾 C（内核 + Ring3）</td><td>initramfs、FAT32（内核）、ext4（<code>fs/ext4</code> 核心 + <code>/bin/ext4fs</code> 服务）</td></tr>
+<tr><td>文件系统</td><td>💾 C（内核 + Ring3）</td><td>initramfs/rootfs/overlayfs/ramfs/ecryptfs、FAT32/vfat、ext4（<code>fs/ext4</code> + <code>/bin/ext4fs</code>）、只读 NTFS/exFAT/ISO 9660/CDFS/UDF/UBIFS</td></tr>
 <tr><td>底层汇编</td><td>🧱 GAS</td><td>入口、ISR 桩、用户态切换、内核镜像嵌入</td></tr>
-<tr><td>驱动</td><td>✨ Ada + C，Ring3</td><td><code>/bin/drivers</code>：AHCI、PS/2、鼠标、RTC、UART；内核通过共享页 RPC 访问</td></tr>
-<tr><td>Shell / 桌面 / 应用</td><td>🚀 C + C++20</td><td><code>apps/csh/</code>（8sh）、<code>apps/ADE/</code>（C++20）、<code>apps/ext4fs/</code> 与 <code>user/</code> 下的独立客户端</td></tr>
-<tr><td>图形框架</td><td>🎨 C + C++20</td><td><code>zaf/</code>：合成器、窗口管理、主题（Z1 设计中）；Ring3 复用 <code>kernel/gfx/render.c</code></td></tr>
-<tr><td>用户程序</td><td>🧵 C</td><td><code>user/</code>：<code>init</code>、<code>hello</code>，链接到 <code>0x10000000000</code>（1 TiB），运行在 ring 3</td></tr>
-<tr><td>工具链</td><td>💎 Ruby</td><td><code>tools/</code>：跨平台构建/运行入口、ELF→.zxe、BIOS 镜像、冒烟测试、实机截图、版本同步</td></tr>
+<tr><td>驱动</td><td>✨ Ada + C，Ring3</td><td><code>/bin/drivers</code>：AHCI/IDE/NVMe/SDHCI/USB MSC、PS/2/鼠标、RTC、UART、HDA、e1000、I2C/SPI、温度；<code>/bin/display</code>：virtio-gpu 2D scanout</td></tr>
+<tr><td>Shell / 桌面 / 应用</td><td>🚀 C + C++20</td><td><code>apps/csh/</code>（8sh）、<code>apps/ADE/</code>（C++20）、<code>apps/display/</code>（KMS）、<code>apps/wayland/</code>（Wayland 核心）、<code>apps/ext4fs/</code> 与 <code>user/</code> 下的独立客户端</td></tr>
+<tr><td>图形框架</td><td>🎨 C + C++20</td><td>Desktop Window Compositor + Desktop Window Manager；M1 KMS、M2 wl_shm 合成、M3 xdg-shell/seat；<code>zaf/</code> 仍是 Z0 光栅</td></tr>
+<tr><td>用户程序</td><td>🧵 C</td><td><code>user/</code>：`init`、`hello`、`wldemo` 等 ZXE；链接到 <code>0x10000000000</code>（1 TiB），运行在 ring 3</td></tr>
+<tr><td>工具链</td><td>💎 Make + Ruby</td><td>Makefile 是构建入口；<code>tools/</code> Ruby 只做 ELF→.zxe、BIOS 镜像、冒烟测试、截图、版本同步与 ISO 元数据</td></tr>
 </table>
 
 **内存布局**
@@ -196,8 +196,17 @@
 | 33 | `unlink` | 34 | `data_volume` |
 | 35 | `dev_alloc_page` | 36 | `boot_font` |
 | 37 | `spawn_arg` | 38–42 | 块 I/O `blk_count/info/read/write/flush` |
+| 43 | `socket` | 44 | `bind` |
+| 45 | `listen` | 46 | `accept` |
+| 47 | `connect` | 48 | `sendmsg` |
+| 49 | `recvmsg` | 50 | `poll` |
+| 51 | `memfd_create` | 52 | `ftruncate` |
+| 53 | `lseek` | 54 | `mmap` |
+| 55 | `munmap` | 56 | `fcntl` |
+| 57 | `socketpair` | 58 | `boot_wallpaper` |
+| 59 | `memfd_phys` | 60 | `map_phys` |
 
-完整定义在 `kernel/proc/syscall.c` 与 `user/userlib.h`，两处必须同步。
+完整定义在 `kernel/proc/syscall.c` 与 `user/userlib.h`，两处必须同步。59/60 只授予内核启动的 `/bin/display`（`display_cap`），用户进程无法读取扫描页物理地址或映射设备 BAR。
 
 ---
 
@@ -303,7 +312,7 @@ Zhaoxu OS/
 ├── CHANGELOG.md              全部版本记录
 ├── LICENSE                   Apache License 2.0
 ├── THIRD_PARTY_NOTICES.md    第三方代码与字体声明
-├── version.cfg               版本号唯一来源（os_version + kernel_version，make version 同步）
+├── version.cfg               版本号唯一来源（os_version + kernel_version + build，make version 同步）
 ├── docs/                     实机截图与架构/ZAF 设计文档
 └── src/
     ├── Makefile              四宿主构建规则（Linux/macOS/Windows/WSL）
@@ -311,25 +320,28 @@ Zhaoxu OS/
     │   ├── efi_bootmgr.c     UEFI 引导管理器 ZhaoxuBootMgr（C）
     │   ├── efi_main.c        UEFI OS 加载器 OSLDRX64（C）
     │   ├── bios_stage1.asm   MBR 引导扇区（FASM）
-    │   └── bios_stage2.asm   实模式 → 长模式（FASM）
+    │   ├── bios_stage2.asm   实模式 → 长模式（FASM）
+    │   └── fonts/            引导用 unicode.pf2（Inter + grub-mkfont）
     ├── kernel/
     │   ├── arch/x86_64/      入口、GDT/TSS、ISR、PIC、ring 3 切换
     │   ├── int/              IDT 与异常/IRQ/系统调用
     │   ├── drivers/          计时与 ACPI/AHCI 胶水（硬件驱动在 Ring3）
     │   ├── fs/               initramfs、FAT32、VFS、安装器
-    │   ├── proc/             ZXE/ELF64 加载与系统调用
-    │   ├── mem/              PMM、VMM、堆
-    │   ├── lib/              字符串、printf、UTF-8 控制台、C++ 运行时
+    │   ├── proc/             ZXE/ELF64 加载与系统调用、fd 表
+    │   ├── ipc/              命名端口、共享内存、AF_UNIX、memfd、poll
+    │   ├── crypto/           AES、SHA-256
+    │   ├── mem/              PMM、VMM、MMU、可增长堆
+    │   ├── lib/              字符串、printf、UTF-8 控制台、inflate
     │   ├── font/             8x8 点阵 + TrueType glyf 光栅化
     │   └── include/          内核公共头文件
     ├── fs/ext4/              OS 无关 ext4 核心（挂载/目录/读写/分配/格式化）
-    ├── zaf/                  Zhaoxu Aqua Framework（Z0 图形接口与 Z1 设计）
-    ├── drivers/              Ada/SPARK 驱动（AHCI、PS/2、鼠标、串口）
-    ├── apps/                 8sh（C）、Aqua Desktop Environment（C++20）、ext4fs 服务
-    ├── user/                 ring 3 程序、客户端与用户库
-    ├── initramfs/            ramfs 初始内容与数据盘素材
+    ├── zaf/                  Zhaoxu Aqua Framework（Z0 光栅接口）
+    ├── drivers/              Ada/SPARK 驱动（AHCI、IDE、NVMe、SDHCI、USB MSC/xHCI、PS/2、鼠标、串口）
+    ├── apps/                 8sh、Aqua Desktop Environment、display KMS、wayland 核心、ext4fs、Ring3 驱动 C 胶水
+    ├── user/                 ring 3 程序、Wayland/ADE 客户端、wl_demo、用户库
+    ├── initramfs/            ramfs 初始内容、数据盘素材与光标主题
     ├── tests/                host 测试（ext4、构建宿主检测）
-    ├── tools/                Ruby：build/run 入口、zxe-pack、bios-img、smoke、screenshot
+    ├── tools/                Makefile 构建入口；Ruby 辅助：zxe-pack、iso-*、smoke、screenshot、version
     └── out/                  构建产物（kernel.elf、ISO）
 ```
 
@@ -338,13 +350,13 @@ Zhaoxu OS/
 ## ⚠️ 当前限制
 
 - 🧵 进程与线程：最多 16 个进程、32 个线程；已有抢占式 SMP 调度和 `spawn/wait`，但无 `fork/exec`、信号、COW 与交换
-- 🧠 内存：无按需分页，用户页在加载时一次性映射；用户栈固定 32 页
-- 💾 文件系统：FAT32（内核读写）与 ext4（Ring3 服务读写）；FAT32 写入使用 8.3 短名；单文件上限 16 MiB，ext4 写入经共享页 RPC（单次 8 MiB）
+- 🧠 内存：无按需分页，用户页在加载时一次性映射；用户栈固定 32 页；内核堆按需增长到可用内存 1/4，memfd 单对象 64 MiB、总量 1/4，PMM 位图上限 64 GiB
+- 💾 文件系统：FAT32/vfat 可写（8.3 短名、单文件 16 MiB）与 ext4 可写（Ring3 服务，单次 RPC 8 MiB）；NTFS/exFAT/ISO 9660/CDFS/UDF/UBIFS 只读；另含 initramfs/rootfs/overlayfs/ramfs/ecryptfs
 - 🔐 权限：无多用户、文件属主与 Unix 权限位，所有用户进程以同一特权运行
-- 🧱 兼容性：无 POSIX/libc 兼容层，系统调用为 ZOS API 1.0；ZXE v1 支持按文件名从 `/lib` 加载依赖，无 ELF 动态链接器
-- 🌐 网络：无协议栈与 socket
-- 🔌 外设：输入仅 PS/2 键盘/鼠标与 COM1；存储仅 AHCI/IDE/SATA/SCSI，无 NVMe/USB；无音频与 USB HID
-- 🖼️ 图形：单帧缓冲、软件光栅化；ZAF 处于 Z1 设计/实现阶段，无 GPU 加速与多显示器
+- 🧱 兼容性：无 POSIX/libc 兼容层，系统调用为 ZOS API 1.0；ZXE v1 支持按文件名从 `/lib` 加载依赖，无 ELF 动态链接器；Wayland 是自研 wire/对象核心，stock libwayland 客户端尚不能直接运行
+- 🌐 网络：无 TCP/IP 协议栈；已有 AF_UNIX 流 socket、poll、SCM_RIGHTS、memfd，用于 Wayland 与 M0 传输
+- 🔌 外设：输入为 PS/2 键盘/鼠标与 COM1；存储覆盖 AHCI/IDE/NVMe/SDHCI/USB MSC；有 HDA、e1000、I2C/SPI 与温度传感器；无 USB HID 与完整网络协议栈
+- 🖼️ 图形：M1 virtio-gpu 2D KMS 扫描输出与双缓冲 flip；合成仍为软件光栅；M2/M3 Wayland 核心与 xdg-shell/seat 已通，virgl GPU 合成与 linux-dmabuf 待续；无多显示器
 - ⚡ 电源：ACPI 仅用于关机/重启，无睡眠与休眠
 - 🛡️ 启动：引导加载器未签名，开启 Secure Boot 的机器需要先关闭 Secure Boot 或自行签名
 - ⏱️ 时间：仅 RTC 本地时间，无 NTP 与时区处理
