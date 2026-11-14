@@ -162,12 +162,12 @@ iso-root/
 ## 版本与发布
 
 - 版本号唯一来源是仓库根的 `version.cfg`（`key = value`，支持引号字符串、null 与行尾注释），schema 固定为 `name`、`name_cn`、`kernel`、`kernel_cn`、`os_version`、`kernel_version`、`build`、`codename`。**OS 版本、内核版本与构建号是三个字段，不要合并成 `version`**；`build` 是正整数，日常构建/修订必须递增，语义版本（os_version/kernel_version）按规则 22 另改。改版本只改这个文件，然后在 `src/` 运行 `make version`（Ruby 脚本 `tools/version.rb` 同步 `src/kernel/include/version.h`、`src/initramfs/etc/motd`、`src/initramfs/etc/version`、`README.md`）；`version.h` 导出 `ZHAOXU_VERSION`（OS）、`ZHAOXU_CODENAME`、`ZHAOXU_KERNEL`、`ZHAOXU_KERNEL_VERSION`、`ZHAOXU_BUILD`，C/C++ 代码只 include `<version.h>`，不要手工改派生文件。ISO 文件名用 `os_version`，`tools/iso-manifest.rb` 把 OS、内核版本与构建号都写进光盘元数据；`name_cn`/`kernel_cn` 缺失或为 null 时分别回退到英文名。
-- 三个远端分支不同：GitHub `main`、Gitee `master`、GitCode `main`。
+- 远端分支：GitHub `main`、GitCode `main`、Gitee `master`。**推送优先级：GitHub > GitCode；Gitee 可忽略，不要求同步。**
 - WSL 内没有 Git 凭据，push 会报 `could not read Username`。从 Windows Git 推送：
   ```powershell
   # 在仓库根目录执行（PowerShell，PSCommandPath 所在目录）
   git push github main
-  git push gitee main:master
   git push gitcode main
+  # Gitee 可选，不要求：git push gitee main:master
   ```
-- 没有 CI；推送后用 `git ls-remote` 核对三个远端指向同一提交。
+- 没有 CI；推送后至少用 `git ls-remote` 核对 GitHub 与 GitCode 的 `main`。
