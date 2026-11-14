@@ -17,6 +17,11 @@ Zhaoxu OS 全部版本记录。当前版本的功能说明见 [README.md](README
 - 初始窗口改为左右并排，不再让计算器盖住欢迎窗口
 - 菜单栏改为半透明，窗口标题栏区分焦点/非焦点，阴影与内边距统一
 
+### 显示
+- 新增 M2 Wayland 核心：`/bin/wayland` 的 wl_display/wl_registry/wl_compositor/wl_surface/wl_shm/wl_shm_pool/wl_buffer 对象与 wire 编码，`/bin/wldemo` 通过 AF_UNIX + SCM_RIGHTS 提交 memfd 帧；服务端把 320x240 帧合成到 `/bin/display` 的 1280x800 KMS 扫描缓冲并翻页
+- 新增 Ring3 `/bin/display` KMS 服务：modern virtio-pci 控制队列、2D resource/backing、memfd 扫描缓冲、双缓冲 page flip；内核新增受限 `memfd_phys`/`map_phys`（仅 `display_cap`）用于扫描页和 PCI BAR
+- `apps/drivers` 不再初始化 virtio-gpu，控制队列归 `/bin/display` 独占；QEMU 1280x800 下验证两帧 scanout 不同
+
 ### 版本与内存
 - `version.cfg` 新增必填 `build` 构建号，`make version` 同步到 `version.h`、motd、`/etc/version`、README 与 ISO 元数据
 - QEMU 默认内存从 512 MiB 提升到 2 GiB；PMM 已验证管理 8 GiB（上限 64 GiB）

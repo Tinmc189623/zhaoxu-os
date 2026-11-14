@@ -65,6 +65,8 @@ typedef unsigned long long u64;
 #define SYS_FCNTL           56
 #define SYS_SOCKETPAIR      57
 #define SYS_BOOT_WALLPAPER  58
+#define SYS_MEMFD_PHYS      59
+#define SYS_MAP_PHYS        60
 
 #define AF_UNIX      1
 #define SOCK_STREAM  1
@@ -362,6 +364,19 @@ static inline long sys_boot_font(void *buffer, unsigned long capacity)
 static inline long sys_boot_wallpaper(void *buffer, unsigned long capacity)
 {
     return syscall3(SYS_BOOT_WALLPAPER, (long)buffer, (long)capacity, 0);
+}
+
+/* Display service only: physical address of one memfd page. */
+static inline long sys_memfd_phys(long fd, unsigned long index)
+{
+    return syscall3(SYS_MEMFD_PHYS, fd, index, 0);
+}
+
+/* Display service only: map a device MMIO BAR into the caller's address
+ * space and return the user virtual address. */
+static inline long sys_map_phys(unsigned long physical, unsigned long size)
+{
+    return syscall3(SYS_MAP_PHYS, (long)physical, (long)size, 0);
 }
 
 static inline void sys_exit(int status)

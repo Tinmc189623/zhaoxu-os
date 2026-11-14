@@ -364,6 +364,18 @@ void memfd_process_exit(struct process *process)
         mapping_destroy(orphans[i]);
 }
 
+/* Trusted display service only: expose the physical page behind a memfd
+ * mapping so virtio-gpu can attach it as scanout backing. */
+u64 memfd_physical(struct memfd *memfd, u32 index)
+{
+    if (!memfd)
+        return 0;
+    u64 lock = spin_lock_irqsave(&g_memfd_lock);
+    u64 physical = index < memfd->pages ? memfd->physical[index] : 0;
+    spin_unlock_irqrestore(&g_memfd_lock, lock);
+    return physical;
+}
+
 short memfd_poll(struct memfd *memfd, short events)
 {
     if (!memfd)

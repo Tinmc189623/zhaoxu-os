@@ -31,6 +31,8 @@
 - 内核内嵌 initramfs 使用 zlib 压缩，legacy BIOS 的 `KERNEL.BIN` 回到 448 KiB 限制内
 - ISO 目录结构补齐 `boot/zhaoxu/fonts/unicode.pf2`、`casper/vga.ko`、`install/MiSans.ttf` 与 `install/Inter.otf`；UEFI live ISO 优先使用 MiSans
 - 修复 `sendmsg` 控制消息长度回绕；memfd 与内核堆按可用内存的 1/4 动态限额/增长
+- M1：新增 Ring3 `/bin/display` KMS 服务（modern virtio-pci、2D 扫描输出、双缓冲 flip）
+- M2：新增 `/bin/wayland` 与 `/bin/wldemo`，Wayland wire/对象/wl_shm + SCM_RIGHTS 帧提交并合成到 KMS 扫描输出，QEMU 已验证
 
 <table>
 <tr>

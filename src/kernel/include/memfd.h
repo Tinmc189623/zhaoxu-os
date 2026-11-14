@@ -21,6 +21,7 @@ u64 memfd_mmap(struct memfd *memfd, struct process *process, u64 length,
                u64 offset);
 int memfd_munmap(struct process *process, u64 address, u64 length);
 short memfd_poll(struct memfd *memfd, short events);
+u64 memfd_physical(struct memfd *memfd, u32 index);
 void memfd_ref(struct memfd *memfd);
 void memfd_release(struct memfd *memfd);
 void memfd_process_exit(struct process *process);

@@ -193,6 +193,14 @@ void kernel_main(struct boot_info *boot)
         hlt();
 #endif
 
+    /* M1: the KMS service owns virtio-gpu scanout and runs before the
+     * desktop.  Without a virtio-gpu it exits immediately. */
+    u64 display_pid = process_spawn("/bin/display", 0, NULL);
+    if (display_pid)
+        kprintf("[display] Ring3 KMS service pid %llu\n", display_pid);
+    else
+        kprintf("[display] /bin/display unavailable\n");
+
     if (g_boot.framebuffer_base) {
         console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
         kprintf("\nBoot complete. Starting Aqua Desktop Environment.\n\n");
@@ -214,6 +222,24 @@ void kernel_main(struct boot_info *boot)
     console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
     kprintf("\nBoot complete. No framebuffer; starting 8sh.\n\n");
     console_reset_color();
+
+    /* M2 smoke: the Wayland server is a service; the shm demo client runs
+     * once so the wire/SCM_RIGHTS path is exercised without a GUI. */
+    u64 wayland_pid = process_spawn("/bin/wayland", 0, NULL);
+    if (wayland_pid) {
+        timer_sleep_ms(100);
+        u64 demo_pid = process_spawn("/bin/wldemo", 0, NULL);
+        if (demo_pid) {
+            int demo_status = -1;
+            process_wait(demo_pid, &demo_status);
+            kprintf("[wayland] wldemo exit %d\n", demo_status);
+        } else {
+            kprintf("[wayland] /bin/wldemo unavailable\n");
+        }
+    } else {
+        kprintf("[wayland] /bin/wayland unavailable\n");
+    }
+
     for (;;) {
         u64 shell_pid = process_spawn("/bin/8sh", 0, NULL);
         if (!shell_pid) {

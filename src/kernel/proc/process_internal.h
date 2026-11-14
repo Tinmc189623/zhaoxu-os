@@ -29,6 +29,7 @@ struct process {
     int exit_code;
     int thread_reaped;
     int block_cap;   /* trusted block I/O (syscalls 38..42) */
+    int display_cap; /* trusted KMS scanout pages (/bin/display) */
     struct address_space *space;
     int mapping_count;
     int mapping_capacity;

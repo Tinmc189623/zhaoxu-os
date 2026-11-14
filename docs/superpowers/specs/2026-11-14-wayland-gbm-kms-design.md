@@ -104,8 +104,8 @@ KMS 原子提交（plane + framebuffer + crtc）
 | 里程碑 | 内容 | 验收 |
 | --- | --- | --- |
 | M0 | AF_UNIX、fd 表、SCM_RIGHTS、memfd、poll | 已验证。`kernel/ipc/zfd.c`、`unix_socket.c`、`memfd.c`、`proc/io_syscall.c`；`/data/NET_TEST.ZXE` 在 OVMF 下输出 `[m0] socket, poll, memfd, mmap, SCM_RIGHTS PASS`，退出码 0 |
-| M1 | `/bin/display` KMS 服务 + virtio-gpu 2D + GBM dumb | QEMU `virtio-gpu-pci` 看到双缓冲纯色/移动矩形，flip 不撕裂 |
-| M2 | Wayland 核心 + wl_shm + wl_compositor | `weston-simple-shm` 在 Zhaoxu 上出图 |
+| M1 | `/bin/display` KMS 服务 + virtio-gpu 2D + GBM dumb | 已验证：modern virtio-pci、memfd 扫描缓冲、双缓冲 flip；QEMU 1280x800 两帧不同（`out/m1e.png` / `out/m1f.png`） |
+| M2 | Wayland 核心 + wl_shm + wl_compositor | 已验证到 KMS：`/bin/wayland` 提供 wl_display/registry/compositor/surface/wl_shm/wl_shm_pool/wl_buffer，`/bin/wldemo` 经 AF_UNIX + SCM_RIGHTS 提交 320x240 memfd；服务端把帧合成到 `/bin/display` 的 1280x800 扫描缓冲并翻页，`out/m2frame.png` 可见居中蓝块。stock `weston-simple-shm` 仍缺 libwayland/epoll/eventfd |
 | M3 | xdg-shell + wl_seat | 窗口拖动/关闭、键盘输入；welcome/calc 迁移 |
 | M4 | virgl GPU 合成 + linux-dmabuf | 合成器 GPU 出帧，客户端 dmabuf 导入 |
 | M5 | stock 客户端与一致性回归 | `weston-terminal`、xdg-shell 测试套件全绿 |

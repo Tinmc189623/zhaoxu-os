@@ -92,6 +92,15 @@ SCHED_STATS ?= 0
 CFLAGS += -DPROC_SELFTEST=$(PROC_SELFTEST) -DDEBUG_SERIAL=$(DEBUG_SERIAL) -DSCHED_STATS=$(SCHED_STATS)
 M0_BOOT_TEST ?= 0
 CFLAGS += -DM0_BOOT_TEST=$(M0_BOOT_TEST)
+# make does not track CFLAGS changes; a stamp keyed by the test mode forces
+# kernel/main.o to rebuild when M0_BOOT_TEST toggles, so an ISO cannot
+# silently ship the boot-time transport self-test kernel.
+M0_STAMP := $(BUILD)/m0-$(M0_BOOT_TEST).stamp
+$(BUILD)/m0-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/m0-*.stamp
+	@touch $@
+$(BUILD)/kernel/main.o: $(M0_STAMP)
 ADAFLAGS := -c -gnatp -gnat2022 -O2 -g -fno-pie \
             -fno-stack-protector -mno-red-zone -mcmodel=kernel \
             -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -mno-avx \
@@ -349,6 +358,29 @@ $(BUILD)/install_client.uelf: $(INSTALL_SRCS) $(WELCOME_HDRS) user/user.ld
 	$(CC) $(USER_CFLAGS) -Iuser -Iuser/lib/include -Ikernel/include \
 	  $(USER_LDFLAGS) -o $@ $(INSTALL_SRCS)
 
+# ---- Ring3 KMS display service (M1) ---------------------------------
+DISPLAY_SRCS := apps/display/main.c apps/drivers/glue.c user/userlib.c
+DISPLAY_HDRS := user/userlib.h kernel/include/io.h kernel/include/types.h
+
+$(BUILD)/display.uelf: $(DISPLAY_SRCS) $(DISPLAY_HDRS) user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -Iapps/drivers -Iuser -Ikernel/include \
+	  $(USER_LDFLAGS) -o $@ $(DISPLAY_SRCS)
+
+# ---- Wayland core server and shm demo (M2) --------------------------
+WAYLAND_SRCS := apps/wayland/main.c user/userlib.c
+WLDEMO_SRCS := user/wl_demo.c user/userlib.c
+
+$(BUILD)/wayland.uelf: $(WAYLAND_SRCS) user/userlib.h user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -Iuser -Ikernel/include \
+	  $(USER_LDFLAGS) -o $@ $(WAYLAND_SRCS)
+
+$(BUILD)/wldemo.uelf: $(WLDEMO_SRCS) user/userlib.h user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -Iuser -Ikernel/include \
+	  $(USER_LDFLAGS) -o $@ $(WLDEMO_SRCS)
+
 # ---- ZAF graphics (Z0) ----------------------------------------------
 ZAF_GFX_HDRS := user/lib/include/zaf_gfx.h user/userlib.h
 ZAF_GFX_SRCS := user/zaf_gfx_demo.c user/lib/zaf_gfx_soft.c user/userlib.c
@@ -432,7 +464,8 @@ $(BUILD)/drivers.uelf: $(DRV_OBJS) user/user.ld
 # ---- initramfs -------------------------------------------------------
 RAMFS := $(BUILD)/initramfs
 RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/aqua $(RAMFS)/bin/8sh \
-               $(RAMFS)/bin/drivers $(RAMFS)/bin/ext4fs \
+               $(RAMFS)/bin/drivers $(RAMFS)/bin/ext4fs $(RAMFS)/bin/display \
+               $(RAMFS)/bin/wayland $(RAMFS)/bin/wldemo \
                $(RAMFS)/bin/apps/welcome.zxe $(RAMFS)/bin/apps/calc.zxe \
                $(RAMFS)/bin/apps/install.zxe \
                $(RAMFS)/boot/BOOTX64.EFI \
@@ -471,6 +504,18 @@ $(RAMFS)/bin/drivers: $(OUT)/drivers.zxe
 	cp $< $@
 
 $(RAMFS)/bin/ext4fs: $(OUT)/ext4fs.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/bin/display: $(OUT)/display.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/bin/wayland: $(OUT)/wayland.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/bin/wldemo: $(OUT)/wldemo.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 

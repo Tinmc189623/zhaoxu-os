@@ -412,7 +412,7 @@ int user_main(long *stack)
     (void)spi_pch_init();
     (void)thermal_init();
     (void)hda_init();
-    (void)virtio_gpu_init();
+    /* M1: the control queue is owned by /bin/display's KMS service. */
 
     fill_info();
 

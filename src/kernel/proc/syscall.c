@@ -17,6 +17,7 @@
 #include <ipc.h>
 #include <kprintf.h>
 #include <mem.h>
+#include <memfd.h>
 #include <rtc.h>
 #include <shm.h>
 #include <smp.h>
@@ -87,6 +88,8 @@
 #define SYS_FCNTL           56
 #define SYS_SOCKETPAIR      57
 #define SYS_BOOT_WALLPAPER  58
+#define SYS_MEMFD_PHYS      59
+#define SYS_MAP_PHYS        60
 
 #define BLK_SECTOR_BYTES 512u
 #define BLK_MAX_SECTORS  8u
@@ -494,6 +497,51 @@ static long syscall_boot_wallpaper(struct process *process, u64 buffer_pointer,
     return (long)boot->wallpaper_size;
 }
 
+/* Only the kernel-spawned display service may turn scanout memfd pages into
+ * virtio-gpu backing addresses. */
+static long syscall_memfd_phys(struct process *process, u64 fd, u64 index)
+{
+    if (!process || !process->display_cap)
+        return -1;
+    struct zfd_entry *entry = zfd_get(process, (int)fd);
+    if (!entry || entry->type != ZFD_TYPE_MEMFD)
+        return -1;
+    u64 physical = memfd_physical((struct memfd *)entry->object, (u32)index);
+    return physical ? (long)physical : -1;
+}
+
+static u64 g_display_map_va = 0x0000010200000000ULL; /* 1 TiB + 8 GiB */
+
+/* Map a device MMIO BAR (possibly above 4 GiB) into the trusted display
+ * service.  PCI BARs on modern virtio live above the 0..4 GiB identity map. */
+static long syscall_map_phys(struct process *process, u64 physical, u64 size)
+{
+    if (!process || !process->space || !process->display_cap)
+        return -1;
+    if (!size || (physical & 0xFFF) || (size & 0xFFF))
+        return -1;
+    u64 pages = size / PAGE_SIZE;
+    if (pages > 4096)
+        return -1;
+    u64 address = g_display_map_va;
+    if (address + size > 0x0000018000000000ULL)
+        return -1;
+    g_display_map_va += size;
+
+    for (u64 i = 0; i < pages; i++) {
+        if (vmm_space_map_page(process->space, address + i * PAGE_SIZE,
+                               physical + i * PAGE_SIZE,
+                               VMM_PRESENT | VMM_WRITABLE | VMM_USER |
+                                   VMM_EXECUTE_DISABLE) != 0) {
+            for (u64 undo = 0; undo < i; undo++)
+                vmm_space_unmap_page(process->space,
+                                     address + undo * PAGE_SIZE);
+            return -1;
+        }
+    }
+    return (long)address;
+}
+
 static long syscall_rtc(struct process *process, u64 time_pointer)
 {
     struct rtc_time now;
@@ -846,6 +894,12 @@ void syscall_dispatch(struct interrupt_frame *frame)
         break;
     case SYS_BOOT_WALLPAPER:
         result = syscall_boot_wallpaper(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_MEMFD_PHYS:
+        result = syscall_memfd_phys(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_MAP_PHYS:
+        result = syscall_map_phys(process, frame->rdi, frame->rsi);
         break;
     default:
         result = -1;

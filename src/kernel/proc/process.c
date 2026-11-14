@@ -398,7 +398,8 @@ static u64 spawn_image(const u8 *image, u64 image_size, const char *name,
      * (dev_start, fs_service_start) run without a current process. */
     int trusted = (parent == NULL) && name &&
                   (strcmp(name, "/bin/drivers") == 0 ||
-                   strcmp(name, "/bin/ext4fs") == 0);
+                   strcmp(name, "/bin/ext4fs") == 0 ||
+                   strcmp(name, "/bin/display") == 0);
     process->space = vmm_space_create(trusted);
     if (!process->space) {
         process_fail(process);
@@ -406,6 +407,8 @@ static u64 spawn_image(const u8 *image, u64 image_size, const char *name,
     }
     process->block_cap = (parent == NULL) && name &&
                          strcmp(name, "/bin/ext4fs") == 0;
+    process->display_cap = (parent == NULL) && name &&
+                           strcmp(name, "/bin/display") == 0;
 
     const char *default_argv[1] = { name ? name : "<memory>" };
     const char **stack_argv = (argc > 0) ? (const char **)argv : default_argv;
@@ -419,7 +422,10 @@ static u64 spawn_image(const u8 *image, u64 image_size, const char *name,
         return 0;
     }
 
-    int affinity = (name && strcmp(name, "/bin/drivers") == 0) ? 0 : -1;
+    int affinity = (name && (strcmp(name, "/bin/drivers") == 0 ||
+                             strcmp(name, "/bin/display") == 0))
+                       ? 0
+                       : -1;
     struct thread *thread = kthread_create_ctx(
         name ? name : "user", process_entry, process, affinity,
         process->space->cr3, process->space, process);
