@@ -86,4 +86,4 @@ If `xorriso`/`mtools` are unavailable, boot the new kernel over OVMF from a `vvf
 - `version.cfg` is the only place to edit versions (`os_version`, `kernel_version`, and the positive integer `build`); run `make version` in `src/` afterward. Bump `build` for every routine build/revision; major = epic change, minor = 10+ features, patch = routine.
 - `README.md` holds only the latest release; all history goes in `CHANGELOG.md`. README must keep Emoji/HTML.
 - Sources of truth: `AGENTS.md` for rules and invariants, `docs/superpowers/` for designs, `version.cfg` for versions.
-- Push priority: GitHub > GitCode; Gitee is optional and may be skipped. Branches: GitHub `main`, GitCode `main`, Gitee `master`. Pushing from WSL fails without credentials; use Windows Git for `git push github main` and `git push gitcode main`.
+- Push priority: GitHub is the primary remote; GitCode is synced only for releases; Gitee is ignored (do not commit or push). Branches: GitHub `main`, GitCode `main`, Gitee `master`. Pushing from WSL fails without credentials; use Windows Git for `git push github main` and only `git push gitcode main` on release.
