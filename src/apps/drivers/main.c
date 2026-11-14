@@ -22,6 +22,44 @@ extern const char *ahci_disk_model(int disk);
 extern int ahci_disk_read(int disk, u64 lba, u32 count, void *buffer);
 extern int ahci_disk_write(int disk, u64 lba, u32 count, const void *buffer);
 extern int ahci_disk_flush(int disk);
+extern int usb_msc_init(void);
+extern u64 usb_msc_disk_sectors(int disk);
+extern int usb_msc_disk_port(int disk);
+extern const char *usb_msc_disk_model(int disk);
+extern int usb_msc_disk_read(int disk, u64 lba, u32 count, void *buffer);
+extern int usb_msc_disk_write(int disk, u64 lba, u32 count,
+                              const void *buffer);
+extern int usb_msc_disk_flush(int disk);
+extern int nvme_init(void);
+extern int nvme_disk_count(void);
+extern u64 nvme_disk_sectors(void);
+extern const char *nvme_disk_model(void);
+extern int nvme_disk_read(u64 lba, u32 count, void *buffer);
+extern int nvme_disk_write(u64 lba, u32 count, const void *buffer);
+extern int nvme_disk_flush(void);
+extern int sdhci_init(void);
+extern int sdhci_disk_count(void);
+extern u64 sdhci_disk_sectors(void);
+extern const char *sdhci_disk_model(void);
+extern int sdhci_disk_read(u64 lba, u32 count, void *buffer);
+extern int sdhci_disk_write(u64 lba, u32 count, const void *buffer);
+extern int sdhci_disk_flush(void);
+extern int ide_init(void);
+extern int ide_drive_count(void);
+extern u64 ide_drive_sectors(int drive);
+extern int ide_drive_bus(int drive);
+extern int ide_drive_unit(int drive);
+extern const char *ide_drive_model(int drive);
+extern int ide_drive_read(int drive, u64 lba, u32 count, void *buffer);
+extern int e1000_init(void);
+extern int hda_init(void);
+extern int ehci_init(void);
+extern int ohci_init(void);
+extern int i2c_dw_init(void);
+extern int spi_pch_init(void);
+extern int thermal_init(void);
+extern void thermal_poll(struct dev_header *header);
+extern int virtio_gpu_init(void);
 extern void ps2_init(void);
 extern u8 ps2_status(void);
 extern int mouse_init(int width, int height);
@@ -42,6 +80,44 @@ static u8 *g_data;
 static int g_last_mouse_x;
 static int g_last_mouse_y;
 static int g_last_buttons;
+static int g_ahci_disks;
+static int g_nvme_disks;
+static int g_sd_disks;
+static int g_ide_disks;
+static int g_usb_disks;
+
+/* Device order inside dev_header: AHCI, NVMe, SD/MMC, IDE, USB storage.
+ * The header has room for sixteen disks. */
+static int disk_total(void)
+{
+    int total = g_ahci_disks + g_nvme_disks + g_sd_disks + g_ide_disks +
+                g_usb_disks;
+    return total > 16 ? 16 : total;
+}
+
+static int disk_is_nvme(int disk)
+{
+    return disk >= g_ahci_disks &&
+           disk < g_ahci_disks + g_nvme_disks;
+}
+
+static int disk_is_sd(int disk)
+{
+    int base = g_ahci_disks + g_nvme_disks;
+    return disk >= base && disk < base + g_sd_disks;
+}
+
+static int disk_is_ide(int disk)
+{
+    int base = g_ahci_disks + g_nvme_disks + g_sd_disks;
+    return disk >= base && disk < base + g_ide_disks;
+}
+
+static int disk_is_usb(int disk)
+{
+    int base = g_ahci_disks + g_nvme_disks + g_sd_disks + g_ide_disks;
+    return disk >= base;
+}
 
 static u64 parse_hex(const char *text)
 {
@@ -131,25 +207,111 @@ static void input_poll(void)
     g_input->mouse_ready = (u32)mouse_ready();
 }
 
+static void copy_model(int index, const char *model)
+{
+    usize n = 0;
+    while (model && model[n] && n + 1 < sizeof(g_header->models[index])) {
+        g_header->models[index][n] = model[n];
+        n++;
+    }
+    g_header->models[index][n] = 0;
+}
+
+static void copy_model_ext(int index, const char *model)
+{
+    usize n = 0;
+    while (model && model[n] &&
+           n + 1 < sizeof(g_header->models_ext[index])) {
+        g_header->models_ext[index][n] = model[n];
+        n++;
+    }
+    g_header->models_ext[index][n] = 0;
+}
+
 static void fill_info(void)
 {
-    int count = ahci_disk_count();
-    if (count < 0)
-        count = 0;
-    if (count > 8)
-        count = 8;
+    int count = disk_total();
+    int usb_base = g_ahci_disks + g_nvme_disks + g_sd_disks + g_ide_disks;
+    int ide_base = g_ahci_disks + g_nvme_disks + g_sd_disks;
     g_header->disk_count = (u32)count;
     for (int i = 0; i < count; i++) {
-        g_header->ports[i] = (u32)ahci_disk_port(i);
-        g_header->sectors[i] = ahci_disk_sectors(i);
-        const char *model = ahci_disk_model(i);
-        usize n = 0;
-        while (model && model[n] && n + 1 < sizeof(g_header->models[i])) {
-            g_header->models[i][n] = model[n];
-            n++;
+        const char *model = NULL;
+        int port = -1;
+        u64 sectors = 0;
+        if (disk_is_nvme(i)) {
+            sectors = nvme_disk_sectors();
+            model = nvme_disk_model();
+        } else if (disk_is_sd(i)) {
+            sectors = sdhci_disk_sectors();
+            model = sdhci_disk_model();
+        } else if (disk_is_ide(i)) {
+            int drive = i - ide_base;
+            port = ide_drive_bus(drive);
+            sectors = ide_drive_sectors(drive);
+            model = ide_drive_model(drive);
+        } else if (disk_is_usb(i)) {
+            int usb = i - usb_base;
+            port = usb_msc_disk_port(usb);
+            sectors = usb_msc_disk_sectors(usb);
+            model = usb_msc_disk_model(usb);
+        } else {
+            port = ahci_disk_port(i);
+            sectors = ahci_disk_sectors(i);
+            model = ahci_disk_model(i);
         }
-        g_header->models[i][n] = 0;
+        if (i < 8) {
+            g_header->ports[i] = (u32)port;
+            g_header->sectors[i] = sectors;
+            copy_model(i, model ? model : "disk");
+        } else {
+            g_header->ports_ext[i - 8] = (u32)port;
+            g_header->sectors_ext[i - 8] = sectors;
+            copy_model_ext(i - 8, model ? model : "disk");
+        }
     }
+}
+
+static int block_read(int disk, u64 lba, u32 count, void *buffer)
+{
+    int usb_base = g_ahci_disks + g_nvme_disks + g_sd_disks + g_ide_disks;
+    int ide_base = g_ahci_disks + g_nvme_disks + g_sd_disks;
+    if (disk_is_nvme(disk))
+        return nvme_disk_read(lba, count, buffer);
+    if (disk_is_sd(disk))
+        return sdhci_disk_read(lba, count, buffer);
+    if (disk_is_ide(disk))
+        return ide_drive_read(disk - ide_base, lba, count, buffer);
+    if (disk_is_usb(disk))
+        return usb_msc_disk_read(disk - usb_base, lba, count, buffer);
+    return ahci_disk_read(disk, lba, count, buffer);
+}
+
+static int block_write(int disk, u64 lba, u32 count, const void *buffer)
+{
+    int usb_base = g_ahci_disks + g_nvme_disks + g_sd_disks + g_ide_disks;
+    if (disk_is_nvme(disk))
+        return nvme_disk_write(lba, count, buffer);
+    if (disk_is_sd(disk))
+        return sdhci_disk_write(lba, count, buffer);
+    if (disk_is_ide(disk))
+        return -1; /* the IDE driver is read-only */
+    if (disk_is_usb(disk))
+        return usb_msc_disk_write(disk - usb_base, lba, count, buffer);
+    return ahci_disk_write(disk, lba, count, buffer);
+}
+
+static int block_flush(int disk)
+{
+    int usb_base = g_ahci_disks + g_nvme_disks + g_sd_disks + g_ide_disks;
+    if (disk_is_nvme(disk))
+        return nvme_disk_flush();
+    if (disk_is_sd(disk))
+        return sdhci_disk_flush();
+    if (disk_is_ide(disk))
+        return 0;
+    if (disk_is_usb(disk))
+        return usb_msc_disk_flush(disk - usb_base);
+    return ahci_disk_flush(disk);
 }
 
 static int handle_request(void)
@@ -159,17 +321,23 @@ static int handle_request(void)
 
     __sync_synchronize();
     int status = 0;
+    int disk = (int)g_header->disk;
     switch (g_header->op) {
     case DEV_OP_READ:
-        status = ahci_disk_read((int)g_header->disk, g_header->lba,
-                                g_header->count, g_data);
+        status = disk >= 0 && disk < disk_total()
+                     ? block_read(disk, g_header->lba, g_header->count, g_data)
+                     : -1;
         break;
     case DEV_OP_WRITE:
-        status = ahci_disk_write((int)g_header->disk, g_header->lba,
-                                 g_header->count, g_data);
+        status = disk >= 0 && disk < disk_total()
+                     ? block_write(disk, g_header->lba, g_header->count,
+                                   g_data)
+                     : -1;
         break;
     case DEV_OP_FLUSH:
-        status = ahci_disk_flush((int)g_header->disk);
+        status = disk >= 0 && disk < disk_total()
+                     ? block_flush(disk)
+                     : -1;
         break;
     case DEV_OP_INFO:
         fill_info();
@@ -197,7 +365,7 @@ int user_main(long *stack)
 
     u64 header_phys = parse_hex(argv[0]);
     g_header = (struct dev_header *)(u64)header_phys;
-    if (g_header->magic != DEV_MAGIC)
+    if (!g_header || g_header->magic != DEV_MAGIC)
         return 2;
     g_data = (u8 *)(u64)g_header->data_phys;
     g_input = (struct dev_input *)(u64)g_header->input_phys;
@@ -216,10 +384,36 @@ int user_main(long *stack)
         g_last_mouse_y = mouse_y();
     }
 
-    int disks = ahci_init();
-    if (disks < 0)
-        disks = ahci_disk_count();
-    (void)disks;
+    (void)ahci_init();
+    g_ahci_disks = ahci_disk_count();
+    if (g_ahci_disks < 0)
+        g_ahci_disks = 0;
+
+    g_nvme_disks = nvme_init() == 0 ? nvme_disk_count() : 0;
+    if (g_nvme_disks < 0)
+        g_nvme_disks = 0;
+    g_sd_disks = sdhci_init() == 0 ? sdhci_disk_count() : 0;
+    if (g_sd_disks < 0)
+        g_sd_disks = 0;
+    g_ide_disks = ide_init() == 0 ? ide_drive_count() : 0;
+    if (g_ide_disks < 0)
+        g_ide_disks = 0;
+
+    g_usb_disks = usb_msc_init();
+    if (g_usb_disks < 0)
+        g_usb_disks = 0;
+
+    /* Network, audio, USB 1.1/2.0 companions, buses and accelerators are
+     * optional: each driver returns -1 when its hardware is absent. */
+    (void)e1000_init();
+    (void)ehci_init();
+    (void)ohci_init();
+    (void)i2c_dw_init();
+    (void)spi_pch_init();
+    (void)thermal_init();
+    (void)hda_init();
+    (void)virtio_gpu_init();
+
     fill_info();
 
     g_header->state = DEV_STATE_READY;
@@ -230,6 +424,7 @@ int user_main(long *stack)
     for (;;) {
         log_drain();
         input_poll();
+        thermal_poll(g_header);
         if (!handle_request() && !spin)
             sys_sleep(1);
     }

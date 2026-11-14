@@ -1,7 +1,8 @@
-# Zhaoxu OS 构建入口（PowerShell -> Ruby -> Make）
+# Zhaoxu OS 构建入口（PowerShell -> WSL make）
 #
-# 实际构建由 tools/build.rb 完成；本脚本只负责在 Windows 上找到 Ruby 并
-# 转发参数。没有 Ruby 时退回旧的 WSL2 转发路径，保证已有环境不中断。
+# 构建系统是 Makefile；Windows 默认在 WSL2 里直接 make。只有显式
+# -HostMode native 才走原生 MSYS2 的 Ruby 包装脚本（tools/build.rb）。
+# -Check 使用 Ruby 的宿主探测脚本，因为它要枚举工具矩阵。
 [CmdletBinding()]
 param(
     [switch]$Headless,
@@ -28,11 +29,31 @@ function Find-Ruby {
 }
 
 $ruby = Find-Ruby
-if ($ruby) {
+$wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+$useWsl = ($HostMode -ne 'native') -and $wsl
+
+# ---- 探测 / 原生 MSYS2：Ruby 辅助脚本 --------------------------------
+if ($Check -or -not $useWsl) {
+    if (-not $ruby) {
+        [Console]::Error.WriteLine('Ruby 不可用：-Check 和 -HostMode native 需要 tools/build.rb。')
+        if ($wsl) {
+            [Console]::Error.WriteLine('WSL2 已检测到；默认构建直接走 WSL2 的 make，不需要 Ruby。')
+        } else {
+            [Console]::Error.WriteLine('未检测到 wsl.exe；安装 WSL2，或安装 Ruby 后使用原生模式。')
+        }
+        exit 1
+    }
     $arguments = @()
     if ($Headless) { $arguments += '--headless' }
     if ($Check) { $arguments += '--check' }
-    if ($HostMode -ne 'auto') { $arguments += '--host'; $arguments += $HostMode }
+    if ($HostMode -eq 'native') {
+        $arguments += '--host'; $arguments += 'native'
+    } elseif ($HostMode -eq 'wsl') {
+        $arguments += '--host'; $arguments += 'wsl'
+    } elseif ($Check -and $wsl) {
+        # --check 默认也报告首选的 WSL2 工具矩阵
+        $arguments += '--host'; $arguments += 'wsl'
+    }
     if ($Distro) { $arguments += '--distro'; $arguments += $Distro }
     if ($Jobs -gt 0) { $arguments += '--jobs'; $arguments += "$Jobs" }
     $arguments += $MakeArgs
@@ -40,13 +61,7 @@ if ($ruby) {
     exit $LASTEXITCODE
 }
 
-# ---- Ruby 不可用：退回 WSL2（旧行为）--------------------------------
-if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
-    [Console]::Error.WriteLine('未找到 Ruby，也未找到 wsl.exe。')
-    [Console]::Error.WriteLine('原生 Windows 构建需要 Ruby + MSYS2（winget install RubyInstallerTeam.Ruby.3.3）。')
-    exit 1
-}
-
+# ---- 默认：WSL2 内的 make --------------------------------------------
 $distroName = if ($Distro) { $Distro } else { 'Ubuntu-26.04' }
 $linuxPath = (& wsl.exe -d $distroName -- wslpath -a "$PSScriptRoot").Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($linuxPath)) {

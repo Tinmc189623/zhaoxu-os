@@ -1,10 +1,10 @@
-# Zhaoxu OS 运行入口（PowerShell -> Ruby -> Make + QEMU）
+# Zhaoxu OS 运行入口（PowerShell -> WSL make + QEMU）
 #
-# 实际启动由 tools/run.rb 完成（原生 Windows / WSL / Linux / macOS 统一
-# 处理 QEMU 与 OVMF 路径）。没有 Ruby 时退回旧的 WSL2 转发路径。
+# 构建系统是 Makefile；Windows 默认在 WSL2 里执行 make run-iso。
+# 只有显式 -HostMode native 才走原生 MSYS2 的 Ruby 包装脚本。
 [CmdletBinding()]
 param(
-    [int]$MemMB = 512,
+    [int]$MemMB = 2048,
     [int]$Smp = 4,
     [string]$Machine = 'q35',
     [ValidateSet('none', 'gtk', 'sdl', 'curses')]
@@ -32,7 +32,19 @@ function Find-Ruby {
 }
 
 $ruby = Find-Ruby
-if ($ruby) {
+$wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+$useWsl = ($HostMode -ne 'native') -and $wsl
+
+# ---- 原生 MSYS2：Ruby 辅助脚本 ---------------------------------------
+if (-not $useWsl) {
+    if (-not $ruby) {
+        if ($wsl) {
+            [Console]::Error.WriteLine('WSL2 已检测到：去掉 -HostMode native 就直接用 WSL2 的 make；native 模式需要 Ruby。')
+        } else {
+            [Console]::Error.WriteLine('未检测到 wsl.exe；安装 WSL2，或安装 Ruby 后使用 -HostMode native。')
+        }
+        exit 1
+    }
     $arguments = @(
         '--display', $Display,
         '--machine', $Machine,
@@ -40,7 +52,7 @@ if ($ruby) {
         '--smp', "$Smp",
         '--jobs', "$Jobs"
     )
-    if ($HostMode -ne 'auto') { $arguments += '--host'; $arguments += $HostMode }
+    if ($HostMode -eq 'native') { $arguments += '--host'; $arguments += 'native' }
     if ($Distro) { $arguments += '--distro'; $arguments += $Distro }
     $arguments += $MakeArgs
     if ($DryRun) {
@@ -52,12 +64,7 @@ if ($ruby) {
     exit $LASTEXITCODE
 }
 
-# ---- Ruby 不可用：退回 WSL2（旧行为）--------------------------------
-if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
-    [Console]::Error.WriteLine('未找到 Ruby，也未找到 wsl.exe。')
-    exit 1
-}
-
+# ---- 默认：WSL2 内的 make run-iso ------------------------------------
 $distroName = if ($Distro) { $Distro } else { 'Ubuntu-26.04' }
 $linuxPath = (& wsl.exe -d $distroName -- wslpath -a "$PSScriptRoot").Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($linuxPath)) {
@@ -65,7 +72,7 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($linuxPath)) {
     exit 1
 }
 
-$target = if ($MakeArgs.Count -gt 0) { $MakeArgs -join ' ' } else { 'run' }
+$target = if ($MakeArgs.Count -gt 0) { $MakeArgs -join ' ' } else { 'run-iso' }
 $command = "cd '$linuxPath' && make -j$Jobs $target " +
            "QEMU_MACHINE=$Machine QEMU_MEM=${MemMB}M QEMU_SMP=$Smp " +
            "QEMU_DISPLAY='-display $Display'"

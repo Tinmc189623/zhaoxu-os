@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 # Populate the ISO metadata files required by AGENTS.md.
-# Usage: ruby iso-manifest.rb <iso-root> <os-version> <codename> <kernel> <kernel-version>
+# Usage: ruby iso-manifest.rb <iso-root> <os-version> <codename> <kernel> <kernel-version> <build>
 #
 # Writes casper/{manifest,uuid,README.diskdefines}, .disk/{info,README,
 # casper-uuid-generic}, preseed/os.seed, README.html and autorun.inf, then a
@@ -11,10 +11,10 @@ require "digest"
 require "fileutils"
 require "securerandom"
 
-unless ARGV.length == 5
-  abort "usage: ruby iso-manifest.rb iso-root os-version codename kernel kernel-version"
+unless ARGV.length == 6
+  abort "usage: ruby iso-manifest.rb iso-root os-version codename kernel kernel-version build"
 end
-root, version, codename, kernel, kernel_version = ARGV
+root, version, codename, kernel, kernel_version, build = ARGV
 # Normalise Windows separators so Dir.glob and the md5 relative names work
 # on every host (the ISO build passes a POSIX path, but direct use may not).
 root = root.tr("\\", "/").sub(%r{/+\z}, "")
@@ -33,7 +33,7 @@ FileUtils.mkdir_p([casper, disk, File.join(root, "preseed")])
 
 write(File.join(casper, "uuid"), "#{uuid}\n")
 write(File.join(casper, "manifest"), <<~EOF)
-  Zhaoxu OS #{version} "#{codename}"
+  Zhaoxu OS #{version} "#{codename}" build #{build}
   kernel #{kernel} #{kernel_version}
   file          .        <version>
   file          bin      <directory>
@@ -50,7 +50,7 @@ write(File.join(casper, "README.diskdefines"), <<~EOF)
   #define ARCHSUFFIX  amd64
   EOF
 
-write(File.join(disk, "info"), "Zhaoxu OS #{version} \"#{codename}\" - Release amd64 (#{kernel} #{kernel_version})\n")
+write(File.join(disk, "info"), "Zhaoxu OS #{version} \"#{codename}\" build #{build} - Release amd64 (#{kernel} #{kernel_version})\n")
 write(File.join(disk, "README"), "This disc is a Zhaoxu OS live/install image.\n")
 write(File.join(disk, "casper-uuid-generic"), "#{uuid}\n")
 
@@ -68,7 +68,7 @@ write(File.join(root, "README.html"), <<~EOF)
   <html lang="zh-CN"><head><meta charset="utf-8">
   <title>Zhaoxu OS #{version}</title></head>
   <body><h1>Zhaoxu OS #{version} &laquo;#{codename}&raquo;</h1>
-  <p>#{kernel} Kernel #{kernel_version} &middot; ADE &middot; DWM &middot; ZAF</p>
+  <p>#{kernel} #{kernel_version} &middot; Aqua Desktop Environment &middot; Desktop Window Manager &middot; ZAF</p>
   <ul><li>UEFI: EFI/BOOT/BOOTX64.EFI &rarr; OSLDRX64.efi &rarr; kernel.elf</li>
   <li>BIOS: boot/zhaoxu/BOOT.BIN &rarr; osloader.elf &rarr; kernel.elf</li></ul>
   </body></html>

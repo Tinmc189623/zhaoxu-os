@@ -9,7 +9,7 @@
 
 ## 1. 目标与验收
 
-Z1 要把 ADE 里已经验证过的窗口/合成行为拆到 ZAF 的分层里，同时**不改桌面观感、
+Z1 要把 Aqua Desktop Environment 里已经验证过的窗口/合成行为拆到 ZAF 的分层里，同时**不改桌面观感、
 不改窗口协议、不改内核**。验收面：
 
 1. 现有桌面行为逐项等价：壁纸、菜单栏、Dock、窗口层叠/焦点/拖动/关闭、软件
@@ -19,13 +19,13 @@ Z1 要把 ADE 里已经验证过的窗口/合成行为拆到 ZAF 的分层里，
 3. 内核与引导层二进制不变：`git diff --stat src/kernel src/boot` 为空，
    `nm -u out/kernel.elf` 仍无未定义符号。
 4. 为 Z2（控件系统）与 Z3（动画/主题）留下稳定接口：控件只依赖 `zaf_painter`
-   与主题令牌，不依赖 ADE 内部头文件。
+   与主题令牌，不依赖 Aqua Desktop Environment 内部头文件。
 
 ## 2. 现状（Z0 交付后的实际代码）
 
 | 位置 | 现在承担的职责 | 行数 |
 |---|---|---|
-| `src/apps/ADE/main.cpp` | 进程入口、`ade_app` 注册表、渲染 API 转发、启动 ADE | 234 |
+| `src/apps/ADE/main.cpp` | 进程入口、`ade_app` 注册表、渲染 API 转发、启动 Aqua Desktop Environment | 234 |
 | `src/apps/ADE/winmgr/dwm.cpp` | 损伤列表、后缓冲、壁纸/菜单栏/Dock/窗口合成、光标、命中、z 序、焦点、拖动、关闭、输入、主循环 | 627 |
 | `src/apps/ADE/display/server.cpp` | `ade` 端口、客户端槽位、命令流重放、事件回送 | 323 |
 | `src/apps/ADE/wallpaper.cpp` | 壁纸（rule 33 图片，整数缩放）与 Aqua 渐变回退 | 67 |
@@ -33,7 +33,7 @@ Z1 要把 ADE 里已经验证过的窗口/合成行为拆到 ZAF 的分层里，
 | `src/kernel/gfx/render.c` | ZOS API 1.0 软件渲染：目标面、裁剪、图元、文字、SVG、光标 | 608 |
 | `src/user/lib/include/zaf_gfx.h` + `zaf_gfx_soft.c` | Z0 的后端中立光栅接口与软件实现（矩形/圆角/线/多边形/alpha） | 46 + 205 |
 
-问题不在“功能缺失”，而在职责重叠：DWM 一个文件里同时有**合成器**（损伤、后缓
+问题不在“功能缺失”，而在职责重叠：Desktop Window Manager 一个文件里同时有**合成器**（损伤、后缓
 冲、提交、光标）、**窗口策略**（z 序、焦点、命中、拖动）、**窗口装饰绘制**
 （圆角、标题栏、红绿灯、阴影）和**桌面外壳调度**（壁纸、菜单栏、Dock）。
 Z1 按上位设计把它们拆开。
@@ -42,7 +42,7 @@ Z1 按上位设计把它们拆开。
 
 ### D1：Z1 是 Ring3 静态库，不进内核、不加系统调用
 
-ZAF Z1 的代码全部在 `src/zaf/`，以普通对象文件链接进 `/bin/ade`，和现有
+ZAF Z1 的代码全部在 `src/zaf/`，以普通对象文件链接进 `/bin/aqua`，和现有
 `main.cpp`/`dwm.cpp` 同一个进程。Z1 不引入新的 `.zxe` 动态库、不新增系统调用、
 不改 `kernel/` 与 `boot/`。ZAF 作为共享库发布是 Z4 的事，届时再按 ZXE 动态
 ABI 版本化，避免现在为了“库形态”承担无法验证的链接风险。
@@ -53,34 +53,34 @@ ABI 版本化，避免现在为了“库形态”承担无法验证的链接风�
 后端。Z0 已经按退路交付了 `zaf_gfx`（软件光栅）+ `zaf_gfx_demo`（帧率冒烟）。
 Z1 不再扩张 `zaf_gfx` 的职责，而是：
 
-- **合成与桌面绘制走现有 `render.c`**（ZOS API 1.0）。它是 ADE、DWM 与应用今天
+- **合成与桌面绘制走现有 `render.c`**（ZOS API 1.0）。它是 Aqua Desktop Environment、Desktop Window Manager 与应用今天
   唯一在用的绘制接口，内核与 Ring3 共享同一份实现，文字/阴影/SVG/光标都已验证。
 - `zaf_gfx` 保留为**便携光栅**与 Z0 demo 的后端；等 Skia 适配真正立项（单独
   spike，需要用户决策）时，再决定是替换 `render.c` 还是让 ZAF 同时拥有两种后端。
 - Z1 的唯一要求是：ZAF 内部把对 `render_*` 的调用收敛到 `zaf/gfx/` 的薄封装
   （`zaf_painter`），未来换后端时上层不需要改。**但 Z1 不实现多后端 vtable**：
   只有一个后端时加虚表是纯开销（规则 20 KISS），封装先做成普通函数集合。
-- 现有 ADE 外壳（`wallpaper.cpp`/`menubar.cpp`/`dock.cpp`/`icons.cpp`/`about.cpp`）
+- 现有 Aqua Desktop Environment 外壳（`wallpaper.cpp`/`menubar.cpp`/`dock.cpp`/`icons.cpp`/`about.cpp`）
   在 Z1 期间仍可直接调 `render_*`（它们已经稳定、且不是 ZAF 代码）；ZAF 新代码与
   装饰模块必须走 `zaf_paint_*`。外壳迁移到 painter 属于 Z4 的机械工作。
 
 代价：Z1 的 ZAF 仍依赖 ZOS 渲染 API，不能立即移植到别的宿主。可接受，因为上位
 设计已把“可移植”列在接口隔离而非 Z1 交付物上。
 
-### D3：合成器管图层/损伤/提交/光标；DWM 管窗口策略
+### D3：合成器管图层/损伤/提交/光标；Desktop Window Manager 管窗口策略
 
 - `zaf/compositor`：屏幕/后缓冲、有界损伤区域、按 `order` 合成图层、damage-only
   提交、软件光标覆盖。它**不认识**“窗口”“标题栏”“Dock”，只知道“带包围盒和
   绘制回调的图层”。
 - `zaf/wm`：窗口表（最多 8 个）、焦点、z 序、命中测试、拖动状态机。它**不绘制**
   任何像素，只回答“哪个窗口在上、该拖到哪、点到谁”。
-- `dwm.cpp`：保留 DWM 产品名，变成薄适配层——把 ADE 的 `ade_app` 和 ZAF 的
+- `dwm.cpp`：保留 Desktop Window Manager 产品名，变成薄适配层——把 Aqua Desktop Environment 的 `ade_app` 和 ZAF 的
   window/layer 对上，转接输入与定时器，窗口装饰绘制委托给 `ade_decoration_*`。
-- 桌面外壳（壁纸、菜单栏、Dock）仍是 ADE 的 `shell` 职责，以图层形式注册给合成
+- 桌面外壳（壁纸、菜单栏、Dock）仍是 Aqua Desktop Environment 的 `shell` 职责，以图层形式注册给合成
   器，合成器只负责先后顺序。
 
-这与 AGENTS.md“DWM 独占窗口装饰、z 序、拖动/关闭、焦点、损伤合成与输入”的
-现有描述有一处需要同步：**损伤合成归 ZAF 合成器，DWM 归策略与输入**。Z1 完成
+这与 AGENTS.md“Desktop Window Manager 独占窗口装饰、z 序、拖动/关闭、焦点、损伤合成与输入”的
+现有描述有一处需要同步：**损伤合成归 ZAF 合成器，Desktop Window Manager 归策略与输入**。Z1 完成
 时更新 AGENTS.md 该条与 `docs/ARCHITECTURE.md`。
 
 ### D4：窗口装饰独立成文件，颜色/尺寸来自 Aqua 令牌
@@ -129,15 +129,15 @@ src/zaf/
     └── zaf_theme_aqua.c          Z1 使用的 Aqua 默认值
 ```
 
-ADE 侧：
+Aqua Desktop Environment 侧：
 
 ```
 src/apps/ADE/
 ├── main.cpp                      入口 + ade_app 注册表 + 渲染转发（保留）
 ├── decoration.cpp/.h             窗口装饰绘制（新，使用 Aqua 令牌）
 ├── wallpaper.cpp / menubar.cpp / dock.cpp / icons.cpp / about.cpp（保留）
-├── winmgr/dwm.cpp                薄适配层：ZAF WM/合成器 ↔ ADE 外壳与输入
-├── winmgr/dwm.h                  对外 DWM API（基本不变）
+├── winmgr/dwm.cpp                薄适配层：ZAF WM/合成器 ↔ Aqua Desktop Environment 外壳与输入
+├── winmgr/dwm.h                  对外 Desktop Window Manager API（基本不变）
 └── display/server.cpp            窗口协议与命令流（不变）
 ```
 
@@ -212,7 +212,7 @@ struct zaf_rect zaf_damage_item(const struct zaf_damage *damage, int index);
 
 ### 5.3 `zaf/gfx/zaf_painter.h`
 
-只封装 ADE/DWM 现在真正用到的 `render_*`，不是完整重画 API：
+只封装 Aqua Desktop Environment/Desktop Window Manager 现在真正用到的 `render_*`，不是完整重画 API：
 
 ```c
 #ifndef ZAF_PAINTER_H
@@ -246,8 +246,8 @@ struct zaf_rect zaf_paint_cursor_bounds(int x, int y);
 #endif
 ```
 
-`zaf_painter.c` 是唯一允许直接调 `render_*` 的 ZAF 文件；DWM 与装饰只通过
-`zaf_paint_*` 画（ADE 外壳的迁移见 D2）。`zaf_gfx.h` 保持原样，不被 Z1 引用。
+`zaf_painter.c` 是唯一允许直接调 `render_*` 的 ZAF 文件；Desktop Window Manager 与装饰只通过
+`zaf_paint_*` 画（Aqua Desktop Environment 外壳的迁移见 D2）。`zaf_gfx.h` 保持原样，不被 Z1 引用。
 
 ### 5.4 `zaf/compositor/zaf_compositor.h`
 
@@ -290,7 +290,7 @@ int  zaf_compositor_damaged(void);
  * 返回本帧提交的损伤矩形数（无损伤且光标未动时为 0）。 */
 int  zaf_compositor_frame(int cursor_x, int cursor_y, int cursor_visible);
 
-/* 统计（ZAF_STATS=1 时由 DWM 周期性打印）。 */
+/* 统计（ZAF_STATS=1 时由 Desktop Window Manager 周期性打印）。 */
 unsigned long zaf_compositor_frame_count(void);
 unsigned long zaf_compositor_damage_rect_count(void);
 unsigned long zaf_compositor_present_pixels(void);
@@ -298,7 +298,7 @@ unsigned long zaf_compositor_present_pixels(void);
 #endif
 ```
 
-一帧的顺序（与现有 DWM 行为逐项对应）：
+一帧的顺序（与现有 Desktop Window Manager 行为逐项对应）：
 
 1. 若无损伤且光标位置/可见性未变，直接返回 0。
 2. 切到后缓冲，`zaf_paint_cursor_restore()` 把上一帧光标像素还原。
@@ -332,7 +332,7 @@ struct zaf_window {
     int order;
     int drag_dx;
     int drag_dy;
-    void *context;           /* DWM 放 ade_app 指针 */
+    void *context;           /* Desktop Window Manager 放 ade_app 指针 */
 };
 typedef struct zaf_window zaf_window;
 
@@ -399,7 +399,7 @@ const struct zaf_theme *zaf_theme_aqua(void);
 `zaf_theme_aqua.c` 的值必须与今天 `dwm.cpp` 的常量逐字一致（颜色、半径、间距、
 阴影），否则截图对比会出现差异。
 
-### 5.7 ADE `decoration.h`
+### 5.7 Aqua Desktop Environment `decoration.h`
 
 ```c
 #ifndef ZHAOXU_ADE_DECORATION_H
@@ -420,7 +420,7 @@ int  ade_decoration_close_hit(struct render_rect frame, int x, int y);
 ## 6. 数据流（一帧）
 
 ```
-DWM 主循环
+Desktop Window Manager 主循环
   ├─ console_read_char() / mouse_*()        ← 输入（不变）
   ├─ 命中/拖动/关闭 → zaf_wm_*               ← 策略（Z1 抽出）
   ├─ 外壳鼠标状态变化 → zaf_compositor_damage()（Dock hover 等）
@@ -437,14 +437,14 @@ DWM 主循环
 | Task | 内容 | 行为变化 |
 |---|---|---|
 | 1 | ZAF core：rect + damage + host 单元测试 | 无（新增文件） |
-| 2 | painter 封装 + 合成器（图层/损伤/提交/光标），先接管 DWM 的合成部分 | 观感应完全一致 |
-| 3 | WM 核心（窗口表/焦点/z 序/命中/拖动），DWM 变薄 | 观感应完全一致 |
+| 2 | painter 封装 + 合成器（图层/损伤/提交/光标），先接管 Desktop Window Manager 的合成部分 | 观感应完全一致 |
+| 3 | WM 核心（窗口表/焦点/z 序/命中/拖动），Desktop Window Manager 变薄 | 观感应完全一致 |
 | 4 | 窗口装饰拆出 + Aqua 令牌，颜色/尺寸不再散落 | 观感应完全一致 |
 | 5 | 构建接入、统计日志、回归与截图对比 | 无 |
 | 6 | 文档同步（AGENTS.md、docs/ARCHITECTURE.md、ZAF 文档状态） | 无 |
 
 Task 2 的 `background` 回调是回退开关：若合成器出问题，把整屏绘制塞进
-`background`、图层一个不加，就退化成“DWM 以前怎么画还怎么画”，不必回滚代码。
+`background`、图层一个不加，就退化成“Desktop Window Manager 以前怎么画还怎么画”，不必回滚代码。
 
 ## 8. 非目标
 
@@ -466,9 +466,9 @@ Task 2 的 `background` 回调是回退开关：若合成器出问题，把整�
 | 5 | 光标损伤 | 鼠标移动时 `ZAF_STATS=1` 每帧损伤 ≤ 4 个矩形、提交像素 ≈ 光标包围盒面积 |
 | 6 | 拖动损伤 | 拖动窗口时提交像素 ≈ 新旧窗口包围盒并集，不是整屏 |
 | 7 | 视觉回归 | QEMU HMP `screendump` 抓帧与 Z0 基线对比：菜单栏/Dock/窗口装饰/字体无差异 |
-| 8 | 用户异常 | 客户端异常只终止进程，ADE 继续运行、Dock 回收图标 |
-| 9 | SMP | `make run-iso QEMU_SMP=4` 桌面行为与单核一致（ADE 单线程，不引入并发） |
-| 10 | 文档 | AGENTS.md 的 DWM 职责、docs/ARCHITECTURE.md 里程碑、ZAF 文档状态一致 |
+| 8 | 用户异常 | 客户端异常只终止进程，Aqua Desktop Environment 继续运行、Dock 回收图标 |
+| 9 | SMP | `make run-iso QEMU_SMP=4` 桌面行为与单核一致（Aqua Desktop Environment 单线程，不引入并发） |
+| 10 | 文档 | AGENTS.md 的 Desktop Window Manager 职责、docs/ARCHITECTURE.md 里程碑、ZAF 文档状态一致 |
 
 ## 10. 环境前置条件
 
@@ -487,7 +487,7 @@ Task 2 的 `background` 回调是回退开关：若合成器出问题，把整�
 3. **图层包围盒漏算阴影**：`dwm.cpp` 现在的 `window_damage_rect` 带
    `dwm_ui(14)` 的内边距（阴影 9 + 余量）；装饰模块必须提供同样的扩展矩形，
    否则拖动/关闭会留下阴影残影。
-4. **窗口表与图层槽位不一致**：DWM 适配层是唯一同时持有两者映射的地方，窗口
+4. **窗口表与图层槽位不一致**：Desktop Window Manager 适配层是唯一同时持有两者映射的地方，窗口
    关闭时先删图层再释放窗口槽位，顺序写进代码注释与测试步骤。
-5. **没有工具链时无法验证**：不改内核/引导/驱动，风险限制在 Ring3 ADE；最坏
+5. **没有工具链时无法验证**：不改内核/引导/驱动，风险限制在 Ring3 Aqua Desktop Environment；最坏
    情况是桌面起不来，回退到 Z0 的 `dwm.cpp` 单文件实现。

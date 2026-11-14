@@ -33,7 +33,7 @@ ZAF 渲染后端  gfx/           Skia Surface/Canvas 封装与字形提供者
 ZOS API 1.0：帧缓冲映射、鼠标/键盘端口、共享内存、定时器
 ```
 
-每个目录只承担一类职责（规则 23）。`ADE` 与 `DWM` 保留现有产品名：DWM 作为窗口管理器实现，ADE 作为桌面外壳（壁纸、菜单栏、Dock），二者都建立在 ZAF 之上，而不是相反。
+每个目录只承担一类职责（规则 23）。`Aqua Desktop Environment` 与 `Desktop Window Manager` 保留现有产品名：Desktop Window Manager 作为窗口管理器实现，Aqua Desktop Environment 作为桌面外壳（壁纸、菜单栏、Dock），二者都建立在 ZAF 之上，而不是相反。
 
 ## 3. Skia 集成策略
 
@@ -62,29 +62,29 @@ Aqua 是内置默认主题；主题引擎负责令牌解析、继承与运行时
 | Z1 | 合成器与窗口管理：图层、损伤区域、窗口层级与焦点 | 两个客户端窗口可拖动、遮挡、关闭 | 设计定稿，待实现（见 Z1 设计/计划） |
 | Z2 | 控件系统：基础控件 + 事件分发 + 布局 | 用 ZAF 控件重写欢迎页与计算器 | 未开始 |
 | Z3 | 动画引擎与 Aqua 主题包 | 窗口打开/关闭、按钮反馈有动画；主题可切换 | 未开始 |
-| Z4 | ADE/DWM 迁移到 ZAF | 桌面、菜单栏、Dock、窗口装饰全部由 ZAF 驱动 | 未开始 |
+| Z4 | Aqua Desktop Environment/Desktop Window Manager 迁移到 ZAF | 桌面、菜单栏、Dock、窗口装饰全部由 ZAF 驱动 | 未开始 |
 
-> Z1 的范围已按实际代码收敛为“把现有 DWM 的合成/窗口策略拆到 ZAF，行为等价，
+> Z1 的范围已按实际代码收敛为“把现有 Desktop Window Manager 的合成/窗口策略拆到 ZAF，行为等价，
 > 不改协议、不改内核”，Z2 起才新增能力。详见 Z1 设计文档。
 
 ## 6. 与现有代码的关系
 
-- 现有 `apps/ADE/`（显示服务器、DWM、壁纸/菜单栏/Dock）与 `user/lib/ade_client` 是 Z1/Z4 的迁移来源；迁移期间保持现有协议可用。
+- 现有 `apps/ADE/`（显示服务器、Desktop Window Manager、壁纸/菜单栏/Dock）与 `user/lib/ade_client` 是 Z1/Z4 的迁移来源；迁移期间保持现有协议可用。
 - 现有 `kernel/gfx/render.c` 与 `zos_api.h` 是底层绘制与系统调用边界；Z1 的 ZAF 通过 `zaf/gfx/zaf_painter` 调用它，由合成器把图层合成到后缓冲并按损伤提交，不直接写帧缓冲。
-- Z1 把 DWM 的职责拆为：`zaf/compositor`（图层/损伤/提交/光标）、`zaf/wm`（窗口表/焦点/z 序/命中/拖动）、`apps/ADE/decoration.cpp`（窗口装饰，读 Aqua 令牌）。DWM 保留为薄适配层。
-- ZAF 库以 ZXE 共享库形式发布、应用通过 `.zxe.deps` 依赖它，是 **Z4** 的计划（见 ZXE v1 设计文档）；Z1 只做链接进 `/bin/ade` 的静态代码，避免在工具链不可用时承担动态 ABI 风险。
+- Z1 把 Desktop Window Manager 的职责拆为：`zaf/compositor`（图层/损伤/提交/光标）、`zaf/wm`（窗口表/焦点/z 序/命中/拖动）、`apps/ADE/decoration.cpp`（窗口装饰，读 Aqua 令牌）。Desktop Window Manager 保留为薄适配层。
+- ZAF 库以 ZXE 共享库形式发布、应用通过 `.zxe.deps` 依赖它，是 **Z4** 的计划（见 ZXE v1 设计文档）；Z1 只做链接进 `/bin/aqua` 的静态代码，避免在工具链不可用时承担动态 ABI 风险。
 
 ## 7. 风险
 
 1. Skia 移植工作量最大，Z0 已按退路交付自研 Raster；是否真正引入 Skia 需单独立项评估。
 2. C++ 运行时限制（无异常/RTTI、无 STL iostream）可能迫使裁剪 Skia API 面。
 3. 文字排版（换行、字距、CJK）需要独立设计，不能只依赖字形光栅化。
-4. 与现有 ADE 协议的兼容期需要双轨，迁移完成前不得破坏桌面可用性。
+4. 与现有 Aqua Desktop Environment 协议的兼容期需要双轨，迁移完成前不得破坏桌面可用性。
 5. Z1 的合成器重写可能引入视觉回归；回退路径与逐 Task 截图对比见 Z1 计划。
 
 ## 8. 变更记录
 
 - 2026-11-13：初稿（Skia 集成策略、分层、Z0–Z4 里程碑）。
 - 2026-11-14：标记 Z0 已实现（自研 Raster 退路）；新增 Z1 设计/计划链接；
-  Z1 范围收敛为现有 DWM 行为的职责拆分，渲染继续使用 ZOS API；Skia 降为 Z0.5 spike。
+  Z1 范围收敛为现有 Desktop Window Manager 行为的职责拆分，渲染继续使用 ZOS API；Skia 降为 Z0.5 spike。
 

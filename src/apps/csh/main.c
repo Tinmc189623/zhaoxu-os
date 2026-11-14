@@ -13,7 +13,7 @@ static int g_length;
 
 static void prompt(void)
 {
-    csh_out("csh$ ");
+    csh_out("8sh$ ");
 }
 
 static void echo_char(long c)
@@ -99,7 +99,8 @@ int user_main(long *stack)
 {
     (void)stack;
 
-    csh_out("csh - Zhaoxu OS " ZHAOXU_VERSION " (" ZHAOXU_CODENAME ")\n");
+    csh_out("8sh - Zhaoxu OS " ZHAOXU_VERSION " build " ZHAOXU_BUILD
+            " (" ZHAOXU_CODENAME ")\n");
     csh_outln("Type 'help' for the command list.");
 
     for (;;) {

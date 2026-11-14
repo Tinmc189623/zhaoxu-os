@@ -8,6 +8,9 @@ src/tools/*.deb
 CONOUT$
 CONIN$
 
+# 本地 QEMU/冒烟日志
+logs/
+
 .trae/
 .vscode/
 

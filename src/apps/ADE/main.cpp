@@ -200,7 +200,7 @@ extern "C" int user_main(long *stack)
 
     struct zos_fb_info fb;
     if (sys_fb_map(&fb) < 0) {
-        kprintf("[ade ] no framebuffer from kernel\n");
+        kprintf("[aqua] no framebuffer from kernel\n");
         return 1;
     }
 
@@ -209,7 +209,7 @@ extern "C" int user_main(long *stack)
                         (int)fb.height, (int)fb.stride, (u32)fb.format);
     g_screen = render_screen();
     if (!g_screen) {
-        kprintf("[ade ] render surface unavailable\n");
+        kprintf("[aqua] render surface unavailable\n");
         return 2;
     }
 
@@ -219,15 +219,16 @@ extern "C" int user_main(long *stack)
     if (font_status == 0)
         ttf_set_pixel_size(fb.height >= 1000 ? 24 : 20);
     else {
-        kprintf("[ade ] no system font (data %llu, load %d)\n", font_size,
+        kprintf("[aqua] no system font (data %llu, load %d)\n", font_size,
                 font_status);
     }
 
     ade_setup(g_screen);
     ade_display_init();
-    kprintf("[ade ] Ring3 display server %s (DWM, Aqua), %d app(s)\n",
+    kprintf("[aqua] Ring3 display server %s (Desktop Window Manager, Aqua), "
+            "%d app(s)\n",
             ZHAOXU_VERSION, g_app_count);
-    kprintf("[ade ] %s\n", ZOS_API_BANNER);
+    kprintf("[aqua] %s\n", ZOS_API_BANNER);
     dwm_run();
     return 0;
 }

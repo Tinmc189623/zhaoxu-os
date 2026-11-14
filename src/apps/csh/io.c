@@ -20,6 +20,6 @@ void csh_number(long value)
 
 void csh_error(const char *text)
 {
-    csh_out("csh: ");
+    csh_out("8sh: ");
     csh_outln(text);
 }

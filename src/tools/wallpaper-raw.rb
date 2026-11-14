@@ -1,9 +1,9 @@
 #!/usr/bin/env ruby
-# Convert the default wallpaper into a raw RGB888 frame for ADE.
+# Convert the default wallpaper into a raw RGB888 frame for Aqua Desktop Environment.
 # Usage: ruby wallpaper-raw.rb <source-image> <output.rgb> [width height]
 #
 # The runtime has no image decoder; the build emits a fixed-size raw frame that
-# ADE scales with integer nearest-neighbour sampling.
+# Aqua Desktop Environment scales with integer nearest-neighbour sampling.
 #
 # make invokes this script through the Windows Ruby interop, so when ffmpeg is
 # not on the host PATH it is executed inside the configured WSL distro.

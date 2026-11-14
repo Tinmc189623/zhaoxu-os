@@ -22,9 +22,16 @@ SECTIONS
         *(.rodata .rodata.*)
     } :rodata
 
-    .data : ALIGN(4096)
+    /* Newer lld rejects mixing SHT_DYNAMIC with PROGBITS inputs in one
+     * output section, so the dynamic table gets its own header while still
+     * living in the writable PT_LOAD segment. */
+    .dynamic : ALIGN(4096)
     {
         *(.dynamic)
+    } :data
+
+    .data : ALIGN(4096)
+    {
         *(.got .got.* .got.plt)
         *(.data .data.*)
     } :data

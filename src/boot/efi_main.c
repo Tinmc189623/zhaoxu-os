@@ -59,6 +59,8 @@ struct boot_info_blob {
     UINT64 font_size;
     UINT64 wallpaper_phys;
     UINT64 wallpaper_size;
+    UINT64 efi_runtime_services;
+    UINT64 efi_system_table;
 } __attribute__((packed));
 
 /* no libc: clang is built with -fno-builtin so these loops stay loops */
@@ -1215,36 +1217,45 @@ static UINT64 load_kernel_from_ext4(EFI_HANDLE image_handle, UINT64 staging)
 
 static UINT64 load_font_from_ext4(EFI_HANDLE image_handle, UINT64 *physical)
 {
+    static const char *const candidates[] = {
+        "/MiSans.ttf", "/MiSans-Regular.ttf", "/Inter-Regular.otf",
+        "/WQY.TTC"
+    };
+
     *physical = 0;
     if (!ext4_find_partition(image_handle))
         return 0;
-    UINT32 ino = 0;
-    if (!ext4_lookup(g_ext4d_bio, g_ext4d_base, "/WQY.TTC", &ino))
-        return 0;
-    UINT8 inode[256];
-    if (!ext4_read_inode(g_ext4d_bio, g_ext4d_base, ino, inode))
-        return 0;
-    UINT64 size = ext4_inode_size(inode);
-    if (size < 13 || size > FONT_FILE_MAX)
-        return 0;
+    for (UINTN i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        UINT32 ino = 0;
+        if (!ext4_lookup(g_ext4d_bio, g_ext4d_base, candidates[i], &ino))
+            continue;
+        UINT8 inode[256];
+        if (!ext4_read_inode(g_ext4d_bio, g_ext4d_base, ino, inode))
+            continue;
+        UINT64 size = ext4_inode_size(inode);
+        if (size < 13 || size > FONT_FILE_MAX)
+            continue;
 
-    UINT64 pages = (size + 4095) / 4096;
-    EFI_PHYSICAL_ADDRESS address = 0xFFFFFFFFULL;
-    EFI_STATUS status = g_bs->AllocatePages(EFI_ALLOCATE_MAX_ADDRESS,
-                                            EFI_LOADER_DATA, pages, &address);
-    if (EFI_ERROR(status) || !address)
-        status = g_bs->AllocatePages(EFI_ALLOCATE_ANY_PAGES, EFI_LOADER_DATA,
-                                     pages, &address);
-    if (EFI_ERROR(status) || !address)
-        return 0;
+        UINT64 pages = (size + 4095) / 4096;
+        EFI_PHYSICAL_ADDRESS address = 0xFFFFFFFFULL;
+        EFI_STATUS status = g_bs->AllocatePages(EFI_ALLOCATE_MAX_ADDRESS,
+                                                EFI_LOADER_DATA, pages,
+                                                &address);
+        if (EFI_ERROR(status) || !address)
+            status = g_bs->AllocatePages(EFI_ALLOCATE_ANY_PAGES,
+                                         EFI_LOADER_DATA, pages, &address);
+        if (EFI_ERROR(status) || !address)
+            continue;
 
-    UINT64 read = 0;
-    if (!ext4_read_inode_data(g_ext4d_bio, g_ext4d_base, inode,
-                              (void *)(UINTN)address, size, &read) ||
-        read != size)
-        return 0;
-    *physical = (UINT64)address;
-    return size;
+        UINT64 read = 0;
+        if (!ext4_read_inode_data(g_ext4d_bio, g_ext4d_base, inode,
+                                  (void *)(UINTN)address, size, &read) ||
+            read != size)
+            continue;
+        *physical = (UINT64)address;
+        return size;
+    }
+    return 0;
 }
 
 static void load_boot_font(EFI_HANDLE image_handle, UINT64 *physical,
@@ -1255,10 +1266,15 @@ static void load_boot_font(EFI_HANDLE image_handle, UINT64 *physical,
 
     EFI_BLOCK_IO_PROTOCOL *bio = iso_device(image_handle);
     if (bio) {
-        UINT32 extent = 0;
-        UINT32 size = 0;
-        if (iso_find_path(bio, "INSTALL/WQY.TTC", &extent, &size) &&
-            size >= 13 && size <= FONT_FILE_MAX) {
+        static const char *const candidates[] = {
+            "INSTALL/MISANS.TTF", "INSTALL/WQY.TTC"
+        };
+        for (UINTN i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+            UINT32 extent = 0;
+            UINT32 size = 0;
+            if (!iso_find_path(bio, candidates[i], &extent, &size) ||
+                size < 13 || size > FONT_FILE_MAX)
+                continue;
             UINT64 pages = (size + 4095) / 4096;
             EFI_PHYSICAL_ADDRESS address = 0xFFFFFFFFULL;
             EFI_STATUS status = g_bs->AllocatePages(
@@ -1267,13 +1283,17 @@ static void load_boot_font(EFI_HANDLE image_handle, UINT64 *physical,
                 status = g_bs->AllocatePages(EFI_ALLOCATE_ANY_PAGES,
                                              EFI_LOADER_DATA, pages,
                                              &address);
-            if (!EFI_ERROR(status) && address &&
-                iso_read_file(bio, extent, size, (void *)(UINTN)address)) {
-                *physical = (UINT64)address;
-                *bytes = size;
+            if (EFI_ERROR(status) || !address)
+                continue;
+            if (!iso_read_file(bio, extent, size, (void *)(UINTN)address))
+                continue;
+            *physical = (UINT64)address;
+            *bytes = size;
+            if (i == 0)
+                boot_print("Font: /install/MiSans.ttf from the ISO.\r\n");
+            else
                 boot_print("Font: /install/WQY.TTC from the ISO.\r\n");
-                return;
-            }
+            return;
         }
     }
 
@@ -1432,6 +1452,11 @@ EFI_STATUS EFIAPI osloader_start(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st)
     bi->font_size = font_size;
     bi->wallpaper_phys = wallpaper_phys;
     bi->wallpaper_size = wallpaper_size;
+    /* efivarfs needs the runtime table after ExitBootServices.  We never
+     * call SetVirtualAddressMap, so the firmware pointers stay physical and
+     * the kernel's low identity map keeps them reachable. */
+    bi->efi_runtime_services = (UINT64)(UINTN)g_st->RuntimeServices;
+    bi->efi_system_table = (UINT64)(UINTN)g_st;
 
     UINTN mmap_size = MMAP_MAX;
     UINTN map_key = 0;

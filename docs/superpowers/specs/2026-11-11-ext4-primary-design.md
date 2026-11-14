@@ -91,7 +91,7 @@ Installer   内核做 MBR/GPT/ESP/stage2；ext4 分区交给 ext4fs
 - 内核给 `/bin/ext4fs` 与 `/bin/drivers` 同等的恒等映射（按进程名判定），
   以便访问内核分配的控制页与数据窗。
 - 启动顺序：`dev_start()` → `fs_service_start()` 等 READY →
-  `vfs_mount_data()` → ADE。无卷时保持现有行为（`/mnt` 回退到
+  `vfs_mount_data()` → Aqua Desktop Environment。无卷时保持现有行为（`/mnt` 回退到
   initramfs 的 `/data`）。
 - FAT32 读写实现暂时留在内核，作为老盘兼容回退；ESP 格式化仍在内核。
   后续可独立迁移，不阻塞本设计。
@@ -254,13 +254,13 @@ struct fs_rpc {
 1. `make -j4`；`nm out/kernel.elf | grep ext4_` 必须为空；无未定义符号。
 2. ISO：UEFI 与 BIOS 均能进桌面，日志显示内核来自 `/install`。
 3. 安装：`make run-install`（GPT）与 `make run-install-bios`（MBR），
-   或 headless csh `install mbr|gpt`。
+   或 headless 8sh `install mbr|gpt`。
 4. 安装后仅用目标盘启动：UEFI 与 BIOS 都显示
    `Kernel: /KERNEL.ELF from ext4.` / stage2 参数读取，
    `[ext4fs] mounted "ZHAOXUROOT"`，中文正常。
 5. 用 `mtools` 列出 ESP，断言只有 `EFI/BOOT/BOOTX64.EFI`；
    用 `dd` 读取 LBA0/1，断言不含内核 ELF 魔数。
-6. 在 csh 中写/读/删 `/mnt` 文件；重启后内容仍在。
+6. 在 8sh 中写/读/删 `/mnt` 文件；重启后内容仍在。
 7. 把目标盘换成 `mkfs.ext4` 默认参数预格式化的镜像，验证只读挂载。
 
 ## 12. 里程碑与验收

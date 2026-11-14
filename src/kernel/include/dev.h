@@ -38,9 +38,17 @@ struct dev_header {
     u32 width;
     u32 height;
     u32 disk_count;
+    /* First eight disks keep the original layout so a driver binary from an
+     * older initramfs still matches this header; disks 8..15 live in the
+     * extension arrays appended after the sensor block. */
     u32 ports[8];
     u64 sectors[8];
     char models[8][41];
+    volatile u32 sensor_temp_milli;
+    volatile u32 sensor_ready;
+    u32 ports_ext[8];
+    u64 sectors_ext[8];
+    char models_ext[8][41];
 };
 
 struct dev_input {
@@ -74,6 +82,8 @@ int dev_disk_write(int disk, u64 lba, u32 count, const void *buffer);
 int dev_disk_flush(int disk);
 
 int dev_rtc_read(struct rtc_time *time);
+u32 dev_sensor_temp(void);
+int dev_sensor_ready(void);
 int dev_key_pop(void);
 int dev_key_has_input(void);
 void dev_mouse_state(u64 state[3], int *ready);

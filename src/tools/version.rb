@@ -11,6 +11,7 @@
 #   kernel_cn      = null          optional Chinese kernel name
 #   os_version     = 0.5.0         OS version: README, motd, ISO   (required)
 #   kernel_version = 0.5.0         kernel version: version.h       (required)
+#   build          = 1             monotonically increasing build   (required)
 #   codename       = "Yuanshuo"    release codename                (required)
 #
 # Values may be quoted strings, bare numbers, or null.  `#` starts a trailing
@@ -59,6 +60,7 @@ end
 
 OS_VERSION = required("os_version")
 KERNEL_VERSION = required("kernel_version")
+BUILD = required("build")
 CODENAME = required("codename")
 KERNEL = required("kernel")
 NAME = required("name")
@@ -68,6 +70,8 @@ KERNEL_CN = CFG["kernel_cn"] || KERNEL
 [["os_version", OS_VERSION], ["kernel_version", KERNEL_VERSION]].each do |key, value|
   abort "version.cfg: #{key} '#{value}' is not a dotted version" unless value =~ /\A\d+(\.\d+)+\z/
 end
+abort "version.cfg: build '#{BUILD}' is not a positive integer" unless
+  BUILD =~ /\A[1-9]\d*\z/
 
 def patch(path, pairs)
   text = File.read(path)
@@ -92,27 +96,29 @@ patch(File.join(src, "kernel", "include", "version.h"), [
    "#define ZHAOXU_KERNEL          \"#{KERNEL}\""],
   [/#define ZHAOXU_KERNEL_VERSION\s+"[^"]*"/,
    "#define ZHAOXU_KERNEL_VERSION  \"#{KERNEL_VERSION}\""],
+  [/#define ZHAOXU_BUILD\s+"[^"]*"/,
+   "#define ZHAOXU_BUILD           \"#{BUILD}\""],
 ])
 
 patch(File.join(src, "initramfs", "etc", "motd"), [
-  [/Welcome to #{Regexp.escape(NAME)} [0-9.]+ "[^"]*"( \([^)]*kernel [0-9.]+\))?\./,
+  [/Welcome to #{Regexp.escape(NAME)} [0-9.]+ "[^"]*"( \([^)]*\))?\./,
    "Welcome to #{NAME} #{OS_VERSION} \"#{CODENAME}\" " \
-   "(#{KERNEL} kernel #{KERNEL_VERSION})."],
+   "(#{KERNEL} kernel #{KERNEL_VERSION}, build #{BUILD})."],
   [/欢迎使用兆旭操作系统 [0-9.]+（[^）]*）/,
-   "欢迎使用兆旭操作系统 #{OS_VERSION}（#{KERNEL_CN} #{KERNEL_VERSION} 内核）"],
+   "欢迎使用兆旭操作系统 #{OS_VERSION}（#{KERNEL_CN} #{KERNEL_VERSION} 内核，构建 #{BUILD}）"],
 ])
 
 patch(File.join(src, "initramfs", "etc", "version"), [
   [/\A#{Regexp.escape(NAME)} [0-9.]+ "[^"]*"/,
-   "#{NAME} #{OS_VERSION} \"#{CODENAME}\""],
+   "#{NAME} #{OS_VERSION} \"#{CODENAME}\" build #{BUILD}"],
   [/^Kernel: .*$/,
    "Kernel: #{KERNEL} #{KERNEL_VERSION}"],
 ])
 
 patch(File.join(ROOT, "README.md"), [
-  [/\*\*当前版本：[0-9.]+ 「[^」]*」( · 内核 [0-9.]+)?\*\*/,
-   "**当前版本：#{OS_VERSION} 「#{CODENAME}」 · 内核 #{KERNEL_VERSION}**"],
+  [/\*\*当前版本：[0-9.]+ 「[^」]*」( · 内核 [0-9.]+)?( · 构建 \d+)?\*\*/,
+   "**当前版本：#{OS_VERSION} 「#{CODENAME}」 · 内核 #{KERNEL_VERSION} · 构建 #{BUILD}**"],
 ])
 
 puts "version.cfg -> #{NAME} #{OS_VERSION} \"#{CODENAME}\", " \
-     "#{KERNEL} kernel #{KERNEL_VERSION} synchronized"
+     "#{KERNEL} kernel #{KERNEL_VERSION}, build #{BUILD} synchronized"

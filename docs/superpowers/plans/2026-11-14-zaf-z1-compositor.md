@@ -3,7 +3,7 @@
 - 规格：[../specs/2026-11-14-zaf-z1-compositor-design.md](../specs/2026-11-14-zaf-z1-compositor-design.md)
 - 分支：`feat/ext4-primary`（沿用当前分支；不新建分支、不推送）
 - 模型：会话默认模型；只在工具链可用的 WSL2 环境中执行验证步骤
-- 前置：Z0 已交付（`zaf_gfx.h` + `zaf_gfx_soft.c` + `zaf_gfx_demo`），ADE/DWM 桌面可启动
+- 前置：Z0 已交付（`zaf_gfx.h` + `zaf_gfx_soft.c` + `zaf_gfx_demo`），Aqua Desktop Environment/Desktop Window Manager 桌面可启动
 
 本计划只做 Ring3 的 `src/zaf/` 与 `src/apps/ADE/`，**不改** `src/kernel/`、
 `src/boot/`、`src/drivers/`、`src/fs/`。每个 Task 结束都能构建、能启动桌面；
@@ -18,7 +18,7 @@
 |---|---|---|
 | Task 1 rect/damage → Task 2 compositor | `struct zaf_rect`、`struct zaf_damage`、`ZAF_DAMAGE_MAX` | 头文件无系统依赖，可直接被 compositor 引用 |
 | Task 2 painter → Task 2/3/4 绘制 | `zaf_paint_*` 签名 | 与 `render.h` 一一对应，无隐式 target 假设 |
-| Task 2 compositor → Task 3 wm | 窗口图层增删改、`layer_damage()` | wm 返回窗口矩形，DWM 负责转成图层 bounds |
+| Task 2 compositor → Task 3 wm | 窗口图层增删改、`layer_damage()` | wm 返回窗口矩形，Desktop Window Manager 负责转成图层 bounds |
 | Task 3 wm → Task 4 decoration | `zaf_wm_content()`、`zaf_wm_metrics` | 装饰只接收 frame/title，不反向依赖 wm 内部状态 |
 | Task 4 theme → Task 4 decoration | 令牌字段 | 与 `dwm.cpp` 现有魔法数逐项对应 |
 | Task 2/5 Makefile 改动 | `ADE_C_SRCS`、`-I.`、`ZAF_STATS` | 只增不改既有对象；`ADE_DEPS` 沿用 `-MMD` |
@@ -233,9 +233,9 @@ ADE_C_SRCS := $(ZAF_C_SRCS) user/lib/shim.c user/lib/string_extra.c \
 ```
 
 `ZAF_STATS ?= 0` 加到构建参数区，`ADE_CFLAGS` 追加 `-DZAF_STATS=$(ZAF_STATS)`。
-先只编译不调用，确认 `make out/ade.zxe` 通过。
+先只编译不调用，确认 `make out/aqua.zxe` 通过。
 
-- [ ] **Step 4：DWM 接入合成器（不改窗口策略）**
+- [ ] **Step 4：Desktop Window Manager 接入合成器（不改窗口策略）**
 
 `dwm.cpp` 内保留 `dwm_window` 表与 `paint_window`，替换掉这些实现：
 
@@ -284,7 +284,7 @@ Expected: 日志出现 `[zaf] compositor <W>x<H> back buffer ...`；截图与
 
 ```bash
 git diff --stat src/kernel src/boot        # 期望：空
-git diff --stat                            # 期望：只有 zaf/、ADE、Makefile
+git diff --stat                            # 期望：只有 zaf/、Aqua Desktop Environment、Makefile
 ```
 
 **Commit:** `feat(zaf): compositor with layers, damage-only present and cursor overlay`
@@ -309,7 +309,7 @@ git diff --stat                            # 期望：只有 zaf/、ADE、Makefi
 
 窗口 id 用 `id = ++g_next_id` 单调递增，便于日志与调试；`context` 不动。
 
-- [ ] **Step 2：DWM 改为适配层**
+- [ ] **Step 2：Desktop Window Manager 改为适配层**
 
 - 删除 `dwm_window` 结构与 `g_windows`；保留 `int g_window_layer[ZAF_MAX_WINDOWS]`。
 - `dwm_open`：`zaf_wm_open(app, frame, bounds)` → 取 index → 注册图层 →
@@ -317,9 +317,9 @@ git diff --stat                            # 期望：只有 zaf/、ADE、Makefi
 - `close_window`：`zaf_wm_close` 前先按 index 删图层。
 - `bring_to_front`：`zaf_wm_focus` 后按新 `order` 更新图层。
 - 拖动：`handle_press` 里 `zaf_wm_drag_begin`；`dwm_run` 拖动分支
-  `zaf_wm_drag_to`，夹取用的 bounds 仍在 DWM 里计算（菜单栏/Dock 约束是外壳策略）。
+  `zaf_wm_drag_to`，夹取用的 bounds 仍在 Desktop Window Manager 里计算（菜单栏/Dock 约束是外壳策略）。
 - `dwm_content_rect` → `zaf_wm_content` 的薄封装（返回 `struct render_rect`）。
-- 关闭按钮命中仍由 DWM/装饰决定（Task 4 移到 `ade_decoration_close_hit`）。
+- 关闭按钮命中仍由 Desktop Window Manager/装饰决定（Task 4 移到 `ade_decoration_close_hit`）。
 
 - [ ] **Step 3：构建与行为回归**
 
@@ -390,7 +390,7 @@ grep -n "g_windows\|g_next_z\|window_at(" src/apps/ADE/winmgr/dwm.cpp
   必须与旧 `window_damage_rect` 相同，否则拖动残影。
 - `ade_decoration_close_hit()`：圆半径 = `dwm_ui(7) + dwm_ui(3)`，圆心与旧逻辑一致。
 
-- [ ] **Step 3：DWM 调用装饰**
+- [ ] **Step 3：Desktop Window Manager 调用装饰**
 
 `paint_window` 只剩：
 
@@ -478,7 +478,7 @@ make run-iso ZAF_STATS=1 QEMU_DISPLAY="-display gtk"
 timeout 40 make run-iso QEMU_SMP=4 2>&1 | tee ../logs/zaf-z1-smp.log
 ```
 
-Expected: `4/4 CPU(s) online`；桌面正常；客户端异常只终止进程、ADE 继续运行。
+Expected: `4/4 CPU(s) online`；桌面正常；客户端异常只终止进程、Aqua Desktop Environment 继续运行。
 
 - [ ] **Step 5：检查点**
 
@@ -494,7 +494,7 @@ git diff --stat
 ## Task 6：文档同步与收尾
 
 **Files:**
-- Modify: `AGENTS.md`（“桌面分层”一条：损伤合成归 ZAF 合成器，DWM 归策略/装饰/输入）
+- Modify: `AGENTS.md`（“桌面分层”一条：损伤合成归 ZAF 合成器，Desktop Window Manager 归策略/装饰/输入）
 - Modify: `docs/ARCHITECTURE.md`（ZAF 里程碑状态、Ring3 边界补 `src/zaf/`）
 - Modify: `docs/superpowers/specs/2026-11-13-zaf-architecture-design.md`（状态与 Z1 链接）
 - Modify: `docs/superpowers/specs/2026-11-14-zaf-z1-compositor-design.md`（状态改“已实现”）
@@ -540,7 +540,7 @@ git diff --stat
 
 - **Task 2 失败**：`zaf_compositor` 的 `background` 回调是整屏回退开关；把
   `paint_background` 设为旧的 `paint_rect` 全量逻辑、不注册图层，即恢复 Z0 行为。
-- **Task 3 失败**：DWM 保留 `dwm_window` 表，只把 `zaf_wm` 当未使用的库；删掉
+- **Task 3 失败**：Desktop Window Manager 保留 `dwm_window` 表，只把 `zaf_wm` 当未使用的库；删掉
   `zaf/wm` 的源文件与 Makefile 条目即可。
 - **Task 4 失败**：装饰绘制退回 `dwm.cpp`，主题文件保留但不引用。
 - 任何一步导致桌面无法启动：`git revert` 对应提交，回到上一 Task 的已验证状态。

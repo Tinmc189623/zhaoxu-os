@@ -449,6 +449,69 @@ int fat32_read_into(const char *path, u8 *dst, u64 cap, u64 *read_out)
     return 0;
 }
 
+/* Read a byte range without copying the whole file.  The FAT chain is walked
+ * to the cluster containing the offset, then clusters are streamed into a
+ * reusable buffer.  Used by the VFS file-descriptor path. */
+int fat32_read_at(const char *path, u64 offset, u8 *dst, u64 cap,
+                  u64 *read_out)
+{
+    struct fat_entry entry;
+    if ((!dst && cap) || fat32_find(path, &entry) != 0 || entry.is_dir)
+        return -1;
+    if (read_out)
+        *read_out = 0;
+    if (offset >= entry.size)
+        return 0;
+
+    u32 cluster_bytes = g_fs.sectors_per_cluster * 512;
+    if (!cluster_bytes)
+        return -1;
+    u64 skip = offset / cluster_bytes;
+    u32 within = (u32)(offset % cluster_bytes);
+    u32 cluster = entry.cluster;
+    u32 guard = g_fs.cluster_count + 2;
+    while (skip > 0 && cluster >= 2 && guard-- > 0) {
+        cluster = fat_next_cluster(cluster);
+        skip--;
+    }
+    if (cluster < 2 || guard == 0)
+        return -1;
+
+    u64 available = entry.size - offset;
+    u64 want = cap < available ? cap : available;
+    u8 *cluster_buffer = kmalloc(cluster_bytes);
+    if (!cluster_buffer)
+        return -1;
+
+    u64 copied = 0;
+    guard = g_fs.cluster_count + 2;
+    while (copied < want && cluster >= 2 && guard-- > 0) {
+        u64 lba = (u64)g_fs.data_start +
+                  (u64)(cluster - 2) * g_fs.sectors_per_cluster;
+        if (block_disk_read(g_fs.disk, g_fs.volume_base + lba,
+                            g_fs.sectors_per_cluster, cluster_buffer) != 0) {
+            kfree(cluster_buffer);
+            return -1;
+        }
+        u32 start = within;
+        u32 chunk = cluster_bytes - start;
+        if ((u64)chunk > want - copied)
+            chunk = (u32)(want - copied);
+        memcpy(dst + copied, cluster_buffer + start, chunk);
+        copied += chunk;
+        within = 0;
+        if (copied < want)
+            cluster = fat_next_cluster(cluster);
+    }
+
+    kfree(cluster_buffer);
+    if (copied != want)
+        return -1;
+    if (read_out)
+        *read_out = copied;
+    return 0;
+}
+
 int fat32_read_all(const char *path, u8 **buffer, u64 *size)
 {
     struct fat_entry entry;

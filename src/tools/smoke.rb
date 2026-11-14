@@ -12,7 +12,7 @@
 #                      installed (boot out/target.img alone)
 #          bios firmware supports iso, iso-install and installed.
 #
-# Tests boot the ISO only; installation is exercised by `install` in csh or
+# Tests boot the ISO only; installation is exercised by `install` in 8sh or
 # by booting the installed target afterwards.
 #
 # Run from Windows Ruby (WSL has no ruby): it shells out through wsl.exe and
@@ -131,7 +131,7 @@ Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout,
       break
     end
     break if eof_count >= 2 && sent >= queue.size
-    prompts = out.scan(/zhaoxu>|edit>/).size
+    prompts = out.scan(/8sh\$|edit>/).size
     if sent < queue.size && prompts > sent && Time.now - last_send > 0.8
       stdin.write(queue[sent].dup.force_encoding(Encoding::BINARY) + "\n")
       stdin.flush

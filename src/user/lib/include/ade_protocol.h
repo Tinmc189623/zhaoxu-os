@@ -25,6 +25,7 @@ enum ade_message_type {
     ADE_OP_ROUND,
     ADE_OP_TEXT,
     ADE_OP_COMMIT,
+    ADE_OP_CURSOR,   /* cursor-zone hint for the window manager */
 
     ADE_EV_KEY = 0x100,
     ADE_EV_CLICK,

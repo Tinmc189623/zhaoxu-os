@@ -23,7 +23,13 @@ endif
 ifeq ($(ZOS_HOST),linux)
   CC      ?= gcc
   CXX     ?= g++
-  ADA     ?= gcc-14
+  # Pick the first installed gcc whose gnat1 frontend actually exists.  A
+  # gcc binary without the matching gnat package reports
+  # "-print-prog-name=gnat1" as bare "gnat1" and cannot compile Ada.
+  ADA     ?= $(shell for cc in gcc-14 gcc-15 gcc-16 gnatgcc x86_64-elf-gcc; do \
+               p=$$($$cc -print-prog-name=gnat1 2>/dev/null); \
+               if [ -f "$$p" ]; then echo $$cc; break; fi; \
+             done)
   LD      ?= ld.lld
   OBJCOPY ?= objcopy
   CROSS   ?=
@@ -34,6 +40,12 @@ else
   LD      ?= ld.lld
   OBJCOPY ?= llvm-objcopy
   CROSS   ?= --target=x86_64-elf
+endif
+# GNU make ships a built-in LD=ld, so "?=" above leaves the built-in in
+# place and Linux links with GNU ld instead of ld.lld.  Replace only the
+# built-in default; command-line and environment overrides still win.
+ifeq ($(origin LD),default)
+  LD := ld.lld
 endif
 ifeq ($(ZOS_HOST),linux)
   FASM ?= tools/fasm
@@ -78,6 +90,8 @@ PROC_SELFTEST ?= 0
 DEBUG_SERIAL ?= 0
 SCHED_STATS ?= 0
 CFLAGS += -DPROC_SELFTEST=$(PROC_SELFTEST) -DDEBUG_SERIAL=$(DEBUG_SERIAL) -DSCHED_STATS=$(SCHED_STATS)
+M0_BOOT_TEST ?= 0
+CFLAGS += -DM0_BOOT_TEST=$(M0_BOOT_TEST)
 ADAFLAGS := -c -gnatp -gnat2022 -O2 -g -fno-pie \
             -fno-stack-protector -mno-red-zone -mcmodel=kernel \
             -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -mno-avx \
@@ -101,22 +115,53 @@ C_SRCS := kernel/main.c \
           kernel/arch/x86_64/apic.c \
           kernel/arch/x86_64/smp.c \
           kernel/int/idt.c \
+          kernel/int/intc_x86.c \
           kernel/drivers/timer.c \
+          kernel/drivers/hpet.c \
+          kernel/mem/mmu.c \
           kernel/fs/initramfs.c \
           kernel/fs/fat32.c \
           kernel/fs/fat32_write.c \
           kernel/fs/fat32_format.c \
           kernel/fs/vfs.c \
+          kernel/fs/mntfs.c \
+          kernel/fs/tmpfs.c \
+          kernel/fs/ramfs.c \
+          kernel/fs/rootfs.c \
+          kernel/fs/synfs.c \
+          kernel/fs/procfs.c \
+          kernel/fs/sysfs.c \
+          kernel/fs/debugfs.c \
+          kernel/fs/overlayfs.c \
+          kernel/fs/efivarfs.c \
+          kernel/fs/ecryptfs.c \
+          kernel/fs/blockfs.c \
+          kernel/fs/vfat.c \
+          kernel/fs/exfat.c \
+          kernel/fs/ntfs.c \
+          kernel/fs/iso9660.c \
+          kernel/fs/cdfs.c \
+          kernel/fs/udf.c \
+          kernel/fs/ubifs.c \
+          kernel/fs/media.c \
           kernel/fs/block.c \
           kernel/fs/install.c \
+          kernel/lib/crc32.c \
+          kernel/lib/inflate.c \
+          kernel/crypto/sha256.c \
+          kernel/crypto/aes.c \
           kernel/proc/process.c \
           kernel/proc/zxe_loader.c \
           kernel/proc/syscall.c \
+          kernel/proc/io_syscall.c \
           kernel/proc/dev.c \
           kernel/proc/fsrpc.c \
           kernel/proc/thread.c \
           kernel/ipc/port.c \
           kernel/ipc/shm.c \
+          kernel/ipc/zfd.c \
+          kernel/ipc/unix_socket.c \
+          kernel/ipc/memfd.c \
           kernel/lib/string.c \
           kernel/lib/printf.c \
           kernel/lib/console.c \
@@ -185,7 +230,11 @@ ifeq ($(ZOS_HOST),linux)
 else
   USER_LINK_TARGET := $(CROSS) -fuse-ld=lld
 endif
-USER_LDFLAGS := $(USER_LINK_TARGET) -nostdlib -shared -Wl,-Bsymbolic,--build-id=none \
+# Some clang builds drop the driver-level -shared for the bare x86_64-elf
+# target, which makes ld.lld emit ET_EXEC and breaks zxe-pack.  Hand the
+# flag straight to the linker; it is idempotent where the driver also
+# forwards it.
+USER_LDFLAGS := $(USER_LINK_TARGET) -nostdlib -Wl,-shared -Wl,-Bsymbolic,--build-id=none \
                 -Wl,-T,user/user.ld -Wl,-z,max-page-size=0x1000
 # Ruby drives the ELF->.zxe and ISO tooling.  Linux/macOS normally provide
 # it on PATH; WSL may not, so fall back to a Windows RubyInstaller path
@@ -217,19 +266,23 @@ $(OUT)/%.zxe: $(BUILD)/%.uelf tools/zxe-pack.rb
 ADE_BUILD := $(BUILD)/ade
 ADE_INCLUDES := -Iuser -Iuser/lib/include -Ikernel/include -Ikernel \
                 -Ikernel/font
-ADE_CFLAGS := $(USER_CFLAGS) $(ADE_INCLUDES) -DZOS_USER -MMD -MP
+ADE_CFLAGS := $(USER_CFLAGS) $(ADE_INCLUDES) -Iapps/ADE/compositor/stb \
+              -DZOS_USER -MMD -MP
 ADE_CXXFLAGS := $(filter-out -std=gnu11,$(ADE_CFLAGS)) -std=gnu++20 \
                 -fno-exceptions -fno-rtti -fno-threadsafe-statics \
                 -fno-use-cxa-atexit
 ADE_FONT_CFLAGS := $(filter-out -mno-sse -mno-sse2 -mno-mmx -mno-avx,\
                   $(ADE_CFLAGS)) -msse2 -mno-avx -fno-math-errno
 ADE_C_SRCS := user/lib/shim.c user/lib/string_extra.c user/userlib.c \
-              kernel/gfx/render.c kernel/gfx/svg.c kernel/font/font.c
+              kernel/gfx/render.c kernel/gfx/svg.c kernel/font/font.c \
+              apps/ADE/compositor/cursor.c \
+              apps/ADE/compositor/cursor_stb.c
 ADE_FONT_SRCS := kernel/font/ttf.c kernel/font/stbtt.c
 ADE_CXX_SRCS := apps/ADE/main.cpp apps/ADE/wallpaper.cpp \
                 apps/ADE/menubar.cpp apps/ADE/dock.cpp apps/ADE/about.cpp \
                 apps/ADE/icons.cpp apps/ADE/display/server.cpp \
-                apps/ADE/winmgr/dwm.cpp
+                apps/ADE/winmgr/dwm.cpp \
+                apps/ADE/compositor/compositor.cpp
 ADE_OBJS := $(patsubst %.c,$(ADE_BUILD)/%.o,$(ADE_C_SRCS)) \
             $(patsubst %.c,$(ADE_BUILD)/%.o,$(ADE_FONT_SRCS)) \
             $(patsubst %.cpp,$(ADE_BUILD)/%.o,$(ADE_CXX_SRCS))
@@ -268,7 +321,7 @@ $(ADE_BUILD)/kernel/font/stbtt.o: kernel/font/stbtt.c
 	@mkdir -p $(dir $@)
 	$(CC) $(ADE_FONT_CFLAGS) -c $< -o $@
 
-$(BUILD)/ade.uelf: $(ADE_OBJS) user/user.ld
+$(BUILD)/aqua.uelf: $(ADE_OBJS) user/user.ld
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_LDFLAGS) -o $@ $(ADE_OBJS)
 
@@ -311,7 +364,7 @@ CSH_SRCS := apps/csh/main.c apps/csh/io.c apps/csh/commands.c \
             apps/csh/write.c apps/csh/install.c user/userlib.c
 CSH_HDRS := apps/csh/csh.h user/userlib.h
 
-$(BUILD)/csh.uelf: $(CSH_SRCS) $(CSH_HDRS) user/user.ld
+$(BUILD)/8sh.uelf: $(CSH_SRCS) $(CSH_HDRS) user/user.ld
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -Iapps/csh -Iuser -Ikernel/include \
 	  $(USER_LDFLAGS) -o $@ $(CSH_SRCS)
@@ -338,12 +391,20 @@ $(BUILD)/ext4fs.uelf: $(EXT4FS_SRCS) $(EXT4FS_HDRS) user/user.ld
 DRV_BUILD := $(BUILD)/drv
 DRV_ADAFLAGS := -c -gnatp -gnat2022 -O2 -fpie -fno-stack-protector \
                 -mno-red-zone -mgeneral-regs-only \
-                -mno-sse -mno-sse2 -mno-mmx -mno-avx -Idrivers
-DRV_ADA_SRCS := drivers/ahci.adb drivers/ps2.adb drivers/mouse.adb \
-                drivers/serial.adb
+                -mno-sse -mno-sse2 -mno-mmx -mno-avx -Idrivers \
+                -I$(DRV_BUILD)/ada
+DRV_ADA_SRCS := drivers/ahci.adb drivers/ide.adb drivers/ps2.adb \
+                drivers/mouse.adb drivers/serial.adb drivers/xhci.adb \
+                drivers/usb_msc.adb
 DRV_ADA_OBJS := $(patsubst drivers/%.adb,$(DRV_BUILD)/ada/%.o,$(DRV_ADA_SRCS))
 DRV_C_SRCS := apps/drivers/main.c apps/drivers/glue.c apps/drivers/keyboard.c \
-              apps/drivers/rtc.c kernel/drivers/ahci_log.c \
+              apps/drivers/rtc.c apps/drivers/usb_log.c \
+              apps/drivers/nvme.c apps/drivers/sdhci.c \
+              apps/drivers/e1000.c apps/drivers/hda.c \
+              apps/drivers/ehci.c apps/drivers/ohci.c \
+              apps/drivers/i2c_dw.c apps/drivers/spi_pch.c \
+              apps/drivers/thermal.c apps/drivers/virtio_gpu.c \
+              kernel/drivers/ahci_log.c \
               kernel/lib/printf.c user/userlib.c
 DRV_OBJS := $(patsubst %.c,$(DRV_BUILD)/%.o,$(DRV_C_SRCS)) $(DRV_ADA_OBJS)
 DRV_DEPS := $(DRV_OBJS:.o=.d)
@@ -351,6 +412,11 @@ DRV_DEPS := $(DRV_OBJS:.o=.d)
 $(DRV_BUILD)/ada/%.o: drivers/%.adb
 	@mkdir -p $(dir $@)
 	$(ADA) $(DRV_ADAFLAGS) -o $@ $<
+
+# usb_msc withs xhci, so its ALI file must exist before GNAT compiles it.
+$(DRV_BUILD)/ada/xhci.o: drivers/xhci.ads
+$(DRV_BUILD)/ada/usb_msc.o: $(DRV_BUILD)/ada/xhci.o drivers/usb_msc.ads
+$(DRV_BUILD)/ada/ide.o: drivers/ide.ads
 
 $(DRV_BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -365,7 +431,7 @@ $(BUILD)/drivers.uelf: $(DRV_OBJS) user/user.ld
 
 # ---- initramfs -------------------------------------------------------
 RAMFS := $(BUILD)/initramfs
-RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/ade $(RAMFS)/bin/csh \
+RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/aqua $(RAMFS)/bin/8sh \
                $(RAMFS)/bin/drivers $(RAMFS)/bin/ext4fs \
                $(RAMFS)/bin/apps/welcome.zxe $(RAMFS)/bin/apps/calc.zxe \
                $(RAMFS)/bin/apps/install.zxe \
@@ -375,17 +441,28 @@ RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/ade $(RAMFS)/bin/csh \
                $(RAMFS)/data/HELLO.TXT $(RAMFS)/data/HELLO.ZXE \
                $(RAMFS)/data/HELLO.ELF \
                $(RAMFS)/data/DOCS/INFO.TXT \
-               $(RAMFS)/data/PING.ZXE $(RAMFS)/data/PONG.ZXE
+               $(RAMFS)/data/PING.ZXE $(RAMFS)/data/PONG.ZXE \
+               $(RAMFS)/data/NET_TEST.ZXE
+
+# PNG + text cursor theme.  The compositor loads this from
+# /usr/share/cursors/Aqua at startup and falls back to the built-in arrow
+# when the directory is absent.
+CURSOR_THEME_FILES := $(wildcard initramfs/usr/share/cursors/Aqua/*)
+RAMFS_FILES += $(patsubst initramfs/%,$(RAMFS)/%,$(CURSOR_THEME_FILES))
+
+$(RAMFS)/usr/share/cursors/%: initramfs/usr/share/cursors/%
+	@mkdir -p $(dir $@)
+	cp $< $@
 
 $(RAMFS)/bin/init: $(OUT)/init.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-$(RAMFS)/bin/ade: $(OUT)/ade.zxe
+$(RAMFS)/bin/aqua: $(OUT)/aqua.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-$(RAMFS)/bin/csh: $(OUT)/csh.zxe
+$(RAMFS)/bin/8sh: $(OUT)/8sh.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
@@ -445,6 +522,11 @@ $(RAMFS)/data/PONG.ZXE: $(OUT)/pong.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
+# M0 transport regression: socketpair, poll, memfd, mmap, SCM_RIGHTS.
+$(RAMFS)/data/NET_TEST.ZXE: $(OUT)/net_test.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
 $(RAMFS)/data/DOCS/INFO.TXT: initramfs/data/info.txt
 	@mkdir -p $(dir $@)
 	cp $< $@
@@ -453,12 +535,21 @@ $(OUT)/initramfs.tar: $(RAMFS_FILES)
 	@mkdir -p $(OUT)
 	$(TAR) --format=ustar $(TAR_OWNER) -cf $@ -C $(RAMFS) .
 
-$(BUILD)/initramfs.o: $(OUT)/initramfs.tar
+# The BIOS stage 2 stages the whole kernel below the EBDA (448 KiB), and the
+# uncompressed initramfs is the largest file-backed part of kernel.elf.
+# Embed a zlib stream with an explicit uncompressed size; the kernel inflates
+# it before mounting rootfs.  The ISO still ships the raw tar as initrd.img.
+INITRAMFS_Z := $(OUT)/initramfs.z
+
+$(INITRAMFS_Z): $(OUT)/initramfs.tar tools/initramfs-compress.rb
+	$(RUBY) tools/initramfs-compress.rb $< $@
+
+$(BUILD)/initramfs.o: $(INITRAMFS_Z)
 	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 \
 	  --rename-section .data=.initramfs,alloc,load,readonly,data,contents \
-	  --redefine-sym _binary_out_initramfs_tar_start=initramfs_start \
-	  --redefine-sym _binary_out_initramfs_tar_end=initramfs_end \
-	  --redefine-sym _binary_out_initramfs_tar_size=initramfs_size \
+	  --redefine-sym _binary_out_initramfs_z_start=initramfs_start \
+	  --redefine-sym _binary_out_initramfs_z_end=initramfs_end \
+	  --redefine-sym _binary_out_initramfs_z_size=initramfs_size \
 	  $< $@
 
 # ---- FAT32 data volume ----------------------------------------------
@@ -585,7 +676,8 @@ $(ESP)/BOOTX64.EFI: $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi
 clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin $(OUT)/BOOTX64.EFI \
 	       $(OUT)/OSLDRX64.efi \
-	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/initramfs.tar \
+	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/aqua.zxe \
+	       $(OUT)/8sh.zxe $(OUT)/initramfs.tar $(OUT)/initramfs.z \
 	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu_*_installer.iso \
 	       $(OUT)/*.patched \
 	       $(OUT)/bios_stage1.bin $(OUT)/bios_stage2.bin $(OUT)/bios.img \
@@ -603,7 +695,9 @@ else
   OVMF_VARS ?= $(firstword $(wildcard /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd /usr/share/edk2/ovmf/OVMF_VARS.fd))
 endif
 QEMU_MACHINE ?= q35
-QEMU_MEM ?= 512M
+# The PMM manages the full memory map up to 64 GiB (verified at 8 GiB);
+# 2 GiB is a realistic default instead of the old 512 MiB toy size.
+QEMU_MEM ?= 2048M
 QEMU_SMP ?= 4
 QEMU_DISPLAY ?= -display none
 QEMU_MONITOR ?= none
@@ -625,13 +719,18 @@ run: run-iso
 # Rule 11: ISO files are named zhaoxu_{version}_installer.iso.
 # version.cfg is the single source; version.h holds the synced macros.  Read
 # all four values with one Ruby call so the ISO metadata matches the build.
-VERSION_FIELDS := $(shell $(RUBY) -e 'h=File.read("kernel/include/version.h"); %w[VERSION CODENAME KERNEL KERNEL_VERSION].each { |k| print(h[/ZHAOXU_#{k}\s+"([^"]+)"/, 1], " ") }')
+VERSION_FIELDS := $(shell $(RUBY) -e 'h=File.read("kernel/include/version.h"); %w[VERSION CODENAME KERNEL KERNEL_VERSION BUILD].each { |k| print(h[/ZHAOXU_#{k}\s+"([^"]+)"/, 1], " ") }')
 ZHAOXU_VERSION := $(word 1,$(VERSION_FIELDS))
 ZHAOXU_CODENAME := $(word 2,$(VERSION_FIELDS))
 ZHAOXU_KERNEL := $(word 3,$(VERSION_FIELDS))
 ZHAOXU_KERNEL_VERSION := $(word 4,$(VERSION_FIELDS))
+ZHAOXU_BUILD := $(word 5,$(VERSION_FIELDS))
 ISO := $(OUT)/zhaoxu_$(ZHAOXU_VERSION)_installer.iso
 ISO_ROOT := $(BUILD)/iso
+# The ISO ESP is FAT32, and mkfs.fat only accepts FAT32 above ~32 MiB.
+# Keep it at 64 MiB to match the installed ESP; xorriso records a zero
+# El Torito load size for images beyond 65535 blocks and extends the entry
+# to the end of the image, which OVMF accepts.
 ISO_ESP_MB ?= 64
 
 # The El Torito ESP only holds the loader; the kernel is read from the CD
@@ -647,7 +746,8 @@ $(EFI_IMG): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi boot/zhaoxu.cfg
 	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ boot/zhaoxu.cfg ::/EFI/BOOT/zhaoxu.cfg
 
 $(ISO): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG) \
-        initramfs/data/wqy.ttc tools/kernel-flat.rb tools/iso-bios.rb \
+        initramfs/data/wqy.ttc $(FONT_FILES) boot/fonts/unicode.pf2 \
+        tools/kernel-flat.rb tools/iso-bios.rb \
         tools/iso-manifest.rb boot/zhaoxu.cfg boot/zhaoxuenv $(WALLPAPER_RAW)
 	@rm -rf $(ISO_ROOT)
 	@mkdir -p $(ISO_ROOT)/install
@@ -664,18 +764,23 @@ $(ISO): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(OUT)/kernel.elf $(EFI_IMG) $(BI
 	cp boot/zhaoxuenv $(ISO_ROOT)/boot/zhaoxu/zhaoxuenv
 	cp $(OUT)/OSLDRX64.efi $(ISO_ROOT)/boot/zhaoxu/osloader.elf
 	cp $(OUT)/bios_stage1.bin $(ISO_ROOT)/boot/zhaoxu/BOOTX16.BIN
+	cp boot/fonts/unicode.pf2 $(ISO_ROOT)/boot/zhaoxu/fonts/unicode.pf2
 	cp $(WALLPAPER_RAW) $(ISO_ROOT)/boot/zhaoxu/WALL.RGB
 	cp $(OUT)/BOOTX64.EFI $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
 	cp $(OUT)/OSLDRX64.efi $(ISO_ROOT)/EFI/BOOT/OSLDRX64.ELF
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/casper/kernel.elf
 	cp $(OUT)/initramfs.tar $(ISO_ROOT)/casper/initrd.img
+	cp $(OUT)/drivers.zxe $(ISO_ROOT)/casper/vga.ko
 	$(MKSQUASHFS) $(BUILD)/initramfs $(ISO_ROOT)/casper/filesystem.squashfs \
 	  -noappend -comp gzip -no-progress >/dev/null
 	$(RUBY) tools/kernel-flat.rb $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.BIN
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.ELF
+	cp initramfs/data/MiSans-Regular.ttf $(ISO_ROOT)/install/MiSans.ttf
+	cp initramfs/data/Inter-Regular.otf $(ISO_ROOT)/install/Inter.otf
 	cp initramfs/data/wqy.ttc $(ISO_ROOT)/install/WQY.TTC
 	$(RUBY) tools/iso-manifest.rb $(ISO_ROOT) $(ZHAOXU_VERSION) \
-	  $(ZHAOXU_CODENAME) $(ZHAOXU_KERNEL) $(ZHAOXU_KERNEL_VERSION)
+	  $(ZHAOXU_CODENAME) $(ZHAOXU_KERNEL) $(ZHAOXU_KERNEL_VERSION) \
+	  $(ZHAOXU_BUILD)
 	$(XORRISO) -as mkisofs -o $@ -V ZHAOXU_OS -J -R \
 	  -b bios.img -no-emul-boot -eltorito-alt-boot \
 	  -e efi.img -no-emul-boot -isohybrid-gpt-basdat $(ISO_ROOT)

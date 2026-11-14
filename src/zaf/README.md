@@ -1,7 +1,7 @@
 # src/zaf —— Zhaoxu Aqua Framework
 
-ZAF 是 ADE 桌面与 DWM 窗口管理器下面的 GUI 框架。Z1 阶段它是链接进
-`/bin/ade` 的 Ring3 静态代码（不是内核、不是 `.zxe` 共享库）。
+ZAF 是 Aqua Desktop Environment 桌面与 Desktop Window Manager 窗口管理器下面的 GUI 框架。Z1 阶段它是链接进
+`/bin/aqua` 的 Ring3 静态代码（不是内核、不是 `.zxe` 共享库）。
 
 - 架构与里程碑：[docs/superpowers/specs/2026-11-13-zaf-architecture-design.md](../../docs/superpowers/specs/2026-11-13-zaf-architecture-design.md)
 - Z1 设计：[docs/superpowers/specs/2026-11-14-zaf-z1-compositor-design.md](../../docs/superpowers/specs/2026-11-14-zaf-z1-compositor-design.md)
@@ -10,7 +10,7 @@ ZAF 是 ADE 桌面与 DWM 窗口管理器下面的 GUI 框架。Z1 阶段它是�
 ## 分层
 
 ```
-apps/ADE           桌面外壳（壁纸/菜单栏/Dock/装饰）+ 显示服务器 + DWM 适配
+apps/ADE           桌面外壳（壁纸/菜单栏/Dock/装饰）+ 显示服务器 + Desktop Window Manager 适配
         │
 src/zaf/wm         窗口表、焦点、z 序、命中、拖动状态机（不画像素）
 src/zaf/compositor 图层、损伤、后缓冲、damage-only 提交、软件光标
@@ -43,7 +43,7 @@ render.c           ZOS API 1.0 软件渲染（内核与 Ring3 同一份）
 1. `core/` 不 include 任何系统头（可被 host 测试直接编译）。
 2. `wm/` 不 include `render.h`，不摸像素。
 3. ZAF 新代码（含装饰）只通过 `zaf_paint_*` 画；`gfx/zaf_painter.c` 是唯一直接调
-   `render_*` 的 ZAF 文件。现有 ADE 外壳（wallpaper/menubar/dock/icons）在 Z1 期间
+   `render_*` 的 ZAF 文件。现有 Aqua Desktop Environment 外壳（wallpaper/menubar/dock/icons）在 Z1 期间
    保留直接 `render_*` 调用，迁移到 painter 放在 Z4。
 4. `compositor/` 不认识“窗口”“标题栏”“Dock”，只认识带包围盒和绘制回调的图层。
 5. `src/apps/ADE/` 不 include `zaf/*/` 私有头之外的文件；ZAF 不反向 include
@@ -64,4 +64,4 @@ render.c           ZOS API 1.0 软件渲染（内核与 Ring3 同一份）
 | Z1 | 合成器 + 窗口管理 + Aqua 令牌 + 装饰拆分 | 设计完成，待实现（计划已就绪） |
 | Z2 | 控件系统、事件分发、布局 | 未开始 |
 | Z3 | 动画引擎、主题包 | 未开始 |
-| Z4 | ADE/DWM 全面迁移、ZAF 作为 `.zxe` 共享库 | 未开始 |
+| Z4 | Aqua Desktop Environment/Desktop Window Manager 全面迁移、ZAF 作为 `.zxe` 共享库 | 未开始 |

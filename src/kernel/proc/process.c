@@ -520,6 +520,7 @@ void process_exit_current(int status)
     process->exit_code = status;
     ipc_process_exit(process->pid);
     shm_process_exit(process->pid);
+    zfd_process_exit(process);
     release_user_pages(process);
     g_last_pid = process->pid;
     kthread_exit();

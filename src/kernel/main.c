@@ -12,10 +12,13 @@
 #include <dev.h>
 #include <fs_rpc.h>
 #include <gdt.h>
+#include <hpet.h>
 #include <idt.h>
+#include <intc.h>
 #include <io.h>
 #include <kprintf.h>
 #include <mem.h>
+#include <mmu.h>
 #include <process.h>
 #include <smp.h>
 #include <string.h>
@@ -91,13 +94,16 @@ void kernel_main(struct boot_info *boot)
     console_init(&g_boot);
 
     console_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
-    kprintf("Zhaoxu OS %s \"%s\" / %s kernel %s\n", ZHAOXU_VERSION,
-            ZHAOXU_CODENAME, ZHAOXU_KERNEL, ZHAOXU_KERNEL_VERSION);
+    kprintf("Zhaoxu OS %s \"%s\" / %s kernel %s (build %s)\n",
+            ZHAOXU_VERSION, ZHAOXU_CODENAME, ZHAOXU_KERNEL,
+            ZHAOXU_KERNEL_VERSION, ZHAOXU_BUILD);
     console_set_color(COLOR_DARK_GRAY, COLOR_BLACK);
     kprintf("Microkernel: drivers and applications run in ring 3\n");
     console_reset_color();
     kprintf("\n");
 
+    mmu_init();
+    hpet_init();
     cpu_init();
     timer_init(1000);
     process_init();
@@ -110,6 +116,7 @@ void kernel_main(struct boot_info *boot)
             g_boot.memory_map_desc_version);
 
     smp_init(g_boot.rsdp);
+    intc_x86_init();
     if (apic_lapic_hz())
         apic_timer_start(APIC_VECTOR_TIMER, timer_hz());
     interrupts_enable();
@@ -146,6 +153,9 @@ void kernel_main(struct boot_info *boot)
     else
         kprintf("[vfs ] /mnt unavailable, using ramfs only\n");
 
+    kprintf("[vfs ] probing removable filesystems\n");
+    media_probe_all();
+
     if (g_boot.wallpaper_phys && g_boot.wallpaper_size)
         kprintf("[boot] default wallpaper %llu bytes from the boot volume\n",
                 g_boot.wallpaper_size);
@@ -156,38 +166,65 @@ void kernel_main(struct boot_info *boot)
     ipc_selftest();
 #endif
 
+#if M0_BOOT_TEST == 1
+    {
+        int is_dir = 0;
+        u64 size = 0;
+        int status = vfs_stat("/data/NET_TEST.ZXE", &is_dir, &size);
+        kprintf("[m0 ] stat /data/NET_TEST.ZXE -> %d, dir %d, %llu bytes\n",
+                status, is_dir, size);
+        status = vfs_stat("/data/HELLO.ZXE", &is_dir, &size);
+        kprintf("[m0 ] stat /data/HELLO.ZXE -> %d, dir %d, %llu bytes\n",
+                status, is_dir, size);
+        status = vfs_stat("/bin/8sh", &is_dir, &size);
+        kprintf("[m0 ] stat /bin/8sh -> %d, dir %d, %llu bytes\n",
+                status, is_dir, size);
+    }
+    kprintf("[m0 ] running /data/NET_TEST.ZXE\n");
+    u64 m0_pid = process_spawn("/data/NET_TEST.ZXE", 0, NULL);
+    if (m0_pid) {
+        int m0_status = -1;
+        process_wait(m0_pid, &m0_status);
+        kprintf("[m0 ] NET_TEST exit %d\n", m0_status);
+    } else {
+        kprintf("[m0 ] NET_TEST spawn failed\n");
+    }
+    for (;;)
+        hlt();
+#endif
+
     if (g_boot.framebuffer_base) {
         console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
-        kprintf("\nBoot complete. Starting ADE desktop.\n\n");
+        kprintf("\nBoot complete. Starting Aqua Desktop Environment.\n\n");
         console_reset_color();
 
-        u64 ade_pid = process_spawn("/bin/ade", 0, NULL);
-        if (ade_pid) {
+        u64 desktop_pid = process_spawn("/bin/aqua", 0, NULL);
+        if (desktop_pid) {
             int status = -1;
-            process_wait(ade_pid, &status);
-            kprintf("[ade ] ring3 desktop exited with %d\n", status);
+            process_wait(desktop_pid, &status);
+            kprintf("[aqua] desktop exited with %d\n", status);
         } else {
-            kprintf("[ade ] /bin/ade unavailable\n");
+            kprintf("[aqua] /bin/aqua unavailable\n");
         }
-        kprintf("[ade ] desktop stopped; halting.\n");
+        kprintf("[aqua] desktop stopped; halting.\n");
         for (;;)
             hlt();
     }
 
     console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
-    kprintf("\nBoot complete. No framebuffer; starting csh.\n\n");
+    kprintf("\nBoot complete. No framebuffer; starting 8sh.\n\n");
     console_reset_color();
     for (;;) {
-        u64 csh_pid = process_spawn("/bin/csh", 0, NULL);
-        if (!csh_pid) {
+        u64 shell_pid = process_spawn("/bin/8sh", 0, NULL);
+        if (!shell_pid) {
             console_set_color(COLOR_LIGHT_RED, COLOR_BLACK);
-            kprintf("[csh ] /bin/csh unavailable; halting.\n");
+            kprintf("[8sh ] /bin/8sh unavailable; halting.\n");
             console_reset_color();
             for (;;)
                 hlt();
         }
         int status = -1;
-        process_wait(csh_pid, &status);
-        kprintf("[csh ] exited with %d\n", status);
+        process_wait(shell_pid, &status);
+        kprintf("[8sh ] exited with %d\n", status);
     }
 }

@@ -10,7 +10,7 @@ org 0x8000
 use16
 
 ; HEADLESS=1 tells the kernel there is no framebuffer, so a serial-only guest
-; (headless install regression) boots the Ring3 csh instead of ADE.  The VBE
+; (headless install regression) boots the Ring3 8sh instead of Aqua Desktop Environment.  The VBE
 ; probe itself still runs: on q35/SeaBIOS an SMI that arrives during the first
 ; CD read hangs the firmware's own SMM handler unless the VGA was initialised,
 ; and that read is what boots the kernel.  The Makefile passes
@@ -63,7 +63,7 @@ if defined HEADLESS & HEADLESS
         ; read happens without the VGA ever having been initialised (the
         ; frame buffer probe is what does it), so the probe still runs here.
         ; The kernel is told otherwise: dropping the frame buffer sends it to
-        ; the serial csh instead of ADE.
+        ; the serial 8sh instead of Aqua Desktop Environment.
         call    vbe_probe
         xor     eax, eax
         mov     dword [fb_base], eax
@@ -745,6 +745,19 @@ pm32_entry:
         mov     dword [edi + 116], 0
         mov     dword [edi + 120], 1
         mov     dword [edi + 124], 0
+        ; UEFI runtime services do not exist on the legacy BIOS path.
+        mov     dword [edi + 128], 0
+        mov     dword [edi + 132], 0
+        mov     dword [edi + 136], 0
+        mov     dword [edi + 140], 0
+        mov     dword [edi + 144], 0
+        mov     dword [edi + 148], 0
+        mov     dword [edi + 152], 0
+        mov     dword [edi + 156], 0
+        mov     dword [edi + 160], 0
+        mov     dword [edi + 164], 0
+        mov     dword [edi + 168], 0
+        mov     dword [edi + 172], 0
 
         mov     esi, msg_pm
         call    serial_print32

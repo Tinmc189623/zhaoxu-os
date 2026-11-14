@@ -17,7 +17,7 @@
 - 描述原生代码段、只读数据段、可读写数据段及其内存映像，不依赖运行时解析 ELF。
 - 支持应用依赖共享库、导入/导出符号解析和重定位。
 - 采用有版本标识、边界可验证、可扩展的文件布局。
-- 允许 Zhaoxu Aqua Framework（ZAF）、ADE 和普通应用作为用户态软件，通过库依赖关系组织，不将 GUI 框架或应用代码并入内核。
+- 允许 Zhaoxu Aqua Framework（ZAF）、Aqua Desktop Environment 和普通应用作为用户态软件，通过库依赖关系组织，不将 GUI 框架或应用代码并入内核。
 - 文件格式不限定 Aqua 主题。ZAF 负责 GUI 渲染、控件、窗口管理、合成、动画和主题；它及其库属于用户态组件。
 
 ## 3. 文件总体布局
@@ -119,9 +119,9 @@ ext4
 
 Ring3
   ├── Zhaoxu Aqua Framework（ZAF）及 Aqua 默认主题
-  ├── ADE、DWM、桌面合成器和应用
+  ├── Aqua Desktop Environment、Desktop Window Manager、桌面合成器和应用
 
-Yuanshuo Kernel
+Yuanshuo
   ├── ZXE 装载器：映像验证、依赖装载、立即绑定与重定位
   └── 进程地址空间、Ring3 进入、内存映射、IPC 与系统调用
 ```
@@ -186,7 +186,7 @@ ELF 中间产物限定为 x86-64 ELF64 PIE（ET_DYN），只接受 PT_LOAD；禁
 验证工具与证据：
 
 - `src/tools/zxe-check.rb` 按本文校验任意 `.zxe`（头部常量、表边界与不重叠、段权限与页对齐、映像覆盖、入口位于 CODE、重定位目标可写、字符串 UTF-8 与长度）。全部 11 个产物通过。
-- `src/tools/zxe-fixture-lib.rb` 生成最小共享库 `libztest.zxe`；`src/user/ztestmain.c` 声明 `.zxe.deps`/`.zxe.imports` 并导入 `ztest_value`。`make run-iso QEMU_SMP=1` 冒烟日志显示 `[ztest] imported ztest_value() = 42` 与 `[ztest] exit 0`，随后 ADE 桌面与 welcome/calc/install 客户端正常，证明依赖装载、导出查找、JUMP_SLOT 重定位与 ASLR 基址协同工作。
+- `src/tools/zxe-fixture-lib.rb` 生成最小共享库 `libztest.zxe`；`src/user/ztestmain.c` 声明 `.zxe.deps`/`.zxe.imports` 并导入 `ztest_value`。`make run-iso QEMU_SMP=1` 冒烟日志显示 `[ztest] imported ztest_value() = 42` 与 `[ztest] exit 0`，随后 Aqua Desktop Environment 桌面与 welcome/calc/install 客户端正常，证明依赖装载、导出查找、JUMP_SLOT 重定位与 ASLR 基址协同工作。
 - 已知限制：仓库既有的 UEFI `QEMU_SMP=4` AP 启动在部分运行中停在上线首个 AP 之后，与 ZXE 无关；单核 UEFI 与 BIOS 路径均正常。该问题需单独修复。
 
 ## 8. 实现验收方向

@@ -17,6 +17,23 @@ int g_brand_end;
 int g_item_x[4];
 int g_item_w[4];
 
+/* Return 0..3 for a menu label, -1 outside every label.  Boundaries match
+ * the hit strip used by ade_menubar_click(). */
+int item_at(int x)
+{
+    for (int i = 0; i < 4; i++) {
+        int left = i == 0 ? g_brand_end
+                          : (g_item_x[i - 1] + g_item_w[i - 1] +
+                             g_item_x[i]) / 2;
+        int right = i == 3 ? g_item_x[i] + g_item_w[i] + ade_ui(8)
+                           : (g_item_x[i] + g_item_w[i] +
+                              g_item_x[i + 1]) / 2;
+        if (x >= left && x < right)
+            return i;
+    }
+    return -1;
+}
+
 } // namespace
 
 int ade_menubar_height(void)
@@ -32,8 +49,11 @@ void ade_menubar_paint(void)
 
     int height = ade_menubar_height();
     int text_y = (height - render_line_height()) / 2 + 1;
-    render_vgrad(0, 0, screen->width, height, 0xFBFDFE, 0xD7E3EF);
-    render_blend_rect(0, 0, screen->width, height, 0xFFFFFF, 70);
+    /* Let the wallpaper glow through the bar instead of painting an opaque
+     * strip; the extra white wash keeps dark menu text readable on any
+     * wallpaper. */
+    render_blend_rect(0, 0, screen->width, height, 0xF7FAFD, 216);
+    render_blend_rect(0, 0, screen->width, height / 2, 0xFFFFFF, 42);
     render_hline(0, height - 1, screen->width, 0x7E93A8);
 
     int x = ade_ui(14);
@@ -75,10 +95,18 @@ void ade_menubar_paint(void)
                 1);
 
     char badge[40];
-    ksnprintf(badge, sizeof(badge), "ADE · DWM · %u CPU", smp_cpu_count());
+    ksnprintf(badge, sizeof(badge), "Aqua · Desktop Window Manager · %u CPU",
+              smp_cpu_count());
     int badge_w = render_text_width(badge, 1);
     render_text(badge, screen->width - clock_w - badge_w - ade_ui(52),
                 text_y, 0x51606F, 1);
+}
+
+int ade_menubar_hit(int x, int y)
+{
+    if (y < 0 || y >= ade_menubar_height())
+        return 0;
+    return x < g_brand_end || item_at(x) >= 0;
 }
 
 void ade_menubar_click(int x, int y)
@@ -89,23 +117,15 @@ void ade_menubar_click(int x, int y)
         ade_open_app(ade_about_app());
         return;
     }
-    for (int i = 0; i < 4; i++) {
-        int left = i == 0 ? g_brand_end
-                          : (g_item_x[i - 1] + g_item_w[i - 1] +
-                             g_item_x[i]) / 2;
-        int right = i == 3 ? g_item_x[i] + g_item_w[i] + ade_ui(8)
-                           : (g_item_x[i] + g_item_w[i] +
-                              g_item_x[i + 1]) / 2;
-        if (x < left || x >= right)
-            continue;
-        if (i == 0)
-            sys_spawn_arg("/bin/apps/install.zxe", "force");
-        else if (i == 1)
-            dwm_close_focus();
-        else
-            ade_open_app(ade_about_app());
+    int index = item_at(x);
+    if (index < 0)
         return;
-    }
+    if (index == 0)
+        sys_spawn_arg("/bin/apps/install.zxe", "force");
+    else if (index == 1)
+        dwm_close_focus();
+    else
+        ade_open_app(ade_about_app());
 }
 
 void ade_menubar_tick(void)

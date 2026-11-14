@@ -39,6 +39,10 @@ static void draw(long channel, int status, int gpt)
     ade_round(channel, 300, 200, 250, 48, 10,
               gpt ? 0x1E6FB8 : 0x6B7C8C);
     ade_text(channel, 330, 214, 0xFFFFFF, "使用 GPT 安装");
+    if (status == 0) {
+        ade_cursor(channel, 24, 200, 250, 48, "hand");
+        ade_cursor(channel, 300, 200, 250, 48, "hand");
+    }
 
     if (status == 1)
         ade_text(channel, 24, 286, 0x2E7D32, "安装完成，请重启并从目标盘启动");
@@ -96,6 +100,8 @@ int user_main(long *stack)
                     continue;
                 }
                 draw(channel, 0, gpt);
+                /* Shown while sys_install() blocks this client. */
+                ade_cursor(channel, 0, 0, 620, 340, "wait");
                 u_puts("[install] installing\n");
                 long result = sys_install(-1, gpt);
                 status = result == 0 ? 1 : -1;

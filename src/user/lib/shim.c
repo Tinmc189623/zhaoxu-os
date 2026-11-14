@@ -288,10 +288,17 @@ u8 *zos_load_wallpaper(u64 *size_out)
     long total = sys_read_path("/mnt/WALLPAPER.RAW", buffer,
                                WALLPAPER_SHARED_BYTES);
     if (total < 1920L * 1080L * 3L) {
-        kprintf("[ade ] wallpaper: data volume has no WALLPAPER.RAW\n");
-        return 0;
+        /* The live ISO has no ZHAOXUDATA volume; the boot loader already
+         * staged the rule-33 frame from boot/zhaoxu/WALL.RGB. */
+        total = sys_boot_wallpaper(buffer, WALLPAPER_SHARED_BYTES);
+        if (total < 1920L * 1080L * 3L) {
+            kprintf("[ade ] wallpaper: no WALLPAPER.RAW or boot frame\n");
+            return 0;
+        }
+        kprintf("[ade ] wallpaper boot volume: %ld bytes\n", total);
+    } else {
+        kprintf("[ade ] wallpaper /mnt/WALLPAPER.RAW: %ld bytes\n", total);
     }
-    kprintf("[ade ] wallpaper /mnt/WALLPAPER.RAW: %ld bytes\n", total);
     if (size_out)
         *size_out = (u64)total;
     return buffer;

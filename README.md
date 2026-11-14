@@ -2,7 +2,7 @@
 
 # 🖥️ Zhaoxu OS
 
-### Yuanshuo Kernel · Aqua Desktop · x86_64
+### Yuanshuo · Aqua Desktop Environment · x86_64
 
 <kbd>🧩 微内核</kbd> <kbd>🧵 Ring 3 用户态</kbd> <kbd>💾 FAT32 + ext4</kbd> <kbd>💿 UEFI + Legacy BIOS</kbd> <kbd>🧬 MBR + GPT(ISO)</kbd> <kbd>🎨 Aqua</kbd>
 
@@ -10,56 +10,66 @@
 
 [🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) · [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) · [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) · [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
-**当前版本：0.6.0 「Yuanshuo」 · 内核 0.6.0** · 历史版本见 [CHANGELOG.md](CHANGELOG.md)
+**当前版本：0.7.1 「Yuanshuo」 · 内核 0.7.1 · 构建 1** · 历史版本见 [CHANGELOG.md](CHANGELOG.md)
 
 </div>
 
 ---
 
-> 🧭 **一句话介绍**：Zhaoxu OS 是一个面向 x86_64 的微内核操作系统。引导管理器 **ZhaoxuBootMgr** 同时支持 UEFI 与 legacy BIOS；**Yuanshuo Kernel** 是 C 编写的微内核；驱动由 **Ada** 实现；Shell **csh** 由 C 编写、桌面 **ADE** 由 **C++20** 编写，二者都运行在 ring 3 之上；文件系统支持 FAT32 与 ext4；图形层由自研 **ZAF**（Zhaoxu Aqua Framework）承载，可执行格式为 **ZXE v1**。
+> 🧭 **一句话介绍**：Zhaoxu OS 是一个面向 x86_64 的微内核操作系统。引导管理器 **ZhaoxuBootMgr** 同时支持 UEFI 与 legacy BIOS；**Yuanshuo** 是 C 编写的微内核；驱动由 **Ada + C** 实现并运行在 ring 3；Shell **8sh** 与桌面 **Aqua Desktop Environment** 同样位于 ring 3，界面由 **Desktop Window Compositor** 合成；VFS 覆盖 ext4、UBIFS、tmpfs、initramfs、procfs、sysfs、debugfs、efivarfs、ramfs、rootfs、overlayfs、ecryptfs、vfat、NTFS、ISO 9660/CDFS、UDF 与 exFAT；可执行格式为 **ZXE v1**。
 
 ---
 
-## ✨ 0.6.0 内容
+## ✨ 0.7.1 内容
+
+### 🚀 0.7.1 修复与改进
+- Makefile 成为唯一构建入口，Ruby 只负责辅助脚本；Windows 默认在 WSL2 内 `make`
+- 窗口内容内缩、标题栏避开圆角，修复内容覆盖窗口圆角的穿模；初始窗口左右并排
+- live ISO 直接使用 rule 33 壁纸，菜单栏改为半透明
+- `version.cfg` 新增 `build` 构建号，当前 **0.7.1 build 1**
+- QEMU 默认内存提升到 2 GiB；PMM 已验证管理 8 GiB（上限 64 GiB）
+- 内核内嵌 initramfs 使用 zlib 压缩，legacy BIOS 的 `KERNEL.BIN` 回到 448 KiB 限制内
+- ISO 目录结构补齐 `boot/zhaoxu/fonts/unicode.pf2`、`casper/vga.ko`、`install/MiSans.ttf` 与 `install/Inter.otf`；UEFI live ISO 优先使用 MiSans
+- 修复 `sendmsg` 控制消息长度回绕；memfd 与内核堆按可用内存的 1/4 动态限额/增长
 
 <table>
 <tr>
 <td width="50%" valign="top">
 
-### 🧰 跨平台构建与版本
-- 原生 Linux、macOS、Windows（MSYS2）与 WSL2 四种宿主统一构建
-- Ruby 入口 `tools/build.rb` / `tools/run.rb`，自动探测工具链、OVMF 与 QEMU
-- `version.cfg` 唯一版本源，`os_version` 与 `kernel_version` 分离
-- ISO 元数据同时记录 OS 与内核版本，`make version` 一键同步
+### 🗂️ 文件系统矩阵
+- 新增只读 **NTFS**（MFT、runlist、$INDEX_ROOT/$INDEX_ALLOCATION）、**exFAT**（NoFatChain/FAT、ValidDataLength）、**ISO 9660/CDFS**（Joliet + Rock Ridge + multi-extent）、**UDF**（AVDP/VDS/ICB/FID）与 **UBIFS**（UBI 附着、节点 CRC、zlib 解压）
+- **vfat** 独立驱动覆盖 FAT12/16/32 与 VFAT 长名
+- **rootfs** 改为 initramfs 下层 + ramfs copy-up 的可写根；**overlayfs** 支持写入与 `.wh.` 白障；新增 **ramfs** 与 **ecryptfs**（AES-256-CBC）
+- 启动后扫描 MBR/GPT/EBR，把可识别的卷挂到 `/media/<n>`
 
 </td>
 <td width="50%" valign="top">
 
-### 💾 存储：FAT32 + ext4
-- ext4 核心独立为 `src/fs/ext4`，带 host 测试与 Ruby 格式化矩阵
-- Ring3 `/bin/ext4fs` 服务经块 RPC 读写，`/mnt` 由 VFS 转发
-- 安装器现场构建 ext4 根，内核可从已安装的 ext4 根启动
-- FAT32 读写、ESP `ZHAOXUEFI` 与数据卷 `ZHAOXUDATA`
+### 💽 存储与总线驱动
+- Ring3 **NVMe**（admin/I/O 队列、PRP、identify）与 **SDHCI**（CMD0/8/ACMD41/2/3/9/7/16，PIO 读写）
+- **IDE** PIIX4 驱动接入 `/bin/drivers`，与 AHCI、USB MSC 共同组成块设备池
+- **DesignWare I2C**、**PCH SPI** 与 **LM75/TMP102** 温度传感器；`/sys/class/thermal/thermal_zone0/temp`
+- USB **OHCI/EHCI** 根端口复位与控制器初始化，与既有 **xHCI** 存储栈并存
 
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
 
-### 🎨 ZAF 与 ADE
-- ZAF Z0：后端中立 `zaf_gfx` + 软件光栅 + Ring3 帧率演示
-- ADE 后缓冲合成，只提交损伤区域；菜单栏、About 与 SVG 图标
-- 默认壁纸从数据卷或 ISO 加载，无数据盘时回退 Aqua 渐变
-- ZAF Z1 合成器/窗口管理设计就绪，见 `docs/superpowers/`
+### 🧠 内核平台层
+- 显式 **MMU/页表驱动**：四层遍历、1 GiB/2 MiB 大页拆分、映射/解映射/保护/翻译
+- **HPET** ACPI 表解析与 64 位计数器；APIC Timer、PIT 与 ARM **SysTick** 后端
+- 中断控制器前端统一 APIC/PIC；ARM **GICv3** 驱动位于 `kernel/arch/arm64`
+- 设备头扩展到 16 块盘，并共享温度传感器状态
 
 </td>
 <td width="50%" valign="top">
 
-### 💿 引导、安装与运行时
-- UEFI 两段：`ZhaoxuBootMgr` → `OSLDRX64.ELF` → `kernel.elf`
-- Legacy BIOS：El Torito no-emulation 的 stage1 / stage2 引导链
-- 单 ISO 自包含安装，目标盘支持 MBR 与 GPT
-- ZXE v1 原生格式：W^X、ASLR、动态库依赖；SMP 抢占调度与 Ring3 驱动
+### 🎨 桌面与多媒体
+- **Desktop Window Compositor** 独立承担后缓冲、损伤提交与硬件光标，DWM 只负责窗口策略
+- **Intel HDA** 音频输出路径（CORB/RIRB、DAC→pin、48 kHz/16-bit 立体声）
+- **Intel 8254x/82574L** 网卡驱动（DMA 环、EEPROM MAC、收发）
+- 遗留 virtio-gpu **3D** 通道：virgl 上下文、3D 资源与 SUBMIT_3D
 
 </td>
 </tr>
@@ -69,13 +79,13 @@
 
 ## 📸 实机截图
 
-> 以下十张图片由 `tools/screenshot.rb` 在 QEMU + OVMF 实机启动后抓取帧缓冲得到，**1920×1080**，非绘制示意图。部分画面来自 0.5.0 及更早的版本（保留用于展示硬件、字体与桌面效果），命令名以当前版本的 csh 为准。
+> 以下十张图片由 `tools/screenshot.rb` 在 QEMU + OVMF 实机启动后抓取帧缓冲得到，**1920×1080**，非绘制示意图。部分画面来自 0.5.0 及更早的版本（保留用于展示硬件、字体与桌面效果），命令名以当前版本的 8sh 为准。
 
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="docs/shot-shell.png" width="100%" alt="csh neofetch">
-<br><b>🖥️ csh</b><br>
+<img src="docs/shot-shell.png" width="100%" alt="8sh neofetch">
+<br><b>🖥️ 8sh</b><br>
 <sub>neofetch：内核摘要与语言构成</sub>
 </td>
 <td width="50%" align="center">
@@ -111,7 +121,7 @@
 <tr>
 <td width="50%" align="center">
 <img src="docs/shot-desktop.png" width="100%" alt="Aqua 桌面与终端">
-<br><b>🎨 ADE · Aqua</b><br>
+<br><b>🎨 Aqua Desktop Environment · Aqua</b><br>
 <sub>菜单栏、窗口、Dock、软件光标；终端里运行真实的 neofetch</sub>
 </td>
 <td width="50%" align="center">
@@ -138,7 +148,7 @@
 
 ## 🧠 架构
 
-**微内核结构**：`kernel.elf` 只包含 CPU/内存/调度/IPC/VFS 核心，不含任何驱动或应用；AHCI、PS/2、鼠标、RTC、串口由 Ring 3 `/bin/drivers` 独占，ADE、csh 与全部应用同样是 Ring 3 程序（规则 9）。
+**微内核结构**：`kernel.elf` 只包含 CPU/内存/调度/IPC/VFS 核心，不含任何驱动或应用；AHCI、PS/2、鼠标、RTC、串口由 Ring 3 `/bin/drivers` 独占，Aqua Desktop Environment、8sh 与全部应用同样是 Ring 3 程序（规则 9）。
 
 <table>
 <tr><th>层</th><th>语言</th><th>实现</th></tr>
@@ -148,7 +158,7 @@
 <tr><td>文件系统</td><td>💾 C（内核 + Ring3）</td><td>initramfs、FAT32（内核）、ext4（<code>fs/ext4</code> 核心 + <code>/bin/ext4fs</code> 服务）</td></tr>
 <tr><td>底层汇编</td><td>🧱 GAS</td><td>入口、ISR 桩、用户态切换、内核镜像嵌入</td></tr>
 <tr><td>驱动</td><td>✨ Ada + C，Ring3</td><td><code>/bin/drivers</code>：AHCI、PS/2、鼠标、RTC、UART；内核通过共享页 RPC 访问</td></tr>
-<tr><td>Shell / 桌面 / 应用</td><td>🚀 C + C++20</td><td><code>apps/csh/</code>（csh）、<code>apps/ADE/</code>（C++20）、<code>apps/ext4fs/</code> 与 <code>user/</code> 下的独立客户端</td></tr>
+<tr><td>Shell / 桌面 / 应用</td><td>🚀 C + C++20</td><td><code>apps/csh/</code>（8sh）、<code>apps/ADE/</code>（C++20）、<code>apps/ext4fs/</code> 与 <code>user/</code> 下的独立客户端</td></tr>
 <tr><td>图形框架</td><td>🎨 C + C++20</td><td><code>zaf/</code>：合成器、窗口管理、主题（Z1 设计中）；Ring3 复用 <code>kernel/gfx/render.c</code></td></tr>
 <tr><td>用户程序</td><td>🧵 C</td><td><code>user/</code>：<code>init</code>、<code>hello</code>，链接到 <code>0x10000000000</code>（1 TiB），运行在 ring 3</td></tr>
 <tr><td>工具链</td><td>💎 Ruby</td><td><code>tools/</code>：跨平台构建/运行入口、ELF→.zxe、BIOS 镜像、冒烟测试、实机截图、版本同步</td></tr>
@@ -208,11 +218,11 @@
 
 5. GDT/IDT/PIC → PMM/VMM/堆 → CPUID/ACPI/RTC → VFS → 字体；块设备由 Ring3 驱动服务提供。
 6. 挂载 initramfs（`/`）与数据卷（`/mnt`）：FAT32 卷标 `ZHAOXUDATA`；安装后的 ext4 根由 `/bin/ext4fs` 服务经 VFS 转发。
-7. 自动以 ring 3 运行 `/bin/init`；有 GOP 帧缓冲时启动 **ADE**，无帧缓冲时进入 **csh**。
+7. 自动以 ring 3 运行 `/bin/init`；有 GOP 帧缓冲时启动 **Aqua Desktop Environment**，无帧缓冲时进入 **8sh**。
 
 ---
 
-## 💻 csh 命令
+## 💻 8sh 命令
 
 <table>
 <tr><th>命令</th><th>说明</th><th>命令</th><th>说明</th></tr>
@@ -222,7 +232,7 @@
 <tr><td><code>ls [path]</code></td><td>列目录</td><td><code>cat &lt;path&gt;</code></td><td>输出文件内容</td></tr>
 <tr><td><code>write &lt;path&gt; &lt;text&gt;</code></td><td>创建/覆盖 /mnt 文件</td><td><code>rm &lt;path&gt;</code></td><td>删除 /mnt 文件</td></tr>
 <tr><td><code>run &lt;path&gt;</code></td><td>以 ring 3 运行 .zxe / ELF64</td><td><code>cpus</code></td><td>在线 CPU 数</td></tr>
-<tr><td><code>pid</code></td><td>csh 进程号</td><td><code>disks</code></td><td>磁盘与安装角色</td></tr>
+<tr><td><code>pid</code></td><td>8sh 进程号</td><td><code>disks</code></td><td>磁盘与安装角色</td></tr>
 <tr><td><code>install</code></td><td>安装到空白目标盘（MBR/GPT）</td><td><code>exit</code></td><td>退出 shell</td></tr>
 </table>
 
@@ -249,31 +259,32 @@ hello from ring 3
 
 ## 📦 构建与运行
 
-构建必须支持四种宿主：**原生 Linux、原生 macOS、原生 Windows（MSYS2/MinGW）与 WSL2**。统一入口是 Ruby（规则 6），它会识别宿主并调用 make；具备完整工具链的 POSIX 环境也可以直接 `make`。
+构建必须支持四种宿主：**原生 Linux、原生 macOS、原生 Windows（MSYS2/MinGW）与 WSL2**。**构建系统是 Makefile**；Ruby 只负责辅助脚本（ELF→ZXE、版本同步、ISO 元数据、冒烟/截图）和可选的宿主探测。Windows 首选 WSL2，在其内部直接 `make`。
 
 ```bash
 cd src
-ruby tools/build.rb              # 等同 make all
-ruby tools/build.rb --check      # 当前宿主的工具矩阵与安装提示
-ruby tools/build.rb iso          # 生成 out/zhaoxu_{os_version}_installer.iso（UEFI + BIOS）
-ruby tools/run.rb                # 等同 make run-iso（仅光盘启动，不挂数据盘）
-ruby tools/run.rb --display gtk  # 图形窗口
-make -j4                         # Linux/macOS/WSL 具备工具链时直接构建
+make -j4                         # 构建全部（Linux/macOS/WSL）
+make iso                         # 生成 out/zhaoxu_{os_version}_installer.iso（UEFI + BIOS）
+make run-iso                     # UEFI 光盘启动（不挂数据盘）
+make host-test                   # 宿主检测单元测试
+ruby tools/build.rb --check      # 辅助：工具矩阵与安装提示
 ```
 
 ```powershell
-# Windows（PowerShell 7+）：优先转发 Ruby，缺 Ruby 时才退回 WSL
-./src/build.ps1                  # 原生 MSYS2 或 WSL 自动选择
-./src/build.ps1 -Check           # 打印工具矩阵
-./src/run.ps1 -Display gtk       # QEMU 图形窗口
+# Windows（PowerShell 7+）：默认转发到 WSL2 执行 make；-HostMode native 才走原生 MSYS2
+./src/build.ps1                  # WSL2 make all
+./src/build.ps1 -Check           # 工具矩阵（Ruby 辅助探测）
+./src/run.ps1 -Display gtk       # WSL2 QEMU 图形窗口
 ```
+
+真机与虚拟机的安装步骤见 [docs/INSTALL.md](docs/INSTALL.md)（[Word 版](docs/INSTALL.docx)）。
 
 **依赖**：逐项检查用 `ruby tools/build.rb --check`。Linux/WSL 需要 `gcc`、`g++`、`gcc-14`+`gnat-14`、`ld.lld`、`objcopy`、`clang`、`lld-link`、`qemu-system-x86_64`、OVMF、`mkfs.vfat`、`mtools`、`tar`、`xorriso`、`squashfs-tools`；macOS 用 Homebrew 的 `llvm`、`lld`、`qemu`、`xorriso`、`mtools`、`dosfstools`、`squashfs`；原生 Windows 用 MSYS2 中对应包加 Ruby。Ada 驱动需要 x86_64-elf GNAT（`ADA=` 指定），FASM 需使用宿主版本（`FASM=`，Windows 也可放 `src/tools/fasm.exe`）。
 
 **验证工具**（Ruby）：
 
 ```bash
-ruby tools/smoke.rb <marker> [commands]     # 无头冒烟，逐条发送 csh 命令
+ruby tools/smoke.rb <marker> [commands]     # 无头冒烟，逐条发送 8sh 命令
 ruby tools/screenshot.rb 3.0 out/shot.png   # 实机启动并抓取帧缓冲
 SMOKE_BOOT=iso-install ruby tools/smoke.rb ... # ISO + 空白目标盘安装测试
 SMOKE_BOOT=installed ruby tools/smoke.rb ...   # 从安装后的目标盘启动
@@ -311,7 +322,7 @@ Zhaoxu OS/
     ├── fs/ext4/              OS 无关 ext4 核心（挂载/目录/读写/分配/格式化）
     ├── zaf/                  Zhaoxu Aqua Framework（Z0 图形接口与 Z1 设计）
     ├── drivers/              Ada/SPARK 驱动（AHCI、PS/2、鼠标、串口）
-    ├── apps/                 csh（C）、ADE（C++20）、ext4fs 服务
+    ├── apps/                 8sh（C）、Aqua Desktop Environment（C++20）、ext4fs 服务
     ├── user/                 ring 3 程序、客户端与用户库
     ├── initramfs/            ramfs 初始内容与数据盘素材
     ├── tests/                host 测试（ext4、构建宿主检测）
@@ -343,7 +354,7 @@ Zhaoxu OS/
 
 <div align="center">
 
-**Zhaoxu OS · Yuanshuo Kernel** · C / FASM / GAS / Ada / C++ 技术栈
+**Zhaoxu OS · Yuanshuo** · C / FASM / GAS / Ada / C++ 技术栈
 
 Copyright © 2026 Nexsteaduser. All Rights Reserved. · admin@nexsteaduser.com
 

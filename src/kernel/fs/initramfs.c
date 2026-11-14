@@ -5,6 +5,7 @@
  * archive is linked into the kernel as a read-only blob; this file parses it
  * once and exposes the entries as a small in-memory file tree.
  */
+#include <inflate.h>
 #include <kprintf.h>
 #include <mem.h>
 #include <string.h>
@@ -13,6 +14,11 @@
 
 extern const u8 initramfs_start[];
 extern const u8 initramfs_end[];
+
+/* The blob embedded in kernel.elf is a ZIR1-wrapped zlib stream when built
+ * through the Makefile, or a plain ustar archive for hand-built kernels. */
+static const u8 *g_archive;
+static u32 g_archive_size;
 
 #define RAMFS_NAME_MAX 64
 #define RAMFS_PATH_MAX 256
@@ -181,10 +187,41 @@ static void copy_field(char *destination, usize capacity, const char *source,
     destination[index] = 0;
 }
 
+/* Unpack the embedded archive once.  A 64 MiB sanity cap keeps a corrupt
+ * header from asking the page allocator for an absurd region. */
+static int archive_open(void)
+{
+    u32 size = (u32)(initramfs_end - initramfs_start);
+    if (size >= 8 && memcmp(initramfs_start, "ZIR1", 4) == 0) {
+        u32 raw = 0;
+        memcpy(&raw, initramfs_start + 4, 4);
+        if (raw == 0 || raw > 64u * 1024u * 1024u)
+            return -1;
+        u32 pages = (raw + PAGE_SIZE - 1) / PAGE_SIZE;
+        u64 region = vmm_alloc_pages(pages);
+        if (!region)
+            return -1;
+        u32 out = 0;
+        if (zlib_decompress(initramfs_start + 8, size - 8,
+                            (u8 *)(uintptr_t)region, raw, &out) != 0 ||
+            out != raw) {
+            kprintf("[vfs ] initramfs zlib inflate failed (%u bytes)\n", raw);
+            return -1;
+        }
+        g_archive = (const u8 *)(uintptr_t)region;
+        g_archive_size = raw;
+        kprintf("[vfs ] initramfs zlib %u -> %u bytes\n", size, raw);
+        return 0;
+    }
+    g_archive = initramfs_start;
+    g_archive_size = size;
+    return 0;
+}
+
 static int parse_archive(void)
 {
-    const u8 *cursor = initramfs_start;
-    const u8 *end = initramfs_end;
+    const u8 *cursor = g_archive;
+    const u8 *end = g_archive + g_archive_size;
 
     while (cursor + 512 <= end) {
         const char *header = (const char *)cursor;
@@ -258,6 +295,10 @@ int ramfs_init(void)
     g_file_count = 0;
     g_total_bytes = 0;
 
+    if (archive_open() != 0) {
+        kprintf("[vfs ] initramfs archive unavailable\n");
+        return -1;
+    }
     parse_archive();
 
     kprintf("[vfs ] initramfs: %llu files, %llu bytes\n",
@@ -314,4 +355,104 @@ int ramfs_stat(const char *path, int *is_dir, u64 *size)
     if (size)
         *size = node->size;
     return 0;
+}
+
+/* Offset read used by the VFS file-descriptor path.  The archive itself is
+ * immutable, so this is a straight copy out of the linked ustar blob. */
+int ramfs_read_at(const char *path, u64 offset, u8 *dst, u64 cap,
+                  u64 *read_out)
+{
+    struct ram_node *node = ram_lookup(path);
+    if (!node || node->type != RAM_FILE || (!dst && cap))
+        return -1;
+    if (offset >= node->size) {
+        if (read_out)
+            *read_out = 0;
+        return 0;
+    }
+    u64 available = node->size - offset;
+    u64 count = cap < available ? cap : available;
+    if (count)
+        memcpy(dst, node->data + offset, (usize)count);
+    if (read_out)
+        *read_out = count;
+    return 0;
+}
+
+/* Mount-relative path to the absolute path used by the ramfs lookup. */
+static int ramfs_op_path(const char *rel, char *path, usize capacity)
+{
+    if (!rel || !rel[0]) {
+        if (capacity < 2)
+            return -1;
+        strcpy(path, "/");
+        return 0;
+    }
+    usize length = strlen(rel);
+    if (length + 2 > capacity)
+        return -1;
+    path[0] = '/';
+    memcpy(path + 1, rel, length + 1);
+    return 0;
+}
+
+static int ramfs_list_op(void *private, const char *rel,
+                         vfs_list_cb callback, void *context)
+{
+    char path[VFS_PATH_MAX];
+    (void)private;
+    if (ramfs_op_path(rel, path, sizeof(path)) != 0)
+        return -1;
+    return ramfs_list(path, callback, context);
+}
+
+static int ramfs_stat_op(void *private, const char *rel, int *is_dir,
+                         u64 *size)
+{
+    char path[VFS_PATH_MAX];
+    (void)private;
+    if (ramfs_op_path(rel, path, sizeof(path)) != 0)
+        return -1;
+    return ramfs_stat(path, is_dir, size);
+}
+
+static int ramfs_read_op(void *private, const char *rel, u64 offset,
+                         void *buffer, u64 capacity, u64 *read_out)
+{
+    char path[VFS_PATH_MAX];
+    (void)private;
+    if (ramfs_op_path(rel, path, sizeof(path)) != 0)
+        return -1;
+    return ramfs_read_at(path, offset, (u8 *)buffer, capacity, read_out);
+}
+
+static int ramfs_write_op(void *private, const char *rel, const u8 *data,
+                          u64 size)
+{
+    (void)private;
+    (void)rel;
+    (void)data;
+    (void)size;
+    return -1;
+}
+
+static int ramfs_unlink_op(void *private, const char *rel)
+{
+    (void)private;
+    (void)rel;
+    return -1;
+}
+
+static const struct vfs_fs_ops g_ramfs_ops = {
+    .name = "initramfs",
+    .list = ramfs_list_op,
+    .stat = ramfs_stat_op,
+    .read = ramfs_read_op,
+    .write = ramfs_write_op,
+    .unlink = ramfs_unlink_op,
+};
+
+int ramfs_mount_root(void)
+{
+    return vfs_mount("/", "rootfs", &g_ramfs_ops, NULL);
 }

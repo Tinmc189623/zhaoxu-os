@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- 内核名称 `Yuanshuo Kernel`，系统 `Zhaoxu OS`，Shell `csh`，桌面 `ADE`（Aqua），窗口管理器 `DWM`；不得改写这些名称。
+- 内核名称 `Yuanshuo`，系统 `Zhaoxu OS`，Shell `8sh`，桌面 `Aqua Desktop Environment`（Aqua），窗口管理器 `Desktop Window Manager`；不得改写这些名称。
 - 构建在 WSL2 `Ubuntu-26.04` 内、工作目录 `src/`；Ruby 脚本从 Windows 侧运行（WSL 无 ruby）。
 - 内核二进制不得包含 ext4/驱动/应用代码；`nm out/kernel.elf | grep -E '^.* ext4_'` 必须为空。
 - 内核只允许位于 ext4 分区：MBR/stage1/stage2/ESP 不得出现内核 ELF；ESP 仅 `EFI/BOOT/BOOTX64.EFI`。
@@ -1445,7 +1445,7 @@ $(BUILD)/ext4fs.uelf: $(EXT4FS_SRCS) $(EXT4FS_HDRS) user/user.ld
 	  $(USER_LDFLAGS) -o $@ $(EXT4FS_SRCS)
 ```
 
-并把 `out/ext4fs.zxe`、`$(RAMFS)/bin/ext4fs`、`RAMFS_FILES` 补上（照抄 `csh.zxe` 的三段规则）。
+并把 `out/ext4fs.zxe`、`$(RAMFS)/bin/ext4fs`、`RAMFS_FILES` 补上（照抄 `8sh.zxe` 的三段规则）。
 
 - [ ] **Step 7: 启动服务**
 

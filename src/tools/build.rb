@@ -14,12 +14,13 @@
 #   ruby tools/build.rb --host wsl          # Windows: force the WSL path
 #   ruby tools/build.rb --host native       # Windows: force MSYS2/MinGW
 #
-# Linux/macOS run make directly.  Windows finds the MSYS2 (or Git Bash)
-# bash.exe, exports RUBY/FASM/OVMF in POSIX form, and runs make there; when
-# MSYS2 is missing and a WSL distro is registered it can forward to WSL.
+# Linux/macOS run make directly.  Windows prefers a registered WSL2 distro
+# (the Makefile runs inside it); native MSYS2/Git Bash is only the fallback
+# when the distro lacks make/cc/clang/ld/objcopy.
 
 require "rbconfig"
 require_relative "host"
+require_relative "native"
 
 module ZosBuild
   SRC = File.expand_path("..", __dir__)
@@ -30,7 +31,7 @@ module ZosBuild
     linux: {
       "make" => %w[make], "ruby" => %w[ruby],
       "cc" => %w[gcc cc], "cxx" => %w[g++ c++],
-      "gcc-ada" => %w[gcc-14 gnatgcc x86_64-elf-gcc],
+      "gcc-ada" => %w[gcc-14 gcc-15 gcc-16 gnatgcc x86_64-elf-gcc],
       "ld" => %w[ld.lld lld], "objcopy" => %w[objcopy llvm-objcopy],
       "clang" => %w[clang], "lld-link" => %w[lld-link],
       "fasm" => %w[tools/fasm fasm], "tar" => %w[tar],
@@ -75,7 +76,7 @@ module ZosBuild
     linux: {
       "make" => "apt install make", "ruby" => "apt install ruby",
       "cc" => "apt install gcc", "cxx" => "apt install g++",
-      "gcc-ada" => "apt install gcc-14 gnat-14", "ld" => "apt install lld",
+      "gcc-ada" => "apt install gnat-14 (or the gnat matching gcc)", "ld" => "apt install lld",
       "objcopy" => "apt install binutils", "clang" => "apt install clang",
       "lld-link" => "apt install lld", "fasm" => "repository ships tools/fasm",
       "tar" => "apt install tar", "mkfs.vfat" => "apt install dosfstools",
@@ -191,7 +192,11 @@ module ZosBuild
         case requested
         when "auto", ""
           if detected == :windows
-            if native_windows_usable? then :windows
+            # Windows prefers WSL2.  Only fall back to a native MSYS2/MinGW
+            # host when the registered distro lacks the core toolchain.
+            if wsl_usable?(options[:distro]) then :wsl
+            elsif native_windows_usable? then :windows
+            elsif native_windows_build? then :windows
             elsif wsl_available? then :wsl
             end
           else
@@ -199,8 +204,12 @@ module ZosBuild
           end
         when "native"
           if detected == :windows
-            native_windows_usable? ? :windows : raise(ZosHost::Error,
-                                                      "MSYS2/Git Bash with make not found (run --check)")
+            if native_windows_usable? || native_windows_build?
+              :windows
+            else
+              raise ZosHost::Error,
+                    "no native Windows toolchain found (run --check)"
+            end
           else
             detected
           end
@@ -229,10 +238,62 @@ module ZosBuild
       !ZosHost.find_executable("make", *windows_tool_dirs(bash)).nil?
     end
 
+    # A plain Windows host may have LLVM + FASM + Ruby + Git tar without
+    # GNU make/MSYS2; tools/native.rb drives that combination directly.
+    def native_windows_build?
+      ZosNative.available?
+    end
+
+    def windows_make_available?
+      bash = ZosHost.bash
+      return false unless bash
+
+      output = capture(bash, "-lc", "command -v make 2>/dev/null")
+      !output.to_s.strip.empty?
+    end
+
     def wsl_available?
       return false unless ZosHost.native_windows?
 
       !wsl_distros.empty?
+    end
+
+    # A registered distro is only preferred when it can actually drive the
+    # Makefile.  Ruby itself is passed in from Windows via wslpath, so it is
+    # deliberately absent from this list.
+    def wsl_usable?(distro = nil)
+      return false unless wsl_available?
+
+      lookup = probe_in_wsl(distro)
+      candidates = TOOL_CANDIDATES.fetch(:linux)
+      %w[make cc clang ld objcopy].all? do |tool|
+        candidates.fetch(tool).any? { |name| !lookup[name].nil? }
+      end
+    end
+
+    # OVMF lives inside the distro, so a Windows-side file test reports a
+    # false "not found" even when the firmware package is installed.
+    def wsl_ovmf(distro = nil)
+      return nil unless wsl_available?
+
+      # wsl.exe strips shell variables from this argument path, so test the
+      # candidate paths explicitly instead of looping over "$p".
+      script = 'if [ -f /usr/share/OVMF/OVMF_CODE_4M.fd ]; then ' \
+               'echo /usr/share/OVMF/OVMF_CODE_4M.fd; ' \
+               'elif [ -f /usr/share/OVMF/OVMF_CODE.fd ]; then ' \
+               'echo /usr/share/OVMF/OVMF_CODE.fd; ' \
+               'elif [ -f /usr/share/edk2/ovmf/OVMF_CODE.fd ]; then ' \
+               'echo /usr/share/edk2/ovmf/OVMF_CODE.fd; fi; ' \
+               'if [ -f /usr/share/OVMF/OVMF_VARS_4M.fd ]; then ' \
+               'echo /usr/share/OVMF/OVMF_VARS_4M.fd; ' \
+               'elif [ -f /usr/share/OVMF/OVMF_VARS.fd ]; then ' \
+               'echo /usr/share/OVMF/OVMF_VARS.fd; ' \
+               'elif [ -f /usr/share/edk2/ovmf/OVMF_VARS.fd ]; then ' \
+               'echo /usr/share/edk2/ovmf/OVMF_VARS.fd; fi'
+      lines = decode_output(capture(wsl_executable, "-d", wsl_distro(distro),
+                                    "--", "bash", "-lc", script))
+              .lines.map(&:strip).reject(&:empty?)
+      lines.length == 2 ? lines : nil
     end
 
     # Registered WSL distros.  wsl.exe writes UTF-16LE when WSL is missing,
@@ -287,13 +348,29 @@ module ZosBuild
       ok =
         case host
         when :linux, :macos then run_native(host, arguments)
-        when :windows then run_windows(arguments)
+        when :windows
+          if windows_make_available?
+            run_windows(arguments)
+          else
+            run_native_windows(arguments)
+          end
         when :wsl
           ZosHost.native_windows? ? run_wsl(arguments, options[:distro]) :
                                     run_native(:linux, arguments)
         else raise ZosHost::Error, "unsupported host: #{host}"
         end
       ok ? 0 : 1
+    end
+
+    # No-make native Windows build: LLVM + FASM + Ruby + Git tar.  It covers
+    # `all`/`clean`/`host-test`; ISO targets need the Makefile toolchain.
+    def run_native_windows(arguments)
+      if arguments.any? { |arg| arg.include?("=") }
+        warn "build: the native no-make driver ignores make variables: " \
+             "#{arguments.reject { |arg| arg.include?('=') }.join(' ')}"
+      end
+      target = arguments.find { |arg| !arg.include?("=") } || "all"
+      ZosNative.main([target]).zero?
     end
 
     def run_native(host, arguments)
@@ -346,24 +423,45 @@ module ZosBuild
     end
 
     # Environment exports (already `export`-ready) for a POSIX shell on
-    # native Windows.  MSYS2's login profile supplies PATH; only the paths
-    # make needs are exported.
+    # native Windows.  MSYS2/Git-Bash profiles supply PATH for make; the
+    # compiler/linker/objcopy/FASM paths are exported explicitly so a stock
+    # Git Bash + LLVM + FASM host works without MSYS2.
     def windows_exports
-      exports = ["RUBY=#{ZosHost.shell_quote(ZosHost.to_posix_path(RbConfig.ruby))}"]
-      fasm = ZosHost.find_executable("fasm") ||
-             (File.file?(File.join(SRC, "tools", "fasm.exe")) ?
-              File.join(SRC, "tools", "fasm.exe") : nil)
-      if fasm
-        exports << "FASM=#{ZosHost.shell_quote(ZosHost.to_posix_path(fasm))}"
+      map = begin
+        ZosNative.tools
+      rescue ZosNative::BuildError
+        {}
+      end
+      exports = ["RUBY=#{ZosHost.shell_quote(posix_tool(RbConfig.ruby))}"]
+      {
+        "CC" => map[:clang], "CXX" => map[:clangxx], "LD" => map[:ld_lld],
+        "OBJCOPY" => map[:objcopy], "BOOT_CC" => map[:clang],
+        "BOOT_LD" => map[:lld_link],
+      }.each do |variable, path|
+        next unless path
+
+        exports << "#{variable}=#{ZosHost.shell_quote(posix_tool(path))}"
+      end
+      exports << "FASM=#{ZosHost.shell_quote(posix_tool(map[:fasm]))}" if map[:fasm]
+      if map[:clang]
+        llvm = posix_tool(File.dirname(ZosHost.short_path(map[:clang])))
+        exports << "PATH=#{ZosHost.shell_quote(llvm)}:\"$PATH\""
       end
       ovmf = ZosHost.ovmf(host: :windows)
       if ovmf
-        exports << "OVMF_CODE=#{ZosHost.shell_quote(ZosHost.to_posix_path(ovmf[0]))}"
-        exports << "OVMF_VARS=#{ZosHost.shell_quote(ZosHost.to_posix_path(ovmf[1]))}"
+        exports << "OVMF_CODE=#{ZosHost.shell_quote(posix_tool(ovmf[0]))}"
+        exports << "OVMF_VARS=#{ZosHost.shell_quote(posix_tool(ovmf[1]))}"
       end
-      exports << "CC=clang" << "CXX=clang++" << "LD=ld.lld" <<
-                   "OBJCOPY=llvm-objcopy" << "BOOT_CC=clang" << "BOOT_LD=lld-link"
+      # Git Bash rewrites /subsystem:efi_application and /entry:... into
+      # Windows paths; lld-link must see them verbatim.
+      exports << "MSYS_NO_PATHCONV=1"
+      exports << "MSYS2_ARG_CONV_EXCL=#{ZosHost.shell_quote('*')}"
       exports
+    end
+
+    # Tool path safe for make recipes: a POSIX path with no embedded spaces.
+    def posix_tool(path)
+      ZosHost.to_posix_path(ZosHost.short_path(path))
     end
 
     def run_windows(arguments)
@@ -384,10 +482,26 @@ module ZosBuild
                      RbConfig.ruby.to_s).to_s.strip
       raise ZosHost::Error, "cannot translate paths in WSL distro #{distro}" if src.empty? || ruby.empty?
 
+      normalize_native_dependency_files
+
       script = "cd #{ZosHost.shell_quote(src)} && " \
                "RUBY=#{ZosHost.shell_quote(ruby)} " \
                "make #{arguments.map { |arg| ZosHost.shell_quote(arg) }.join(' ')}"
       system(wsl, "-d", distro, "--", "bash", "-lc", script) || false
+    end
+
+    # Native Windows compilers write dependency files with backslash paths;
+    # GNU make inside WSL treats "kernel\main.c" as a literal filename and
+    # aborts.  Rewrite the paths instead of deleting the files so header
+    # dependencies (version.h and friends) survive the host switch.
+    def normalize_native_dependency_files
+      Dir.glob(File.join(SRC, "build", "**", "*.d")).each do |path|
+        text = File.binread(path)
+        next unless text.include?("\\")
+        File.binwrite(path, text.gsub("\\", "/"))
+      rescue SystemCallError
+        next
+      end
     end
 
     def wsl_executable
@@ -420,7 +534,22 @@ module ZosBuild
       resolved = candidates.transform_values do |names|
         names.map { |name| lookup[name] }.compact.first
       end
-      print_report(host, resolved, scope)
+      native = host == :windows && !windows_make_available? && native_windows_build?
+      resolved.merge!(native_tool_map) if native
+      print_report(host, resolved, scope, native: native)
+    end
+
+    # Logical make variables satisfied by the no-make native Windows driver.
+    def native_tool_map
+      map = ZosNative.tools
+      {
+        "cc" => map[:clang], "cxx" => map[:clangxx], "ld" => map[:ld_lld],
+        "objcopy" => map[:objcopy], "clang" => map[:clang],
+        "lld-link" => map[:lld_link], "fasm" => map[:fasm],
+        "ruby" => map[:ruby], "tar" => map[:tar],
+      }
+    rescue ZosNative::BuildError
+      {}
     end
 
     def probe_tools(host, distro)
@@ -479,7 +608,7 @@ module ZosBuild
       lookup
     end
 
-    def print_report(host, resolved, scope)
+    def print_report(host, resolved, scope, native: false)
       groups = SCOPE_GROUPS
       scopes = case scope
                when :all then %i[base kernel ada iso run]
@@ -487,9 +616,11 @@ module ZosBuild
                when :iso then %i[base kernel ada iso]
                else [scope]
                end
+      optional = native ? %w[make] : []
       hints = INSTALL_HINTS[host] || {}
       puts "host: #{host}"
       puts "src:  #{SRC}"
+      puts "mode: native no-make driver (LLVM + FASM + Ruby + tar)" if native
       if host == :windows
         bash = ZosHost.bash
         puts "shell: #{bash || 'MSYS2/Git Bash not found (native build unavailable)'}"
@@ -507,6 +638,8 @@ module ZosBuild
           path = resolved[name]
           if path
             puts format("  %-22s %s", name, path)
+          elsif optional.include?(name)
+            puts format("  %-22s optional (native no-make build)", name)
           else
             failed = true
             hint = hints[name]
@@ -514,7 +647,8 @@ module ZosBuild
           end
         end
       end
-      ovmf = ZosHost.ovmf(host: host)
+      ovmf = host == :wsl ? wsl_ovmf(options[:distro])
+                          : ZosHost.ovmf(host: host)
       puts "firmware: #{ovmf ? ovmf.join(' + ') : 'OVMF not found (set OVMF_CODE/OVMF_VARS)'}"
       failed ? 1 : 0
     end

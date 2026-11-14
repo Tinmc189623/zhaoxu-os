@@ -15,6 +15,7 @@ static void draw(long channel, int clicked)
     ade_text(channel, 24, 236, 0x36495C, "点击窗口测试事件路由");
     ade_round(channel, 24, 280, 180, 44, 10, 0x1E6FB8);
     ade_text(channel, 54, 290, 0xFFFFFF, "确定");
+    ade_cursor(channel, 24, 280, 180, 44, "hand");
     if (clicked)
         ade_text(channel, 24, 348, 0x2E7D32, "已收到点击事件");
     ade_commit(channel);

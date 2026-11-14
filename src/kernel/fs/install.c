@@ -482,9 +482,10 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
 {
 #if HEADLESS
     /* The installed stage2 and loader are copies of this build, so a
-     * headless install produces a headless system: no ADE, csh only. */
+     * headless install produces a headless system: no Aqua Desktop
+     * Environment, 8sh only. */
     kprintf("[install] warning: headless build; the installed system will "
-            "not start ADE\n");
+            "not start Aqua Desktop Environment\n");
 #endif
 
     if (target_disk < 0) {

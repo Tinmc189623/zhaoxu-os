@@ -2,6 +2,73 @@
 
 Zhaoxu OS 全部版本记录。当前版本的功能说明见 [README.md](README.md)；版本号唯一来源是 `version.cfg`。
 
+## 0.7.1 「Yuanshuo」 · build 1
+
+### 构建
+- Makefile 成为唯一构建入口，Ruby 只保留辅助脚本（ZXE 打包、版本同步、ISO 元数据、冒烟/截图、宿主探测）
+- Windows 默认在 WSL2 内直接 `make`；PowerShell 入口同步改为 WSL make，原生 MSYS2 仅在 `-HostMode native` 时使用
+- Ada 编译器探测会检查 `-print-prog-name=gnat1` 是否真实存在；`gcc-16` 没有 `gnat-16` 时自动回退到可用的 `gcc-14`，不再出现 `cannot execute gnat1`
+- 切换原生/WSL 构建时把 Windows 风格 `.d` 里的反斜杠改写为 `/`，保留头文件依赖；修复 `version.h` 变更后 `aqua`/`8sh` 仍显示旧版本号的问题
+- 内核内嵌 initramfs 改为 ZIR1 + zlib，启动时解压；legacy BIOS 的 `install/KERNEL.BIN` 保持在 stage 2 的 448 KiB 内
+
+### 桌面
+- 新增 `boot_wallpaper` 系统调用：live ISO 直接使用 rule 33 壁纸，不再退回纯渐变
+- 窗口内容内缩 8 px，标题栏渐变避开圆角，修复内容覆盖窗口圆角的穿模
+- 初始窗口改为左右并排，不再让计算器盖住欢迎窗口
+- 菜单栏改为半透明，窗口标题栏区分焦点/非焦点，阴影与内边距统一
+
+### 版本与内存
+- `version.cfg` 新增必填 `build` 构建号，`make version` 同步到 `version.h`、motd、`/etc/version`、README 与 ISO 元数据
+- QEMU 默认内存从 512 MiB 提升到 2 GiB；PMM 已验证管理 8 GiB（上限 64 GiB）
+
+### 修复
+- `blockfs.c` 的 bounce buffer 按 `sectors * 512` 分配，修复 2352 字节逻辑块越界踩坏内核堆头、导致所有用户进程无法启动的问题
+- `apps/drivers/glue.c` 补齐 `inw_port/inl_port/outw_port/outl_port`，修复 `drivers.zxe` 缺少 ZXE import
+- 修复 `sendmsg` 控制消息长度整数回绕：`cmsg_len` 现在与剩余控制缓冲区长度比较，不再能越界读内核栈
+- memfd 总量限制为可用内存的 1/4，内核堆从固定 16 MiB 改为按可用内存 1/4 动态增长，避免单进程耗尽全部物理页
+- ISO 补齐规则要求的 `boot/zhaoxu/fonts/unicode.pf2`、`casper/vga.ko`、`install/MiSans.ttf` 与 `install/Inter.otf`；`dists`/`pool` 目录保留
+- UEFI live ISO 优先加载 `/install/MiSans.ttf`（7.9 MB），不再只依赖 WQY 回退；`boot/zhaoxu/fonts/unicode.pf2` 由 MiSans 经 grub-mkfont 生成
+- 新增 M0 传输层：AF_UNIX 流 socket、每进程描述符表、memfd、mmap、poll、SCM_RIGHTS（memfd），`/data/NET_TEST.ZXE` 回归通过
+
+## 0.7.0 「Yuanshuo」
+
+### 文件系统
+- 新增只读 NTFS：引导扇区、MFT 记录与 update-sequence fixup、驻留/非驻留属性、runlist（含稀疏）、$FILE_NAME、$INDEX_ROOT/$INDEX_ALLOCATION B+ 树目录
+- 新增只读 exFAT：FAT/NoFatChain 两种分配、目录项集合、ValidDataLength 零填充、UTF-16 名称
+- 新增 ISO 9660/CDFS：主卷与 Joliet 描述符、Rock Ridge NM、版本号剥离、multi-extent 文件；CDFS 探测 2048/2336/2352 四种 CD 扇区布局
+- 新增只读 UDF：VRS、AVDP、VDS（PD/LVD）、FSD、ICB 文件项、short_ad/long_ad、FID 目录与 OSTA 压缩 Unicode 名称
+- 新增只读 UBIFS：UBI PEB 探测、EC/VID 解析、LEB→PEB 映射、UBIFS 超块与节点 CRC、平坦节点索引、zlib 数据节点解压
+- 新增独立 vfat 驱动：FAT12/16/32、VFAT 长名、固定根目录与簇链
+- 新增 ramfs 与可写 rootfs：initramfs 作下层、ramfs 作 copy-up、删除用 tombstone
+- overlayfs 改为可写：upper 层提交、`.wh.` 白障与去重合并
+- 新增 ecryptfs 堆叠加密：SHA-256 派生文件密钥、AES-256-CBC/PKCS#7、每文件盐与 IV
+- 新增 AES/SHA-256/CRC32/zlib-inflate 内核实现
+- 启动时扫描 MBR/GPT/EBR 并把 NTFS/exFAT/VFAT/ISO/CDFS/UDF/UBIFS 卷挂到 `/media/<n>`
+
+### 存储与设备驱动
+- 新增 Ring3 NVMe 驱动：控制器复位/使能、admin 与 I/O 队列、identify、PRP1 传输、flush
+- 新增 SDHCI SD/MMC 驱动：卡初始化、CSD 容量解析（字节/块寻址）、单块 PIO 读写
+- IDE PIIX4 驱动加入 `/bin/drivers` 构建并从设备服务枚举
+- 设备头扩展为 16 块盘，磁盘顺序为 AHCI/NVMe/SD/IDE/USB
+- 新增 DesignWare I2C、Intel PCH SPI、LM75/TMP102 温度传感器
+- 新增 Intel 8254x/82574L 网卡驱动：RX/TX 环、EEPROM MAC、链路状态
+- 新增 Intel HDA：CORB/RIRB、codec 枚举、DAC→pin 输出路径、48 kHz/16-bit 播放
+- 新增 OHCI/EHCI USB 主机控制器初始化与根端口复位
+- 新增 virtio-gpu 3D：virgl 上下文、3D 资源与 SUBMIT_3D
+
+### 内核平台
+- 新增 MMU/页表驱动 `kernel/mem/mmu.c`：四层遍历、大页拆分、映射/解映射/保护/翻译
+- 新增 HPET 驱动与 ACPI XSDT/RSDT 解析
+- 新增 APIC/PIC 中断控制器前端 `intc`；ARM GICv3 与 SysTick 位于 `kernel/arch/arm64`
+- `/sys/class/thermal/thermal_zone0/temp` 暴露传感器温度
+
+### 桌面
+- 按规则 1 将合成职责从 Desktop Window Manager 拆出，新增 **Desktop Window Compositor**（`apps/ADE/compositor/`），独立拥有后缓冲、损伤提交与光标状态
+
+### 修复
+- 块卷逻辑扇区（2048/2352）边界计算改用设备字节数
+- 消除各新驱动的未使用函数与符号告警
+
 ## 0.6.0 「Yuanshuo」
 
 ### 构建与版本
@@ -24,9 +91,9 @@ Zhaoxu OS 全部版本记录。当前版本的功能说明见 [README.md](README
 
 ### 图形与桌面
 - ZAF Z0：后端中立 `zaf_gfx` 光栅接口、软件后端与 Ring3 fps 演示；补齐 ZAF 架构与 Z1 设计文档
-- ADE 后缓冲合成，只提交损伤区域；菜单栏、About 面板与真实 SVG 图标
+- Aqua Desktop Environment 后缓冲合成，只提交损伤区域；菜单栏、About 面板与真实 SVG 图标
 - 默认壁纸（rule 33）在构建期转成原始帧，启动时从数据卷或 ISO 加载，无盘回退 Aqua 渐变
-- Ring3 ADE 显示服务器、计算器迁移为独立客户端；截图工具可通过 HMP 驱动点击
+- Ring3 Aqua Desktop Environment 显示服务器、计算器迁移为独立客户端；截图工具可通过 HMP 驱动点击
 
 ### 运行时与可执行格式
 - ZXE v1 原生格式：加载器、打包器、W^X 段权限、ASLR 映像基址与 `/lib` 动态依赖
@@ -41,9 +108,9 @@ Zhaoxu OS 全部版本记录。当前版本的功能说明见 [README.md](README
 ## 0.5.0 「Yuanshuo」
 
 ### 桌面与安装
-- ADE 图形桌面（Aqua 风格）：渐变菜单栏、RTC 时钟、Dock、软件光标
-- DWM 窗口管理器：拖动、关闭、层叠、焦点与键盘路由
-- 原生桌面应用：终端（可直接执行 csh 命令）、文件、计算器、便签、监视器
+- Aqua Desktop Environment 图形桌面（Aqua 风格）：渐变菜单栏、RTC 时钟、Dock、软件光标
+- Desktop Window Manager 窗口管理器：拖动、关闭、层叠、焦点与键盘路由
+- 原生桌面应用：终端（可直接执行 8sh 命令）、文件、计算器、便签、监视器
 - 图形安装器：识别安装源 `ZHAOXUEFI` 与空白目标盘，AHCI 写入 MBR + FAT32 ESP，进度与结果提示
 - Shell `install [disk]` 与 `disks`：安装介质、数据盘、目标盘角色识别
 - PS/2 鼠标 IRQ12 三字节包解析，窗口与安装按钮可点击
@@ -91,7 +158,7 @@ Zhaoxu OS 全部版本记录。当前版本的功能说明见 [README.md](README
 - PIT 节拍、PS/2 键盘 IRQ、COM1 串口输入输出
 - 物理页位图分配器、4 KiB 虚拟映射、内核堆
 - `kprintf` / `ksnprintf`、字符串库、图形 + 串口双路控制台
-- csh 基础命令、异常现场打印、CPUID/RTC/PCI 信息
+- 8sh 基础命令、异常现场打印、CPUID/RTC/PCI 信息
 
 ## 0.1.0
 

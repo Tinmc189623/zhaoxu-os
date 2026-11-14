@@ -415,6 +415,48 @@ void render_blit(struct render_surface *source, struct render_rect rect)
     }
 }
 
+/* Draw one ARGB image at a destination offset.  `pixels` holds logical
+ * colors (0xAARRGGBB), so the same cursor PNG works on either framebuffer
+ * byte order. */
+void render_image_blend(const u32 *pixels, int width, int height, int x,
+                        int y)
+{
+    if (!g_target || !pixels || width <= 0 || height <= 0)
+        return;
+    struct render_rect area = render_rect_intersect(
+        g_clip, render_rect_make(x, y, width, height));
+    if (render_rect_empty(area))
+        return;
+    for (int py = area.y0; py < area.y1; py++) {
+        u32 *line = g_target->pixels + py * g_target->stride;
+        const u32 *source = pixels + (py - y) * width;
+        for (int px = area.x0; px < area.x1; px++) {
+            u32 value = source[px - x];
+            u32 alpha = value >> 24;
+            if (!alpha)
+                continue;
+            line[px] = blend_pixel(line[px], value & 0xFFFFFF, alpha);
+        }
+    }
+}
+
+void render_image_copy(const u32 *pixels, int width, int height, int x,
+                       int y)
+{
+    if (!g_target || !pixels || width <= 0 || height <= 0)
+        return;
+    struct render_rect area = render_rect_intersect(
+        g_clip, render_rect_make(x, y, width, height));
+    if (render_rect_empty(area))
+        return;
+    for (int py = area.y0; py < area.y1; py++) {
+        u32 *line = g_target->pixels + py * g_target->stride;
+        const u32 *source = pixels + (py - y) * width;
+        for (int px = area.x0; px < area.x1; px++)
+            line[px] = render_pack(source[px - x] & 0xFFFFFF);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* text                                                                */
 /* ------------------------------------------------------------------ */

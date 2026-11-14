@@ -1,8 +1,11 @@
-Zhaoxu OS 0.6.0 "Yuanshuo"
-Kernel: Yuanshuo 0.6.0
+Zhaoxu OS 0.7.1 "Yuanshuo" build 1
+Kernel: Yuanshuo 0.7.1
 Initramfs: ustar archive embedded in the kernel image
-Root filesystem: ramfs
-Data volume: FAT32 at /mnt (AHCI, read-only)
+Root filesystem: rootfs (initramfs ustar)
+Data volume: ext4 or vfat at /mnt (Ring3 storage service)
+Extra mounts: tmpfs at /tmp and /run, procfs at /proc, sysfs at /sys,
+              debugfs at /debug, efivarfs at /sys/firmware/efi/efivars,
+              overlayfs at /merged
 Executable formats: .zxe (native) and ELF64, ring 3
 CJK rendering: TrueType glyf rasterizer, /mnt/WQY.TTC
 Syscall ABI: int 0x80, ring 3

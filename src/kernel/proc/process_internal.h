@@ -3,6 +3,7 @@
 
 #include <process.h>
 #include <types.h>
+#include <zfd.h>
 
 struct address_space;
 
@@ -34,7 +35,10 @@ struct process {
     struct user_mapping *mappings;
     u64 entry;
     u64 user_stack;
+    struct zfd_entry fds[ZFD_MAX];
 };
+
+int user_range_ok(struct process *process, u64 pointer, u64 length);
 
 u64 process_map_page(struct process *process, u64 virtual_address,
                      u64 page_flags);

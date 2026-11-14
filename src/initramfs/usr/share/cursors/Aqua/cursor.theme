@@ -1,0 +1,26 @@
+# Zhaoxu cursor theme: one PNG per frame plus this text description.
+[theme]
+name = Aqua
+size = 24
+fallback = arrow
+
+[arrow]
+image = arrow.png
+hotspot = 2,1
+
+[hand]
+image = hand.png
+hotspot = 8,1
+
+[text]
+image = text.png
+hotspot = 12,10
+
+[crosshair]
+image = crosshair.png
+hotspot = 12,12
+
+[wait]
+frames = wait-0.png,wait-1.png,wait-2.png,wait-3.png
+delay = 120
+hotspot = 12,12

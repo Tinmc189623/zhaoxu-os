@@ -106,6 +106,24 @@ int ade_commit(long channel)
     return send_message(channel, &message);
 }
 
+/* Publish one cursor-zone hint; the display server hit-tests these before
+ * falling back to the window's default arrow. */
+int ade_cursor(long channel, int x, int y, int w, int h, const char *name)
+{
+    if (!name)
+        return -1;
+    struct ade_message message;
+    for (u32 i = 0; i < sizeof(message); i++)
+        ((u8 *)&message)[i] = 0;
+    message.type = ADE_OP_CURSOR;
+    message.x = x;
+    message.y = y;
+    message.w = w;
+    message.h = h;
+    copy_text(message.text, name);
+    return send_message(channel, &message);
+}
+
 int ade_poll(long channel, struct ade_message *message)
 {
     unsigned long type = 0;

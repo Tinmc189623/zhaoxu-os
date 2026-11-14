@@ -11,11 +11,14 @@ extern "C" {
 #include <console.h>
 #include <drivers.h>
 #include <kprintf.h>
+#include <string.h>
 #include <timer.h>
 #include <types.h>
 }
 
 #include "../ade.h"
+#include "../ade_internal.h"
+#include "../compositor/compositor.h"
 #include "dwm.h"
 
 namespace {
@@ -29,6 +32,7 @@ struct damage_list {
 
 struct render_surface *g_screen;
 struct render_surface *g_back;
+struct dwm_ops g_ops_storage;
 const struct dwm_ops *g_ops;
 struct dwm_window g_windows[DWM_MAX_WINDOWS];
 int g_focus = -1;
@@ -40,9 +44,7 @@ int g_drag_index = -1;
 int g_prev_buttons;
 int g_last_tick;
 int g_last_app_tick;
-int g_cursor_presented;
-int g_cursor_present_x;
-int g_cursor_present_y;
+char g_cursor_name[32];
 
 struct render_rect window_damage_rect(const struct dwm_window *window){
     int pad = dwm_ui(14);
@@ -129,11 +131,12 @@ void paint_window(const struct dwm_window *window, struct render_rect damage)
     if (!window->open || !window->app)
         return;
 
+    int focused = g_focus >= 0 && &g_windows[g_focus] == window;
     render_set_clip(damage);
     render_soft_shadow(window->x, window->y, window->w, window->h,
                        dwm_ui(9));
     render_rounded_rect(window->x, window->y, window->w, window->h,
-                        dwm_ui(12), 0x4A6072, 255);
+                        dwm_ui(12), focused ? 0x4A6072 : 0x71808D, 255);
     render_rounded_rect(window->x + 1, window->y + 1, window->w - 2,
                         window->h - 2, dwm_ui(11), 0xF4F7FA, 255);
 
@@ -141,24 +144,27 @@ void paint_window(const struct dwm_window *window, struct render_rect damage)
     render_set_clip(render_rect_intersect(
         damage, render_rect_make(window->x + 1, window->y + 1,
                                  window->w - 2, g_title_h - 2)));
-    render_vgrad(window->x + 1, window->y + 1, window->w - 2,
-                 g_title_h - 2, 0xFDFEFF, 0xC9DBEC);
-    render_blend_rect(window->x + radius, window->y + 1,
-                      window->w - radius * 2, g_title_h / 2, 0xFFFFFF, 60);
+    /* Keep the gradient inside the horizontal radius so the rounded top
+     * corners show the frame colour instead of a square gradient corner. */
+    render_vgrad(window->x + radius, window->y + 1,
+                 window->w - radius * 2, g_title_h - 2,
+                 focused ? 0xFDFEFF : 0xF4F7F9,
+                 focused ? 0xC9DBEC : 0xD8E0E7);
+    render_blend_rect(window->x + radius, window->y + 2,
+                      window->w - radius * 2, g_title_h / 2,
+                      0xFFFFFF, focused ? 70 : 40);
     render_hline(window->x + 1, window->y + g_title_h - 1, window->w - 2,
-                 0x8EA2B6);
+                 focused ? 0x8EA2B6 : 0xB6C1CB);
 
-    traffic_lights(window, g_focus >= 0 &&
-                              &g_windows[g_focus] == window);
+    traffic_lights(window, focused);
     render_text(window->app->name, window->x + dwm_ui(80),
                 window->y + (g_title_h - render_line_height()) / 2 + 1,
-                0x1B2C3D, 1);
+                focused ? 0x1B2C3D : 0x5A6875, 1);
 
     struct render_rect content = dwm_content_rect(window);
     render_set_clip(render_rect_intersect(damage, content));
     struct ade_view view = { content.x0, content.y0, content.x1 - content.x0,
-                             content.y1 - content.y0,
-                             g_focus >= 0 && &g_windows[g_focus] == window };
+                             content.y1 - content.y0, focused };
     if (window->app->paint)
         window->app->paint(&view);
     render_set_clip(damage);
@@ -202,41 +208,13 @@ void paint_rect(struct render_rect damage)
     }
 }
 
-/* Copy one finished rectangle from the system-RAM back buffer to the
- * framebuffer.  Presenting only settled pixels keeps windows from flashing
- * while they are being composed. */
-void present_rect(struct render_rect rect)
-{
-    if (!g_back || g_back == g_screen || render_rect_empty(rect))
-        return;
-    render_set_target(g_screen);
-    render_set_clip(render_rect_make(0, 0, g_screen->width, g_screen->height));
-    render_blit(g_back, rect);
-    render_set_target(g_back);
-}
-
-void present_cursor(int x, int y, int had_old, int old_x, int old_y)
-{
-    struct render_rect current = render_cursor_bounds(x, y);
-    if (had_old)
-        present_rect(render_cursor_bounds(old_x, old_y));
-    present_rect(current);
-    g_cursor_presented = 1;
-    g_cursor_present_x = x;
-    g_cursor_present_y = y;
-}
-
 void paint(void)
 {
     if (!g_screen || !g_back || g_damage.count == 0)
         return;
 
-    int had_cursor = g_cursor_presented;
-    int old_x = g_cursor_present_x;
-    int old_y = g_cursor_present_y;
-
     render_set_target(g_back);
-    render_cursor_restore();
+    dwc_cursor_restore();
 
     struct render_rect items[kMaxDamage];
     int count = g_damage.count;
@@ -250,14 +228,14 @@ void paint(void)
     int my = mouse_y();
     int ready = mouse_ready();
     if (ready)
-        render_cursor(mx, my);
+        dwc_cursor_draw(mx, my);
 
     for (int i = 0; i < count; i++)
-        present_rect(items[i]);
+        dwc_present(items[i]);
     if (ready)
-        present_cursor(mx, my, had_cursor, old_x, old_y);
+        dwc_present_cursor(mx, my);
     else
-        g_cursor_presented = 0;
+        dwc_hide_cursor();
 }
 
 int window_at(int x, int y)
@@ -317,6 +295,61 @@ bool close_button_at(const struct dwm_window *window, int x, int y)
     int dx = x - cx;
     int dy = y - cy;
     return dx * dx + dy * dy <= radius * radius;
+}
+
+/* Cursor shape for a window under the pointer.  Chrome owns its own hit
+ * zones; the app gets a chance to describe the content with cursor_at(). */
+const char *window_cursor(int index, int x, int y)
+{
+    const struct dwm_window *window = &g_windows[index];
+    if (close_button_at(window, x, y))
+        return "hand";
+    if (y < window->y + g_title_h)
+        return "arrow";
+
+    struct render_rect content = dwm_content_rect(window);
+    if (x < content.x0 || x >= content.x1 || y < content.y0 ||
+        y >= content.y1)
+        return "arrow";
+    if (window->app && window->app->cursor_at) {
+        struct ade_view view = { content.x0, content.y0,
+                                 content.x1 - content.x0,
+                                 content.y1 - content.y0,
+                                 g_focus >= 0 && &g_windows[g_focus] == window };
+        const char *name = window->app->cursor_at(&view, x, y);
+        if (name && name[0])
+            return name;
+    }
+    return "arrow";
+}
+
+/* Desktop chrome comes first (the menu bar is never covered by windows),
+ * then the topmost window, then the dock.  Windows paint above the dock, so
+ * a window that overlaps it must win the hit test. */
+const char *cursor_for(int x, int y)
+{
+    if (g_ops && y >= 0 && y < g_ops->menu_h)
+        return ade_menubar_hit(x, y) ? "hand" : "arrow";
+
+    int index = window_at(x, y);
+    if (index >= 0)
+        return window_cursor(index, x, y);
+
+    if (ade_dock_hit(x, y) >= 0)
+        return "hand";
+    return "arrow";
+}
+
+/* Swap the compositor cursor only when the shape actually changes; the
+ * idle path repaints the pointer afterwards. */
+void update_cursor_shape(int x, int y)
+{
+    const char *name = cursor_for(x, y);
+    if (strcmp(name, g_cursor_name) == 0)
+        return;
+    strncpy(g_cursor_name, name, sizeof(g_cursor_name) - 1);
+    g_cursor_name[sizeof(g_cursor_name) - 1] = 0;
+    dwc_cursor_set(g_cursor_name);
 }
 
 void close_window(int index)
@@ -408,24 +441,29 @@ int dwm_title_height(void)
 
 struct render_rect dwm_content_rect(const struct dwm_window *window)
 {
-    return render_rect_make(window->x + 2, window->y + g_title_h,
-                            window->w - 4, window->h - g_title_h - 2);
+    /* Inset the client surface so its square background cannot cover the
+     * window's rounded corners (the old 2 px inset left visible "穿模" at
+     * the bottom edges).  A small frame padding also reads as Aqua chrome. */
+    int pad = dwm_ui(8);
+    return render_rect_make(window->x + pad, window->y + g_title_h + dwm_ui(2),
+                            window->w - pad * 2,
+                            window->h - g_title_h - pad - dwm_ui(2));
 }
 
 void dwm_init(const struct dwm_ops *ops)
 {
-    g_ops = ops;
+    /* ade_setup() passes a stack-local ops struct; copy it before returning
+     * to the caller or the window manager would read a dangling pointer. */
+    if (ops)
+        g_ops_storage = *ops;
+    g_ops = ops ? &g_ops_storage : nullptr;
     g_screen = render_screen();
-    g_back = g_screen ? render_surface_create(g_screen->width, g_screen->height)
-                      : nullptr;
-    if (!g_back)
+    if (dwc_init(g_screen) != 0) {
         g_back = g_screen;
+    } else {
+        g_back = dwc_back();
+    }
     render_set_target(g_back);
-    if (g_back != g_screen)
-        kprintf("[dwm] back buffer %dx%d, damage-only present\n",
-                g_screen->width, g_screen->height);
-    else
-        kprintf("[dwm] no back buffer, direct rendering\n");
     g_title_h = dwm_ui(32);
     g_focus = -1;
     g_next_z = 1;
@@ -433,9 +471,7 @@ void dwm_init(const struct dwm_ops *ops)
     g_prev_buttons = 0;
     g_last_tick = 0;
     g_last_app_tick = 0;
-    g_cursor_presented = 0;
-    g_cursor_present_x = 0;
-    g_cursor_present_y = 0;
+    strcpy(g_cursor_name, "arrow");
 
     for (int i = 0; i < DWM_MAX_WINDOWS; i++) {
         g_windows[i].open = 0;
@@ -467,7 +503,6 @@ struct dwm_window *dwm_open(const struct ade_app *app)
         return nullptr;
 
     struct dwm_window *window = &g_windows[slot];
-    int offset = slot * dwm_ui(36);
     window->app = app;
     window->w = app->default_w > 0
                     ? (app->unscaled ? app->default_w : dwm_ui(app->default_w))
@@ -475,8 +510,31 @@ struct dwm_window *dwm_open(const struct ade_app *app)
     window->h = app->default_h > 0
                     ? (app->unscaled ? app->default_h : dwm_ui(app->default_h))
                     : dwm_ui(420);
-    window->x = dwm_ui(150) + offset;
-    window->y = dwm_ui(90) + offset;
+
+    /* Prefer a clean left-to-right row so the initial welcome/calculator
+     * pair does not bury each other; fall back to the old cascade when the
+     * next column would not fit. */
+    window->x = dwm_ui(150);
+    window->y = dwm_ui(90);
+    if (slot > 0) {
+        int right = 0;
+        for (int i = 0; i < DWM_MAX_WINDOWS; i++) {
+            const struct dwm_window *other = &g_windows[i];
+            if (other == window || !other->open)
+                continue;
+            if (other->x + other->w > right)
+                right = other->x + other->w;
+        }
+        int gap = dwm_ui(24);
+        if (right > 0 &&
+            right + gap + window->w <= g_screen->width - dwm_ui(20)) {
+            window->x = right + gap;
+        } else {
+            int offset = slot * dwm_ui(36);
+            window->x = dwm_ui(150) + offset;
+            window->y = dwm_ui(90) + offset;
+        }
+    }
     if (window->x + window->w > g_screen->width - dwm_ui(20))
         window->x = g_screen->width - window->w - dwm_ui(20);
     if (window->y + window->h > g_screen->height - dwm_ui(90))
@@ -561,6 +619,9 @@ void dwm_run(void)
         int my = mouse_y();
         int buttons = mouse_ready() ? mouse_buttons() : 0;
 
+        if (mouse_ready())
+            update_cursor_shape(mx, my);
+
         if ((buttons & 1) && !(g_prev_buttons & 1))
             handle_press(mx, my, buttons);
 
@@ -611,15 +672,12 @@ void dwm_run(void)
         if (g_damage.count > 0) {
             paint();
         } else if (mouse_ready() &&
-                   (!g_cursor_presented || mx != g_cursor_present_x ||
-                    my != g_cursor_present_y)) {
-            int had_old = g_cursor_presented;
-            int old_x = g_cursor_present_x;
-            int old_y = g_cursor_present_y;
+                   (dwc_cursor_animate() || !dwc_cursor_presented() ||
+                    mx != dwc_cursor_x() || my != dwc_cursor_y())) {
             render_set_target(g_back);
-            render_cursor_restore();
-            render_cursor(mx, my);
-            present_cursor(mx, my, had_old, old_x, old_y);
+            dwc_cursor_restore();
+            dwc_cursor_draw(mx, my);
+            dwc_present_cursor(mx, my);
         }
 
         timer_sleep_ms(1);

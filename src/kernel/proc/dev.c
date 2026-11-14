@@ -206,21 +206,24 @@ u64 dev_disk_sectors(int disk)
 {
     if (dev_info() != 0 || disk < 0 || disk >= (int)g_header->disk_count)
         return 0;
-    return g_header->sectors[disk];
+    return disk < 8 ? g_header->sectors[disk]
+                    : g_header->sectors_ext[disk - 8];
 }
 
 int dev_disk_port(int disk)
 {
     if (dev_info() != 0 || disk < 0 || disk >= (int)g_header->disk_count)
         return -1;
-    return (int)g_header->ports[disk];
+    return (int)(disk < 8 ? g_header->ports[disk]
+                          : g_header->ports_ext[disk - 8]);
 }
 
 const char *dev_disk_model(int disk)
 {
     if (dev_info() != 0 || disk < 0 || disk >= (int)g_header->disk_count)
         return "";
-    return g_header->models[disk];
+    return disk < 8 ? g_header->models[disk]
+                    : g_header->models_ext[disk - 8];
 }
 
 int dev_disk_read(int disk, u64 lba, u32 count, void *buffer)
@@ -274,6 +277,18 @@ int dev_rtc_read(struct rtc_time *time)
     }
     *time = cached;
     return 0;
+}
+
+u32 dev_sensor_temp(void)
+{
+    if (!g_header || !g_header->sensor_ready)
+        return 0;
+    return g_header->sensor_temp_milli;
+}
+
+int dev_sensor_ready(void)
+{
+    return g_header && g_header->sensor_ready != 0;
 }
 
 int dev_key_pop(void)

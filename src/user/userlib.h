@@ -49,6 +49,94 @@ typedef unsigned long long u64;
 #define SYS_BLK_READ        40
 #define SYS_BLK_WRITE       41
 #define SYS_BLK_FLUSH       42
+#define SYS_SOCKET          43
+#define SYS_BIND            44
+#define SYS_LISTEN          45
+#define SYS_ACCEPT          46
+#define SYS_CONNECT         47
+#define SYS_SENDMSG         48
+#define SYS_RECVMSG         49
+#define SYS_POLL            50
+#define SYS_MEMFD_CREATE    51
+#define SYS_FTRUNCATE       52
+#define SYS_LSEEK           53
+#define SYS_MMAP            54
+#define SYS_MUNMAP          55
+#define SYS_FCNTL           56
+#define SYS_SOCKETPAIR      57
+#define SYS_BOOT_WALLPAPER  58
+
+#define AF_UNIX      1
+#define SOCK_STREAM  1
+#define SOL_SOCKET   1
+#define SCM_RIGHTS   1
+
+#define POLLIN   0x001
+#define POLLOUT  0x004
+#define POLLERR  0x008
+#define POLLHUP  0x010
+#define POLLNVAL 0x020
+
+#define O_NONBLOCK 0x800
+
+#define F_DUPFD 0
+#define F_GETFD 1
+#define F_SETFD 2
+#define F_GETFL 3
+#define F_SETFL 4
+
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+
+struct sockaddr_un {
+    unsigned short sun_family;
+    char sun_path[108];
+};
+
+struct iovec {
+    void *iov_base;
+    unsigned long iov_len;
+};
+
+struct msghdr {
+    void *msg_name;
+    unsigned int msg_namelen;
+    unsigned int padding0;
+    struct iovec *msg_iov;
+    unsigned long msg_iovlen;
+    void *msg_control;
+    unsigned long msg_controllen;
+    unsigned int msg_flags;
+    unsigned int padding1;
+};
+
+struct cmsghdr {
+    unsigned long cmsg_len;
+    int cmsg_level;
+    int cmsg_type;
+};
+
+struct pollfd {
+    int fd;
+    short events;
+    short revents;
+};
+
+struct zos_mmap_args {
+    unsigned long address;
+    unsigned long length;
+    unsigned long protection;
+    unsigned long flags;
+    long fd;
+    unsigned long offset;
+};
+
+#define CMSG_ALIGN(length) (((length) + 7ul) & ~7ul)
+#define CMSG_LEN(length) (sizeof(struct cmsghdr) + (length))
+#define CMSG_SPACE(length) \
+    (CMSG_ALIGN(sizeof(struct cmsghdr)) + CMSG_ALIGN(length))
+#define CMSG_DATA(cmsg) ((unsigned char *)(cmsg) + sizeof(struct cmsghdr))
 
 struct zos_fb_info {
     unsigned long address;
@@ -271,6 +359,11 @@ static inline long sys_boot_font(void *buffer, unsigned long capacity)
     return syscall3(SYS_BOOT_FONT, (long)buffer, (long)capacity, 0);
 }
 
+static inline long sys_boot_wallpaper(void *buffer, unsigned long capacity)
+{
+    return syscall3(SYS_BOOT_WALLPAPER, (long)buffer, (long)capacity, 0);
+}
+
 static inline void sys_exit(int status)
 {
     syscall3(SYS_EXIT, status, 0, 0);
@@ -303,6 +396,90 @@ static inline long sys_blk_write(int disk, u64 lba, u32 count,
 static inline long sys_blk_flush(int disk)
 {
     return syscall3(SYS_BLK_FLUSH, disk, 0, 0);
+}
+
+/* AF_UNIX + memfd + poll (Wayland transport).  Descriptors returned here
+ * start at 64 and are closed with the ordinary sys_close(). */
+static inline long sys_socket(int domain, int type, int protocol)
+{
+    return syscall3(SYS_SOCKET, domain, type, protocol);
+}
+
+static inline long sys_socketpair(int domain, int type, int protocol,
+                                  int descriptors[2])
+{
+    return syscall4(SYS_SOCKETPAIR, domain, type, protocol,
+                    (long)descriptors);
+}
+
+static inline long sys_bind(long fd, const struct sockaddr_un *address,
+                            unsigned long length)
+{
+    return syscall3(SYS_BIND, fd, (long)address, length);
+}
+
+static inline long sys_listen(long fd, int backlog)
+{
+    return syscall3(SYS_LISTEN, fd, backlog, 0);
+}
+
+static inline long sys_accept(long fd, struct sockaddr_un *address,
+                              unsigned int *length)
+{
+    return syscall3(SYS_ACCEPT, fd, (long)address, (long)length);
+}
+
+static inline long sys_connect(long fd, const struct sockaddr_un *address,
+                               unsigned long length)
+{
+    return syscall3(SYS_CONNECT, fd, (long)address, length);
+}
+
+static inline long sys_sendmsg(long fd, const struct msghdr *message,
+                               int flags)
+{
+    return syscall3(SYS_SENDMSG, fd, (long)message, flags);
+}
+
+static inline long sys_recvmsg(long fd, struct msghdr *message, int flags)
+{
+    return syscall3(SYS_RECVMSG, fd, (long)message, flags);
+}
+
+static inline long sys_poll(struct pollfd *fds, unsigned long count,
+                            int timeout)
+{
+    return syscall3(SYS_POLL, (long)fds, count, timeout);
+}
+
+static inline long sys_memfd_create(const char *name, unsigned int flags)
+{
+    return syscall3(SYS_MEMFD_CREATE, (long)name, flags, 0);
+}
+
+static inline long sys_ftruncate(long fd, unsigned long size)
+{
+    return syscall3(SYS_FTRUNCATE, fd, size, 0);
+}
+
+static inline long sys_lseek(long fd, long offset, int whence)
+{
+    return syscall3(SYS_LSEEK, fd, offset, whence);
+}
+
+static inline long sys_mmap(struct zos_mmap_args *arguments)
+{
+    return syscall3(SYS_MMAP, (long)arguments, 0, 0);
+}
+
+static inline long sys_munmap(void *address, unsigned long length)
+{
+    return syscall3(SYS_MUNMAP, (long)address, length, 0);
+}
+
+static inline long sys_fcntl(long fd, int command, long argument)
+{
+    return syscall3(SYS_FCNTL, fd, command, argument);
 }
 
 void u_puts(const char *text);

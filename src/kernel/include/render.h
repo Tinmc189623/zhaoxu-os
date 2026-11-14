@@ -54,6 +54,13 @@ void render_border(int x, int y, int w, int h, u32 rgb);
 void render_soft_shadow(int x, int y, int w, int h, int spread);
 void render_soft_circle(int cx, int cy, int radius, u32 rgb, u32 max_alpha);
 void render_blit(struct render_surface *source, struct render_rect rect);
+/* Draw an ARGB image (0xAARRGGBB, RGB in logical order) at (x, y).  The
+ * blend variant respects source alpha; the copy variant writes it opaque,
+ * which is what the compositor uses to restore saved cursor pixels. */
+void render_image_blend(const u32 *pixels, int width, int height, int x,
+                        int y);
+void render_image_copy(const u32 *pixels, int width, int height, int x,
+                       int y);
 void render_span(int x0, int x1, int y, u32 rgb);
 int render_svg(const char *svg, int x, int y, int size);
 

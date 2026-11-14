@@ -37,6 +37,10 @@ struct ade_app {
     void (*tick)(void);
     void (*close)(void);
     int unscaled;            /* client windows use raw pixel sizes */
+    /* Optional: pick a cursor-theme shape for the pointer at (x, y), given
+     * in absolute screen coordinates like click().  Return a theme cursor
+     * name ("hand", "text", "crosshair", "wait", ...); NULL keeps "arrow". */
+    const char *(*cursor_at)(const struct ade_view *view, int x, int y);
 };
 
 void ade_register_app(const struct ade_app *app);

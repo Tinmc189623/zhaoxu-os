@@ -23,6 +23,7 @@ namespace {
 
 constexpr int kMaxClients = 8;
 constexpr int kMaxCommands = 128;
+constexpr int kMaxCursorZones = 16;
 
 struct client_command {
     u32 op;
@@ -30,6 +31,11 @@ struct client_command {
     u32 color;
     u32 extra;
     char text[ADE_TEXT_MAX];
+};
+
+struct client_cursor_zone {
+    int x, y, w, h;
+    char name[ADE_TEXT_MAX];
 };
 
 struct client {
@@ -41,12 +47,15 @@ struct client {
     struct ade_app app;
     struct client_command commands[kMaxCommands];
     int command_count;
+    struct client_cursor_zone cursor_zones[kMaxCursorZones];
+    int cursor_zone_count;
 };
 
 struct client_ops {
     void (*paint)(const struct ade_view *view);
     void (*key)(int key);
     void (*click)(const struct ade_view *view, int x, int y, int buttons);
+    const char *(*cursor)(const struct ade_view *view, int x, int y);
     void (*close)(void);
 };
 
@@ -57,6 +66,8 @@ void client_paint(int index, const struct ade_view *view);
 void client_key(int index, int key);
 void client_click(int index, const struct ade_view *view, int x, int y,
                   int buttons);
+const char *client_cursor(int index, const struct ade_view *view, int x,
+                          int y);
 void client_close(int index);
 
 #define CLIENT_WRAPPERS(n)                                                     \
@@ -73,6 +84,10 @@ void client_close(int index);
     {                                                                          \
         client_click(n, view, x, y, buttons);                                  \
     }                                                                          \
+    const char *client##n##_cursor(const struct ade_view *view, int x, int y)  \
+    {                                                                          \
+        return client_cursor(n, view, x, y);                                   \
+    }                                                                          \
     void client##n##_close(void)                                               \
     {                                                                          \
         client_close(n);                                                       \
@@ -88,14 +103,22 @@ CLIENT_WRAPPERS(6)
 CLIENT_WRAPPERS(7)
 
 const struct client_ops g_client_ops[kMaxClients] = {
-    { client0_paint, client0_key, client0_click, client0_close },
-    { client1_paint, client1_key, client1_click, client1_close },
-    { client2_paint, client2_key, client2_click, client2_close },
-    { client3_paint, client3_key, client3_click, client3_close },
-    { client4_paint, client4_key, client4_click, client4_close },
-    { client5_paint, client5_key, client5_click, client5_close },
-    { client6_paint, client6_key, client6_click, client6_close },
-    { client7_paint, client7_key, client7_click, client7_close },
+    { client0_paint, client0_key, client0_click, client0_cursor,
+      client0_close },
+    { client1_paint, client1_key, client1_click, client1_cursor,
+      client1_close },
+    { client2_paint, client2_key, client2_click, client2_cursor,
+      client2_close },
+    { client3_paint, client3_key, client3_click, client3_cursor,
+      client3_close },
+    { client4_paint, client4_key, client4_click, client4_cursor,
+      client4_close },
+    { client5_paint, client5_key, client5_click, client5_cursor,
+      client5_close },
+    { client6_paint, client6_key, client6_click, client6_cursor,
+      client6_close },
+    { client7_paint, client7_key, client7_click, client7_cursor,
+      client7_close },
 };
 
 void send_event(int index, u32 type, int x, int y, u32 extra)
@@ -116,8 +139,10 @@ void send_event(int index, u32 type, int x, int y, u32 extra)
 void append_command(int index, const struct ade_message *message)
 {
     struct client *client = &g_clients[index];
-    if (message->type == ADE_OP_CLEAR)
+    if (message->type == ADE_OP_CLEAR) {
         client->command_count = 0;
+        client->cursor_zone_count = 0;
+    }
     if (client->command_count >= kMaxCommands)
         return;
 
@@ -186,6 +211,40 @@ void client_click(int index, const struct ade_view *view, int x, int y,
     send_event(index, ADE_EV_CLICK, x - view->x, y - view->y, (u32)buttons);
 }
 
+/* Last declared zone wins, so a client can layer a "wait" hint over the
+ * button zones while a long operation runs. */
+const char *client_cursor(int index, const struct ade_view *view, int x,
+                          int y)
+{
+    const struct client *client = &g_clients[index];
+    if (!client->used || !view)
+        return nullptr;
+    int local_x = x - view->x;
+    int local_y = y - view->y;
+    for (int i = client->cursor_zone_count - 1; i >= 0; i--) {
+        const struct client_cursor_zone *zone = &client->cursor_zones[i];
+        if (local_x >= zone->x && local_x < zone->x + zone->w &&
+            local_y >= zone->y && local_y < zone->y + zone->h)
+            return zone->name;
+    }
+    return nullptr;
+}
+
+void append_cursor_zone(int index, const struct ade_message *message)
+{
+    struct client *client = &g_clients[index];
+    if (client->cursor_zone_count >= kMaxCursorZones)
+        return;
+    struct client_cursor_zone *zone =
+        &client->cursor_zones[client->cursor_zone_count++];
+    zone->x = message->x;
+    zone->y = message->y;
+    zone->w = message->w;
+    zone->h = message->h;
+    strncpy(zone->name, message->text, sizeof(zone->name) - 1);
+    zone->name[sizeof(zone->name) - 1] = 0;
+}
+
 void client_close(int index)
 {
     send_event(index, ADE_EV_CLOSE, 0, 0, 0);
@@ -198,7 +257,7 @@ void release_client(int index)
         return;
     dwm_close_app(&client->app);
     ade_unregister_app(&client->app);
-    kprintf("[ade ] client %d disconnected\n", index);
+    kprintf("[aqua] client %d disconnected\n", index);
     memset(client, 0, sizeof(*client));
     dwm_invalidate_all();
 }
@@ -229,6 +288,7 @@ void handle_create(int index, const struct ade_message *message)
     app->key = g_client_ops[index].key;
     app->click = g_client_ops[index].click;
     app->close = g_client_ops[index].close;
+    app->cursor_at = g_client_ops[index].cursor;
 
     ade_register_app(app);
     dwm_open(app);
@@ -249,6 +309,9 @@ void handle_message(int index, const struct ade_message *message)
     case ADE_OP_COMMIT:
         dwm_invalidate_app(&g_clients[index].app);
         break;
+    case ADE_OP_CURSOR:
+        append_cursor_zone(index, message);
+        break;
     default:
         break;
     }
@@ -261,14 +324,14 @@ void ade_display_init(void)
     memset(g_clients, 0, sizeof(g_clients));
     g_listen_port = (u64)sys_port_listen(ADE_PORT_NAME);
     if (!g_listen_port) {
-        kprintf("[ade ] display port unavailable\n");
+        kprintf("[aqua] display port unavailable\n");
         return;
     }
 
     long welcome = sys_spawn("/bin/apps/welcome.zxe");
     long calc = sys_spawn("/bin/apps/calc.zxe");
     long installer = sys_spawn("/bin/apps/install.zxe");
-    kprintf("[ade ] display server listening, welcome %ld, calc %ld, "
+    kprintf("[aqua] display server listening, welcome %ld, calc %ld, "
             "install %ld\n",
             welcome, calc, installer);
 }

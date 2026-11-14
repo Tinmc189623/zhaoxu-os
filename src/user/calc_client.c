@@ -119,6 +119,7 @@ static void draw(long channel)
         ade_round(channel, bx + 1, by + 1, bw - 2, bh - 2, 7, color);
         ade_text_flags(channel, bx + bw / 2, by + bh / 2 - 12, text,
                        ADE_TEXT_CENTER, kLabels[i]);
+        ade_cursor(channel, bx, by, bw, bh, "hand");
     }
 
     ade_commit(channel);

@@ -31,18 +31,18 @@ void csh_version(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
-    csh_outln("Zhaoxu OS " ZHAOXU_VERSION " \"" ZHAOXU_CODENAME "\"");
+    csh_outln("Zhaoxu OS " ZHAOXU_VERSION " build " ZHAOXU_BUILD " \"" ZHAOXU_CODENAME "\"");
     csh_outln("Kernel: " ZHAOXU_KERNEL " Kernel " ZHAOXU_KERNEL_VERSION
               " (x86_64, microkernel)");
-    csh_outln("Shell: csh (ring 3)");
+    csh_outln("Shell: 8sh (ring 3)");
 }
 
 void csh_uname(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
-    csh_outln("Zhaoxu OS " ZHAOXU_VERSION " x86_64 ring3 (" ZHAOXU_KERNEL
-              " " ZHAOXU_KERNEL_VERSION ")");
+    csh_outln("Zhaoxu OS " ZHAOXU_VERSION " build " ZHAOXU_BUILD
+              " x86_64 ring3 (" ZHAOXU_KERNEL " " ZHAOXU_KERNEL_VERSION ")");
 }
 
 void csh_uptime(int argc, char **argv)
@@ -82,10 +82,11 @@ void csh_neofetch(int argc, char **argv)
     (void)argc;
     (void)argv;
     csh_outln("      Zhaoxu");
-    csh_outln("     /\\    OS:     Zhaoxu OS " ZHAOXU_VERSION);
+    csh_outln("     /\\    OS:     Zhaoxu OS " ZHAOXU_VERSION " build "
+              ZHAOXU_BUILD);
     csh_outln("    /  \\   Kernel: " ZHAOXU_KERNEL " Kernel "
               ZHAOXU_KERNEL_VERSION);
-    csh_outln("   /    \\  Shell:  csh (ring 3)");
+    csh_outln("   /    \\  Shell:  8sh (ring 3)");
     csh_out("  /______\\ Uptime: ");
     csh_number(sys_uptime() / 1000);
     csh_outln("s");

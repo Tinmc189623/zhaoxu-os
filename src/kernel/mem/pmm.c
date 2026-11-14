@@ -191,6 +191,11 @@ void pmm_free_page(u64 physical)
     spin_unlock_irqrestore(&pmm_lock, flags);
 }
 
+u64 pmm_managed_bytes(void)
+{
+    return managed_pages_count * PAGE_SIZE;
+}
+
 void pmm_get_stats(struct pmm_stats *stats)
 {
     if (!stats)

@@ -74,18 +74,27 @@ void ade_dock_paint(void)
     }
 }
 
-int ade_dock_hover(int x, int y)
+/* Return the app index under the pointer, including the lift strip above
+ * the panel, or -1 outside every icon slot. */
+int ade_dock_hit(int x, int y)
 {
     int dx, dy, dw, dh, spacing, icon;
     metrics(&dx, &dy, &dw, &dh, &spacing, &icon);
     int count = ade_app_count();
-    int index = -1;
-    if (count > 0 && x >= dx && x < dx + dw && y >= dy - ade_ui(20) &&
-        y < dy + dh) {
-        index = (x - dx - ade_ui(12)) / spacing;
-        if (index < 0 || index >= count)
-            index = -1;
-    }
+    if (count <= 0 || x < dx || x >= dx + dw || y < dy - ade_ui(20) ||
+        y >= dy + dh)
+        return -1;
+    int index = (x - dx - ade_ui(12)) / spacing;
+    if (index < 0 || index >= count)
+        return -1;
+    return index;
+}
+
+int ade_dock_hover(int x, int y)
+{
+    int dx, dy, dw, dh, spacing, icon;
+    metrics(&dx, &dy, &dw, &dh, &spacing, &icon);
+    int index = ade_dock_hit(x, y);
     if (index != g_hover) {
         g_hover = index;
         dwm_invalidate_rect(dx - ade_ui(10), dy - ade_ui(28), dw + ade_ui(20),

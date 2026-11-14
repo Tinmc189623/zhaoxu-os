@@ -91,6 +91,18 @@ module ZosHost
       match ? "/#{match[1].downcase}/#{match[2]}" : expanded
     end
 
+    # Git Bash and make split unquoted arguments on spaces, so tools under
+    # "C:\Program Files" must be passed by their 8.3 short path.
+    def short_path(path)
+      text = path.to_s
+      return text unless text.include?(" ") && windows_ruby?
+
+      output = IO.popen(%(for %I in ("#{text}") do @echo %~sI), &:read).to_s.strip
+      output.empty? ? text : output.lines.first.to_s.strip
+    rescue SystemCallError
+      text
+    end
+
     # Search PATH (and optional extra directories) for a command.  Windows
     # candidates also try PATHEXT so ruby.exe is found for "ruby".
     def find_executable(name, *extra_dirs, env: ENV)
@@ -163,7 +175,7 @@ module ZosHost
           dirs << File.join(root.tr("\\", "/"), "mingw64", "share", "edk2-ovmf", "x64")
           dirs << File.join(root.tr("\\", "/"), "mingw64", "share", "edk2-ovmf")
         end
-        dirs + %w[C:/Program\ Files/qemu]
+        dirs + ["C:/Program Files/qemu/share", "C:/Program Files/qemu"]
       else
         %w[/usr/share/OVMF /usr/share/edk2/ovmf /usr/share/qemu]
       end

@@ -6,6 +6,7 @@
  * every pointer against the calling process address space.
  */
 #include "process_internal.h"
+#include "io_syscall.h"
 
 #include <boot.h>
 #include <console.h>
@@ -70,6 +71,22 @@
 #define SYS_BLK_READ        40
 #define SYS_BLK_WRITE       41
 #define SYS_BLK_FLUSH       42
+#define SYS_SOCKET          43
+#define SYS_BIND            44
+#define SYS_LISTEN          45
+#define SYS_ACCEPT          46
+#define SYS_CONNECT         47
+#define SYS_SENDMSG         48
+#define SYS_RECVMSG         49
+#define SYS_POLL            50
+#define SYS_MEMFD_CREATE    51
+#define SYS_FTRUNCATE       52
+#define SYS_LSEEK           53
+#define SYS_MMAP            54
+#define SYS_MUNMAP          55
+#define SYS_FCNTL           56
+#define SYS_SOCKETPAIR      57
+#define SYS_BOOT_WALLPAPER  58
 
 #define BLK_SECTOR_BYTES 512u
 #define BLK_MAX_SECTORS  8u
@@ -85,7 +102,7 @@ struct user_fb_info {
     u64 format;
 };
 
-static int user_range_ok(struct process *process, u64 pointer, u64 length)
+int user_range_ok(struct process *process, u64 pointer, u64 length)
 {
     if (length == 0)
         return 1;
@@ -124,6 +141,8 @@ static int copy_user_string(struct process *process, char *destination,
 static long syscall_write(struct process *process, u64 descriptor, u64 buffer,
                           u64 length)
 {
+    if (descriptor >= ZFD_BASE)
+        return sys_ipc_write(process, descriptor, buffer, length);
     if (descriptor != 1 && descriptor != 2)
         return -1;
     if (length > 65536)
@@ -145,6 +164,8 @@ static long syscall_open(struct process *process, u64 path_pointer)
 static long syscall_read(struct process *process, u64 descriptor, u64 buffer,
                          u64 length)
 {
+    if (descriptor >= ZFD_BASE)
+        return sys_ipc_read(process, descriptor, buffer, length);
     if (length > 0x100000)
         length = 0x100000;
     if (user_range_ok(process, buffer, length) != 1)
@@ -407,9 +428,9 @@ static long syscall_write_file(struct process *process, u64 path_pointer,
     char path[256];
     if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
         return -1;
-    /* Only /mnt is writable, and no backend takes a file above VFS_WRITE_MAX
-     * (the ext4 service buffer is exactly that big), so reject before copying
-     * the payload into the kernel. */
+    /* /mnt, /tmp and /run are writable; no backend takes a file above
+     * VFS_WRITE_MAX (the ext4 service buffer is exactly that big), so
+     * reject before copying the payload into the kernel. */
     if (size > VFS_WRITE_MAX)
         return -1;
     if (size && user_range_ok(process, data_pointer, size) != 1)
@@ -455,6 +476,22 @@ static long syscall_boot_font(struct process *process, u64 buffer_pointer,
     memcpy((void *)(uintptr_t)buffer_pointer,
            (const void *)(uintptr_t)boot->font_phys, (usize)boot->font_size);
     return (long)boot->font_size;
+}
+
+static long syscall_boot_wallpaper(struct process *process, u64 buffer_pointer,
+                                   u64 capacity)
+{
+    const struct boot_info *boot = boot_get_info();
+    if (!boot->wallpaper_phys || !boot->wallpaper_size)
+        return -1;
+    if (boot->wallpaper_size > capacity)
+        return -1;
+    if (user_range_ok(process, buffer_pointer, boot->wallpaper_size) != 1)
+        return -1;
+    memcpy((void *)(uintptr_t)buffer_pointer,
+           (const void *)(uintptr_t)boot->wallpaper_phys,
+           (usize)boot->wallpaper_size);
+    return (long)boot->wallpaper_size;
 }
 
 static long syscall_rtc(struct process *process, u64 time_pointer)
@@ -636,7 +673,8 @@ void syscall_dispatch(struct interrupt_frame *frame)
         result = syscall_read(process, frame->rdi, frame->rsi, frame->rdx);
         break;
     case SYS_CLOSE:
-        result = vfs_close((int)frame->rdi);
+        result = frame->rdi >= ZFD_BASE ? sys_ipc_close(process, frame->rdi)
+                                        : vfs_close((int)frame->rdi);
         break;
     case SYS_UPTIME:
         result = (long)(timer_ticks() * 1000 / timer_hz());
@@ -756,6 +794,58 @@ void syscall_dispatch(struct interrupt_frame *frame)
         break;
     case SYS_BLK_FLUSH:
         result = syscall_blk_flush(process, frame->rdi);
+        break;
+    case SYS_SOCKET:
+        result = sys_ipc_socket(process, frame->rdi, frame->rsi, frame->rdx);
+        break;
+    case SYS_BIND:
+        result = sys_ipc_bind(process, frame->rdi, frame->rsi, frame->rdx);
+        break;
+    case SYS_LISTEN:
+        result = sys_ipc_listen(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_ACCEPT:
+        result = sys_ipc_accept(process, frame->rdi, frame->rsi, frame->rdx);
+        break;
+    case SYS_CONNECT:
+        result = sys_ipc_connect(process, frame->rdi, frame->rsi,
+                                 frame->rdx);
+        break;
+    case SYS_SENDMSG:
+        result = sys_ipc_sendmsg(process, frame->rdi, frame->rsi,
+                                 frame->rdx);
+        break;
+    case SYS_RECVMSG:
+        result = sys_ipc_recvmsg(process, frame->rdi, frame->rsi,
+                                 frame->rdx);
+        break;
+    case SYS_POLL:
+        result = sys_ipc_poll(process, frame->rdi, frame->rsi, frame->rdx);
+        break;
+    case SYS_MEMFD_CREATE:
+        result = sys_ipc_memfd_create(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_FTRUNCATE:
+        result = sys_ipc_ftruncate(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_LSEEK:
+        result = sys_ipc_lseek(process, frame->rdi, frame->rsi, frame->rdx);
+        break;
+    case SYS_MMAP:
+        result = sys_ipc_mmap(process, frame->rdi);
+        break;
+    case SYS_MUNMAP:
+        result = sys_ipc_munmap(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_FCNTL:
+        result = sys_ipc_fcntl(process, frame->rdi, frame->rsi, frame->rdx);
+        break;
+    case SYS_SOCKETPAIR:
+        result = sys_ipc_socketpair(process, frame->rdi, frame->rsi,
+                                    frame->rdx, frame->r10);
+        break;
+    case SYS_BOOT_WALLPAPER:
+        result = syscall_boot_wallpaper(process, frame->rdi, frame->rsi);
         break;
     default:
         result = -1;

@@ -30,6 +30,8 @@ struct boot_info {
     u64 font_size;
     u64 wallpaper_phys;     /* preloaded default wallpaper (raw RGB888) */
     u64 wallpaper_size;
+    u64 efi_runtime_services; /* UEFI RuntimeServices table, 0 on BIOS */
+    u64 efi_system_table;     /* UEFI SystemTable, 0 on BIOS */
 } __attribute__((packed));
 
 #define BOOT_FLAG_HIGHER_HALF 1u

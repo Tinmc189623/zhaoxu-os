@@ -29,6 +29,7 @@ void pmm_extend(u64 limit);
 u64 pmm_alloc_page(void);
 void pmm_free_page(u64 physical);
 void pmm_get_stats(struct pmm_stats *stats);
+u64 pmm_managed_bytes(void);
 void pmm_reserve_range(u64 physical, u64 size);
 
 void vmm_init(const struct boot_info *bi);

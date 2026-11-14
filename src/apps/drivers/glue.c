@@ -21,6 +21,26 @@ void outb_port(u16 port, u8 value)
     outb(port, value);
 }
 
+void outw_port(u16 port, u16 value)
+{
+    outw(port, value);
+}
+
+u16 inw_port(u16 port)
+{
+    return inw(port);
+}
+
+void outl_port(u16 port, u32 value)
+{
+    outl(port, value);
+}
+
+u32 inl_port(u16 port)
+{
+    return inl(port);
+}
+
 u8 mmio_read8(u64 address)
 {
     return *(volatile u8 *)(uintptr_t)address;
@@ -36,6 +56,11 @@ u32 mmio_read32(u64 address)
     return *(volatile u32 *)(uintptr_t)address;
 }
 
+u64 mmio_read64(u64 address)
+{
+    return *(volatile u64 *)(uintptr_t)address;
+}
+
 void mmio_write8(u64 address, u8 value)
 {
     *(volatile u8 *)(uintptr_t)address = value;
@@ -49,6 +74,26 @@ void mmio_write16(u64 address, u16 value)
 void mmio_write32(u64 address, u32 value)
 {
     *(volatile u32 *)(uintptr_t)address = value;
+}
+
+void mmio_write64(u64 address, u64 value)
+{
+    *(volatile u64 *)(uintptr_t)address = value;
+}
+
+/* The xHCI driver zeroes freshly allocated ring and context pages.  Keep
+ * the loop byte-wise and volatile so it never grows a libc memset call into
+ * the freestanding driver process. */
+void buffer_zero(void *destination, u32 bytes)
+{
+    volatile u8 *dst = (volatile u8 *)destination;
+    while (bytes--)
+        *dst++ = 0;
+}
+
+void usb_delay_ms(u32 milliseconds)
+{
+    sys_sleep(milliseconds);
 }
 
 u64 pmm_alloc_page(void)
