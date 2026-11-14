@@ -1,90 +1,89 @@
-# Zhaoxu Aqua Framework（ZAF）架构与里程碑
+# Zhaoxu Aqua Framework (ZAF) Architecture and Milestones
 
-日期：2026-11-13  
-状态：总体设计；Z0 已实现（`src/user/lib/include/zaf_gfx.h`），Z1 设计见
-[2026-11-14-zaf-z1-compositor-design.md](2026-11-14-zaf-z1-compositor-design.md)，
-Z2–Z4 未开始
+Date: 2026-11-13  
+Status: Overall design; Z0 implemented (`src/user/lib/include/zaf_gfx.h`), Z1 design in
+[2026-11-14-zaf-z1-compositor-design.md](2026-11-14-zaf-z1-compositor-design.md),
+Z2–Z4 not started
 
-## 1. 目标与边界
+## 1. Goals and Boundaries
 
-ZAF 是独立的 GUI 框架，默认呈现经典 Aqua 视觉，同时允许未来替换主题或整套视觉风格。它以 Skia 作为图形渲染基础，自研窗口管理器、桌面合成器、控件系统、动画引擎与主题引擎，减少对宿主操作系统 GUI 组件的依赖。
+ZAF is an independent GUI framework that presents the classic Aqua look by default while allowing the theme, or the whole visual style, to be replaced later. It uses Skia as the graphics rendering base and builds its own window manager, desktop compositor, widget system, animation engine and theme engine, reducing its dependence on the host operating system's GUI components.
 
-约束：
+Constraints:
 
-- 运行在 Ring3，经 ZOS API 1.0 访问帧缓冲、输入与 IPC；不进入内核（规则 9）。
-- 默认主题为 Aqua；主题通过数据与样式令牌驱动，而不是把外观写死在控件里。
-- 可移植到自研内核：除 ZOS API 与 ZXE 动态库 ABI 外，不依赖 Linux/macOS/Windows 的 GUI 组件。
-- 仓库当前只有 `third_party/stb`，没有任何 Skia 源码；引入 Skia 属于本计划的第一个外部依赖决策。
+- Runs in Ring3, reaching the framebuffer, input and IPC through ZOS API 1.0; it never enters the kernel (rule 9).
+- The default theme is Aqua; themes are driven by data and style tokens rather than hard-coding appearance into widgets.
+- Portable to a self-developed kernel: apart from ZOS API and the ZXE shared library ABI it depends on no Linux/macOS/Windows GUI component.
+- The repository currently holds only `third_party/stb` and no Skia source at all; adopting Skia is the first external dependency decision in this plan.
 
-非目标（首期）：GPU 加速合成、多显示器热插拔、无障碍树、完整国际化排版。
+Non-goals (first phase): GPU-accelerated composition, multi-monitor hotplug, accessibility trees, full internationalised text layout.
 
-## 2. 分层
+## 2. Layering
 
 ```
-应用 / 客户端（.zxe，依赖 ZAF 库）
-        │  控件树 + 事件
-ZAF 控件系统  widgets/       按钮、输入框、列表、菜单、滚动容器
-ZAF 动画引擎  anim/          时间线、缓动、属性动画、可打断转场
-ZAF 主题引擎  theme/         样式令牌、度量、图像资源、主题包加载
-ZAF 窗口管理  wm/            窗口层级、焦点、移动/缩放、最小化
-ZAF 合成器    compositor/    图层、损伤区域、阴影/模糊等效果
-ZAF 渲染后端  gfx/           Skia Surface/Canvas 封装与字形提供者
-        │  Skia（第三方）
-ZOS API 1.0：帧缓冲映射、鼠标/键盘端口、共享内存、定时器
+application / client (.zxe, depends on the ZAF library)
+        │  widget tree + events
+ZAF widget system  widgets/   buttons, text fields, lists, menus, scroll containers
+ZAF animation engine  anim/   timelines, easing, property animation, interruptible transitions
+ZAF theme engine  theme/      style tokens, metrics, image assets, theme package loading
+ZAF window management  wm/    window stacking, focus, move/resize, minimise
+ZAF compositor    compositor/ layers, damage regions, shadows/blur and similar effects
+ZAF render backend  gfx/      Skia Surface/Canvas wrapper and glyph provider
+        │  Skia (third party)
+ZOS API 1.0: framebuffer mapping, mouse/keyboard ports, shared memory, timers
 ```
 
-每个目录只承担一类职责（规则 23）。`Aqua Desktop Environment` 与 `Desktop Window Manager` 保留现有产品名：Desktop Window Manager 作为窗口管理器实现，Aqua Desktop Environment 作为桌面外壳（壁纸、菜单栏、Dock），二者都建立在 ZAF 之上，而不是相反。
+Each directory carries exactly one class of responsibility (rule 23). `Aqua Desktop Environment` and `Desktop Window Manager` keep their existing product names: Desktop Window Manager as the window manager implementation, Aqua Desktop Environment as the desktop shell (wallpaper, menu bar, Dock). Both are built on ZAF, not the other way round.
 
-## 3. Skia 集成策略
+## 3. Skia Integration Strategy
 
-- 以固定版本的 `third_party/skia` 引入，只编译 `core` + `pathops` + `codec` 的必要子集与纯 CPU Raster 后端；不启用 Ganesh/Vulkan、X11、CoreText、DirectWrite、字体管理器等平台后端。
-- 字体由 ZAF 的 `SkFontMgr`/`SkTypeface` 适配器提供，复用仓库既有的 `stb_truetype` 与系统字体加载路径（MiSans/MiSans Global/Inter，回退 WQY.TTC），避免再引入 FreeType。
-- 平台抽象只暴露三类回调：Surface 提交（拷贝到帧缓冲或共享内存表面）、单调时钟、事件源。移植到其他 OS 时只替换这三处。
-- 风险：Skia 依赖 C++ 标准库子集与异常/RTTI 关闭后的构建适配成本高。若完整移植成本超出预算，退路是保持 ZAF 的渲染接口不变，先提供自研 Raster 后端，Skia 作为可选实现——接口在 `gfx/` 内隔离，不影响上层。
-- 已落地（Z0）：按上述退路先交付 `zaf_gfx.h`（后端中立光栅：矩形/圆角/线/多边形/alpha）与 `zaf_gfx_soft.c`（软件实现），`user/zaf_gfx_demo.c` 在 Ring3 映射帧缓冲并输出 FPS。仓库仍无 Skia 源码。
-- Z1 决策（2026-11-14）：Z1 的合成与桌面绘制直接使用现有 ZOS 渲染 API（`kernel/gfx/render.c`，内核与 Ring3 共用同一份），由 `zaf/gfx/zaf_painter` 统一封装；`zaf_gfx` 保留为便携光栅，不扩张职责。Skia 移植降为独立 spike（Z0.5），需用户决策后再排期。理由：只有一个渲染后端时引入多后端 vtable 是纯开销（KISS），且 Z1 的验收面是行为等价与职责拆分，不是渲染技术替换。
+- Vendor `third_party/skia` at a pinned version, compiling only the necessary subset of `core` + `pathops` + `codec` plus the CPU-only Raster backend; Ganesh/Vulkan, X11, CoreText, DirectWrite, font managers and other platform backends stay disabled.
+- Fonts come from ZAF's `SkFontMgr`/`SkTypeface` adapters, reusing the repository's existing `stb_truetype` and system font loading paths (MiSans/MiSans Global/Inter, falling back to WQY.TTC), so FreeType is not pulled in as well.
+- The platform abstraction exposes only three kinds of callbacks: surface submission (copy into the framebuffer or a shared-memory surface), a monotonic clock, and an event source. Porting to another OS replaces just those three.
+- Risk: Skia depends on a subset of the C++ standard library, and adapting its build with exceptions/RTTI disabled is expensive. If a full port exceeds budget, the fallback is to keep ZAF's rendering interface unchanged and ship a self-developed Raster backend first, with Skia as an optional implementation — the interface is isolated inside `gfx/` and does not affect upper layers.
+- Already landed (Z0): following that fallback, `zaf_gfx.h` (backend-neutral rasterisation: rectangles/rounded corners/lines/polygons/alpha) and `zaf_gfx_soft.c` (software implementation) were delivered, and `user/zaf_gfx_demo.c` maps the framebuffer in Ring3 and prints FPS. The repository still has no Skia source.
+- Z1 decision (2026-11-14): Z1's composition and desktop drawing use the existing ZOS rendering API directly (`kernel/gfx/render.c`, shared by the kernel and Ring3), wrapped uniformly by `zaf/gfx/zaf_painter`; `zaf_gfx` stays a portable rasteriser and does not grow its responsibilities. The Skia port drops to a standalone spike (Z0.5) and is scheduled only after a user decision. Rationale: with a single rendering backend a multi-backend vtable is pure overhead (KISS), and Z1's acceptance surface is behavioural equivalence and separation of duties, not swapping the rendering technology.
 
-## 4. 主题引擎
+## 4. Theme Engine
 
-主题以目录或打包资源形式提供，包含：
+Themes are supplied as a directory or a packaged resource and contain:
 
-- 颜色、字体、间距、圆角、阴影、动画时长等令牌；
-- 控件状态样式（默认/悬停/按下/禁用/聚焦）；
-- 可选 SVG 图形资源（图标遵循规则 22）。
+- tokens for colours, fonts, spacing, corner radii, shadows, animation durations and the like;
+- widget state styles (default/hover/pressed/disabled/focused);
+- optional SVG graphic assets (icons follow rule 22).
 
-Aqua 是内置默认主题；主题引擎负责令牌解析、继承与运行时切换，控件只读取令牌而不硬编码外观。切换主题不重建窗口，只触发全量重绘。
+Aqua is the built-in default theme; the theme engine handles token parsing, inheritance and runtime switching, and widgets read the tokens instead of hard-coding appearance. Switching themes does not rebuild windows, it only triggers a full repaint.
 
-## 5. 里程碑
+## 5. Milestones
 
-| 阶段 | 内容 | 验收 | 状态 |
+| Phase | Content | Acceptance | Status |
 |---|---|---|---|
-| Z0 | 依赖决策：Skia 子集移植评估与固定版本；`gfx/` 接口定稿 | 能在 Ring3 画出矩形/路径/文字，帧率可测 | 已实现（走自研 Raster 退路：`zaf_gfx` + 软件后端 + fps demo） |
-| Z1 | 合成器与窗口管理：图层、损伤区域、窗口层级与焦点 | 两个客户端窗口可拖动、遮挡、关闭 | 设计定稿，待实现（见 Z1 设计/计划） |
-| Z2 | 控件系统：基础控件 + 事件分发 + 布局 | 用 ZAF 控件重写欢迎页与计算器 | 未开始 |
-| Z3 | 动画引擎与 Aqua 主题包 | 窗口打开/关闭、按钮反馈有动画；主题可切换 | 未开始 |
-| Z4 | Aqua Desktop Environment/Desktop Window Manager 迁移到 ZAF | 桌面、菜单栏、Dock、窗口装饰全部由 ZAF 驱动 | 未开始 |
+| Z0 | Dependency decision: evaluate and pin a Skia subset port; finalise the `gfx/` interface | Can draw rectangles/paths/text in Ring3 with a measurable frame rate | Implemented (via the self-developed Raster fallback: `zaf_gfx` + software backend + fps demo) |
+| Z1 | Compositor and window management: layers, damage regions, stacking and focus | Two client windows can be dragged, occluded and closed | Design finalised, implementation pending (see the Z1 design/plan) |
+| Z2 | Widget system: base widgets + event dispatch + layout | Rewrite the welcome page and calculator with ZAF widgets | Not started |
+| Z3 | Animation engine and the Aqua theme package | Window open/close and button feedback are animated; the theme can be switched | Not started |
+| Z4 | Migrate Aqua Desktop Environment/Desktop Window Manager to ZAF | Desktop, menu bar, Dock and window decorations are all driven by ZAF | Not started |
 
-> Z1 的范围已按实际代码收敛为“把现有 Desktop Window Manager 的合成/窗口策略拆到 ZAF，行为等价，
-> 不改协议、不改内核”，Z2 起才新增能力。详见 Z1 设计文档。
+> Z1's scope has been narrowed against the actual code to "move the existing Desktop Window Manager's composition/window policy into ZAF, with equivalent behaviour,
+> no protocol changes and no kernel changes"; only from Z2 onward do new capabilities get added. See the Z1 design document.
 
-## 6. 与现有代码的关系
+## 6. Relationship to Existing Code
 
-- 现有 `apps/ADE/`（显示服务器、Desktop Window Manager、壁纸/菜单栏/Dock）与 `user/lib/ade_client` 是 Z1/Z4 的迁移来源；迁移期间保持现有协议可用。
-- 现有 `kernel/gfx/render.c` 与 `zos_api.h` 是底层绘制与系统调用边界；Z1 的 ZAF 通过 `zaf/gfx/zaf_painter` 调用它，由合成器把图层合成到后缓冲并按损伤提交，不直接写帧缓冲。
-- Z1 把 Desktop Window Manager 的职责拆为：`zaf/compositor`（图层/损伤/提交/光标）、`zaf/wm`（窗口表/焦点/z 序/命中/拖动）、`apps/ADE/decoration.cpp`（窗口装饰，读 Aqua 令牌）。Desktop Window Manager 保留为薄适配层。
-- ZAF 库以 ZXE 共享库形式发布、应用通过 `.zxe.deps` 依赖它，是 **Z4** 的计划（见 ZXE v1 设计文档）；Z1 只做链接进 `/bin/aqua` 的静态代码，避免在工具链不可用时承担动态 ABI 风险。
+- The existing `apps/ADE/` (display server, Desktop Window Manager, wallpaper/menu bar/Dock) and `user/lib/ade_client` are the migration source for Z1/Z4; the existing protocol stays usable during the migration.
+- The existing `kernel/gfx/render.c` and `zos_api.h` form the low-level drawing and syscall boundary; Z1's ZAF calls it through `zaf/gfx/zaf_painter`, and the compositor composites layers into the back buffer and presents by damage, never writing the framebuffer directly.
+- Z1 splits Desktop Window Manager's responsibilities into: `zaf/compositor` (layers/damage/present/cursor), `zaf/wm` (window table/focus/z-order/hit testing/dragging), `apps/ADE/decoration.cpp` (window decorations, reading Aqua tokens). Desktop Window Manager remains as a thin adapter layer.
+- Publishing the ZAF library as a ZXE shared library, with applications depending on it through `.zxe.deps`, is a **Z4** plan (see the ZXE v1 design document); Z1 only produces static code linked into `/bin/aqua`, avoiding dynamic ABI risk while the toolchain is unavailable.
 
-## 7. 风险
+## 7. Risks
 
-1. Skia 移植工作量最大，Z0 已按退路交付自研 Raster；是否真正引入 Skia 需单独立项评估。
-2. C++ 运行时限制（无异常/RTTI、无 STL iostream）可能迫使裁剪 Skia API 面。
-3. 文字排版（换行、字距、CJK）需要独立设计，不能只依赖字形光栅化。
-4. 与现有 Aqua Desktop Environment 协议的兼容期需要双轨，迁移完成前不得破坏桌面可用性。
-5. Z1 的合成器重写可能引入视觉回归；回退路径与逐 Task 截图对比见 Z1 计划。
+1. Porting Skia is the largest chunk of work; Z0 already delivered a self-developed Raster through the fallback. Whether to adopt Skia at all needs its own evaluation project.
+2. C++ runtime limits (no exceptions/RTTI, no STL iostream) may force a trimmed Skia API surface.
+3. Text layout (line breaking, kerning, CJK) needs its own design and cannot rely on glyph rasterisation alone.
+4. There is a dual-track compatibility period with the existing Aqua Desktop Environment protocol; desktop usability must not break before the migration completes.
+5. Rewriting the compositor in Z1 may introduce visual regressions; the rollback path and per-Task screenshot comparison are described in the Z1 plan.
 
-## 8. 变更记录
+## 8. Change Log
 
-- 2026-11-13：初稿（Skia 集成策略、分层、Z0–Z4 里程碑）。
-- 2026-11-14：标记 Z0 已实现（自研 Raster 退路）；新增 Z1 设计/计划链接；
-  Z1 范围收敛为现有 Desktop Window Manager 行为的职责拆分，渲染继续使用 ZOS API；Skia 降为 Z0.5 spike。
-
+- 2026-11-13: first draft (Skia integration strategy, layering, Z0–Z4 milestones).
+- 2026-11-14: marked Z0 implemented (self-developed Raster fallback); added the Z1 design/plan links;
+  Z1 scope narrowed to splitting the existing Desktop Window Manager behaviour into separate duties, rendering continues to use ZOS API; Skia dropped to a Z0.5 spike.

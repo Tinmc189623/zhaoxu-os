@@ -67,6 +67,13 @@ typedef unsigned long long u64;
 #define SYS_BOOT_WALLPAPER  58
 #define SYS_MEMFD_PHYS      59
 #define SYS_MAP_PHYS        60
+#define SYS_EVENTFD         61
+#define SYS_TIMERFD_CREATE  62
+#define SYS_TIMERFD_SETTIME 63
+#define SYS_TIMERFD_GETTIME 64
+#define SYS_EPOLL_CREATE1   65
+#define SYS_EPOLL_CTL       66
+#define SYS_EPOLL_WAIT      67
 
 #define AF_UNIX      1
 #define SOCK_STREAM  1
@@ -78,6 +85,22 @@ typedef unsigned long long u64;
 #define POLLERR  0x008
 #define POLLHUP  0x010
 #define POLLNVAL 0x020
+
+#define EPOLLIN  0x001
+#define EPOLLOUT 0x004
+#define EPOLLERR 0x008
+#define EPOLLHUP 0x010
+
+#define EPOLL_CTL_ADD 1
+#define EPOLL_CTL_DEL 2
+#define EPOLL_CTL_MOD 3
+
+#define EFD_SEMAPHORE 1
+#define EFD_NONBLOCK  0x800
+
+#define CLOCK_REALTIME  0
+#define CLOCK_MONOTONIC 1
+#define TFD_TIMER_ABSTIME 1
 
 #define O_NONBLOCK 0x800
 
@@ -133,6 +156,21 @@ struct zos_mmap_args {
     long fd;
     unsigned long offset;
 };
+
+struct zos_timespec {
+    long long seconds;
+    long long nanoseconds;
+};
+
+struct zos_itimerspec {
+    struct zos_timespec interval;
+    struct zos_timespec value;
+};
+
+struct zos_epoll_event {
+    unsigned int events;
+    unsigned long long data;
+} __attribute__((packed));
 
 #define CMSG_ALIGN(length) (((length) + 7ul) & ~7ul)
 #define CMSG_LEN(length) (sizeof(struct cmsghdr) + (length))
@@ -495,6 +533,46 @@ static inline long sys_munmap(void *address, unsigned long length)
 static inline long sys_fcntl(long fd, int command, long argument)
 {
     return syscall3(SYS_FCNTL, fd, command, argument);
+}
+
+static inline long sys_eventfd(unsigned int initial, int flags)
+{
+    return syscall3(SYS_EVENTFD, initial, flags, 0);
+}
+
+static inline long sys_timerfd_create(int clock_id, int flags)
+{
+    return syscall3(SYS_TIMERFD_CREATE, clock_id, flags, 0);
+}
+
+static inline long sys_timerfd_settime(int fd, int flags,
+                                       const struct zos_itimerspec *new_value,
+                                       struct zos_itimerspec *old_value)
+{
+    return syscall4(SYS_TIMERFD_SETTIME, fd, flags, (long)new_value,
+                    (long)old_value);
+}
+
+static inline long sys_timerfd_gettime(int fd, struct zos_itimerspec *current)
+{
+    return syscall3(SYS_TIMERFD_GETTIME, fd, (long)current, 0);
+}
+
+static inline long sys_epoll_create1(int flags)
+{
+    return syscall3(SYS_EPOLL_CREATE1, flags, 0, 0);
+}
+
+static inline long sys_epoll_ctl(int epfd, int op, int fd,
+                                 struct zos_epoll_event *event)
+{
+    return syscall4(SYS_EPOLL_CTL, epfd, op, fd, (long)event);
+}
+
+static inline long sys_epoll_wait(int epfd, struct zos_epoll_event *events,
+                                  int max_events, int timeout)
+{
+    return syscall4(SYS_EPOLL_WAIT, epfd, (long)events, max_events, timeout);
 }
 
 void u_puts(const char *text);

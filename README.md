@@ -4,75 +4,76 @@
 
 ### Yuanshuo · Aqua Desktop Environment · x86_64
 
-<kbd>🧩 微内核</kbd> <kbd>🧵 Ring 3 用户态</kbd> <kbd>💾 FAT32 + ext4</kbd> <kbd>💿 UEFI + Legacy BIOS</kbd> <kbd>🧬 MBR + GPT(ISO)</kbd> <kbd>🎨 Aqua</kbd>
+<kbd>🧩 Microkernel</kbd> <kbd>🧵 Ring 3 user mode</kbd> <kbd>💾 FAT32 + ext4</kbd> <kbd>💿 UEFI + Legacy BIOS</kbd> <kbd>🧬 MBR + GPT(ISO)</kbd> <kbd>🎨 Aqua</kbd>
 
-**C** 内核与 UEFI 引导 · **FASM** BIOS 引导 · **GAS** 底层汇编 · **Ada** 驱动 · **C++20** 上层应用 · **Ruby** 工具链
+**C** kernel and UEFI boot · **FASM** BIOS boot · **GAS** low-level assembly · **Ada** drivers · **C++20** applications · **Ruby** toolchain
 
 [🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) · [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) · [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) · [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
-**当前版本：0.7.1 「Yuanshuo」 · 内核 0.7.1 · 构建 2** · 历史版本见 [CHANGELOG.md](CHANGELOG.md)
+**Current version: 0.7.1 「Yuanshuo」 · kernel 0.7.1 · build 3** · version history in [CHANGELOG.md](CHANGELOG.md)
 
 </div>
 
 ---
 
-> 🧭 **一句话介绍**：Zhaoxu OS 是一个面向 x86_64 的微内核操作系统。引导管理器 **ZhaoxuBootMgr** 同时支持 UEFI 与 legacy BIOS；**Yuanshuo** 是 C 编写的微内核；驱动由 **Ada + C** 实现并运行在 ring 3；Shell **8sh** 与桌面 **Aqua Desktop Environment** 同样位于 ring 3，界面由 **Desktop Window Compositor** 合成；VFS 覆盖 ext4、UBIFS、tmpfs、initramfs、procfs、sysfs、debugfs、efivarfs、ramfs、rootfs、overlayfs、ecryptfs、vfat、NTFS、ISO 9660/CDFS、UDF 与 exFAT；可执行格式为 **ZXE v1**。
+> 🧭 **In one sentence**: Zhaoxu OS is a microkernel operating system for x86_64. The boot manager **ZhaoxuBootMgr** supports both UEFI and legacy BIOS; **Yuanshuo** is the microkernel written in C; drivers are written in **Ada + C** and run in ring 3; the shell **8sh** and the **Aqua Desktop Environment** desktop also live in ring 3, and the UI is composited by **Desktop Window Compositor**; the VFS spans ext4, UBIFS, tmpfs, initramfs, procfs, sysfs, debugfs, efivarfs, ramfs, rootfs, overlayfs, ecryptfs, vfat, NTFS, ISO 9660/CDFS, UDF, and exFAT; the executable format is **ZXE v1**.
 
 ---
 
-## ✨ 0.7.1 内容
+## ✨ What's in 0.7.1
 
-### 🚀 0.7.1 修复与改进
-- Makefile 成为唯一构建入口，Ruby 只负责辅助脚本；Windows 默认在 WSL2 内 `make`
-- 窗口内容内缩、标题栏避开圆角，修复内容覆盖窗口圆角的穿模；初始窗口左右并排
-- live ISO 直接使用 rule 33 壁纸，菜单栏改为半透明
-- `version.cfg` 新增 `build` 构建号，当前 **0.7.1 build 1**
-- QEMU 默认内存提升到 2 GiB；PMM 已验证管理 8 GiB（上限 64 GiB）
-- 内核内嵌 initramfs 使用 zlib 压缩，legacy BIOS 的 `KERNEL.BIN` 回到 448 KiB 限制内
-- ISO 目录结构补齐 `boot/zhaoxu/fonts/unicode.pf2`、`casper/vga.ko`、`install/MiSans.ttf` 与 `install/Inter.otf`；UEFI live ISO 优先使用 MiSans
-- 修复 `sendmsg` 控制消息长度回绕；memfd 与内核堆按可用内存的 1/4 动态限额/增长
-- M1：新增 Ring3 `/bin/display` KMS 服务（modern virtio-pci、2D 扫描输出、双缓冲 flip）
-- M2：新增 `/bin/wayland` 与 `/bin/wldemo`，Wayland wire/对象/wl_shm + SCM_RIGHTS 帧提交并合成到 KMS 扫描输出，QEMU 已验证
-- M3：xdg-shell configure/ack、wl_seat/wl_pointer、wl_keyboard keymap/enter、服务端标题栏/关闭/拖动已实现；M4 virgl 上下文、3D 资源创建与 `CTX_ATTACH_RESOURCE` 已通，Windows QEMU 的 virglrenderer 不注册扫描资源，GPU 合成与 dmabuf 待续
+### 🚀 0.7.1 fixes and improvements
+- The Makefile is the only build entry point and Ruby handles auxiliary scripts only; Windows runs `make` inside WSL2 by default
+- Window content is inset and the title bar avoids the rounded corners, fixing content that bled over the window radius; initial windows sit side by side
+- The live ISO uses the rule 33 wallpaper directly, and the menu bar is translucent
+- `version.cfg` is the single version source and carries a `build` number
+- Default QEMU memory is raised to 2 GiB; PMM has been verified managing 8 GiB (64 GiB ceiling)
+- The kernel-embedded initramfs is zlib-compressed, bringing the legacy BIOS `KERNEL.BIN` back under the 448 KiB limit
+- The ISO layout now ships `boot/zhaoxu/fonts/unicode.pf2`, `casper/vga.ko`, `install/MiSans.ttf`, and `install/Inter.otf`; the UEFI live ISO prefers MiSans
+- Fixed `sendmsg` control-message length wraparound; memfd and the kernel heap are capped and grown dynamically at 1/4 of available memory
+- M1: new Ring3 `/bin/display` KMS service (modern virtio-pci, 2D scanout, double-buffered flip)
+- M2: new `/bin/wayland` and `/bin/wldemo`; Wayland wire/object/wl_shm plus SCM_RIGHTS frame submission, composited onto the KMS scanout, verified in QEMU
+- M3: xdg-shell configure/ack, wl_seat/wl_pointer, wl_keyboard keymap/enter, and server-side title bar/close/drag are implemented; in M4, virgl contexts, 3D resource creation, and `CTX_ATTACH_RESOURCE` work, but virglrenderer in QEMU on Windows does not register scanout resources, so GPU composition and dmabuf remain pending
+- M5: kernel `eventfd`, `timerfd`, and `epoll` (syscalls 61–67) provide the event-loop primitives stock libwayland needs; `/data/M5_TEST.ZXE` verifies counters, expirations, readiness, and timeouts on real hardware emulation
 
 <table>
 <tr>
 <td width="50%" valign="top">
 
-### 🗂️ 文件系统矩阵
-- 新增只读 **NTFS**（MFT、runlist、$INDEX_ROOT/$INDEX_ALLOCATION）、**exFAT**（NoFatChain/FAT、ValidDataLength）、**ISO 9660/CDFS**（Joliet + Rock Ridge + multi-extent）、**UDF**（AVDP/VDS/ICB/FID）与 **UBIFS**（UBI 附着、节点 CRC、zlib 解压）
-- **vfat** 独立驱动覆盖 FAT12/16/32 与 VFAT 长名
-- **rootfs** 改为 initramfs 下层 + ramfs copy-up 的可写根；**overlayfs** 支持写入与 `.wh.` 白障；新增 **ramfs** 与 **ecryptfs**（AES-256-CBC）
-- 启动后扫描 MBR/GPT/EBR，把可识别的卷挂到 `/media/<n>`
+### 🗂️ File system matrix
+- New read-only **NTFS** (MFT, runlist, $INDEX_ROOT/$INDEX_ALLOCATION), **exFAT** (NoFatChain/FAT, ValidDataLength), **ISO 9660/CDFS** (Joliet + Rock Ridge + multi-extent), **UDF** (AVDP/VDS/ICB/FID), and **UBIFS** (UBI attach, node CRC, zlib decompression)
+- The standalone **vfat** driver covers FAT12/16/32 and VFAT long names
+- **rootfs** is now a writable root with an initramfs lower layer and ramfs copy-up; **overlayfs** supports writes and `.wh.` whiteouts; new **ramfs** and **ecryptfs** (AES-256-CBC)
+- After boot, MBR/GPT/EBR are scanned and recognizable volumes are mounted under `/media/<n>`
 
 </td>
 <td width="50%" valign="top">
 
-### 💽 存储与总线驱动
-- Ring3 **NVMe**（admin/I/O 队列、PRP、identify）与 **SDHCI**（CMD0/8/ACMD41/2/3/9/7/16，PIO 读写）
-- **IDE** PIIX4 驱动接入 `/bin/drivers`，与 AHCI、USB MSC 共同组成块设备池
-- **DesignWare I2C**、**PCH SPI** 与 **LM75/TMP102** 温度传感器；`/sys/class/thermal/thermal_zone0/temp`
-- USB **OHCI/EHCI** 根端口复位与控制器初始化，与既有 **xHCI** 存储栈并存
+### 💽 Storage and bus drivers
+- Ring3 **NVMe** (admin/I/O queues, PRP, identify) and **SDHCI** (CMD0/8/ACMD41/2/3/9/7/16, PIO reads and writes)
+- The **IDE** PIIX4 driver joins `/bin/drivers` and forms the block device pool together with AHCI and USB MSC
+- **DesignWare I2C**, **PCH SPI**, and **LM75/TMP102** temperature sensors; `/sys/class/thermal/thermal_zone0/temp`
+- USB **OHCI/EHCI** root port reset and controller initialization, alongside the existing **xHCI** storage stack
 
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
 
-### 🧠 内核平台层
-- 显式 **MMU/页表驱动**：四层遍历、1 GiB/2 MiB 大页拆分、映射/解映射/保护/翻译
-- **HPET** ACPI 表解析与 64 位计数器；APIC Timer、PIT 与 ARM **SysTick** 后端
-- 中断控制器前端统一 APIC/PIC；ARM **GICv3** 驱动位于 `kernel/arch/arm64`
-- 设备头扩展到 16 块盘，并共享温度传感器状态
+### 🧠 Kernel platform layer
+- Explicit **MMU/page-table driver**: four-level walk, 1 GiB/2 MiB huge-page splitting, map/unmap/protect/translate
+- **HPET** ACPI table parsing and 64-bit counter; APIC Timer, PIT, and ARM **SysTick** backends
+- A unified interrupt controller frontend for APIC/PIC; the ARM **GICv3** driver lives in `kernel/arch/arm64`
+- The device header grows to 16 disks and shares temperature sensor state
 
 </td>
 <td width="50%" valign="top">
 
-### 🎨 桌面与多媒体
-- **Desktop Window Compositor** 独立承担后缓冲、损伤提交与硬件光标，DWM 只负责窗口策略
-- **Intel HDA** 音频输出路径（CORB/RIRB、DAC→pin、48 kHz/16-bit 立体声）
-- **Intel 8254x/82574L** 网卡驱动（DMA 环、EEPROM MAC、收发）
-- 遗留 virtio-gpu **3D** 通道：virgl 上下文、3D 资源与 SUBMIT_3D
+### 🎨 Desktop and multimedia
+- **Desktop Window Compositor** owns the back buffer, damage submission, and hardware cursor on its own; DWM handles window policy only
+- **Intel HDA** audio output path (CORB/RIRB, DAC→pin, 48 kHz/16-bit stereo)
+- **Intel 8254x/82574L** NIC driver (DMA rings, EEPROM MAC, transmit and receive)
+- Legacy virtio-gpu **3D** path: virgl context, 3D resources, and SUBMIT_3D
 
 </td>
 </tr>
@@ -80,113 +81,113 @@
 
 ---
 
-## 📸 实机截图
+## 📸 Screenshots
 
-> 以下十张图片由 `tools/screenshot.rb` 在 QEMU + OVMF 实机启动后抓取帧缓冲得到，**1920×1080**，非绘制示意图。部分画面来自 0.5.0 及更早的版本（保留用于展示硬件、字体与桌面效果），命令名以当前版本的 8sh 为准。
+> The ten images below were captured from the framebuffer by `tools/screenshot.rb` after a real boot under QEMU + OVMF at **1920×1080**; they are not drawn mock-ups. Some screens come from 0.5.0 and earlier (kept to show hardware, font, and desktop behavior), and command names follow 8sh in the current release.
 
 <table>
 <tr>
 <td width="50%" align="center">
 <img src="docs/shot-shell.png" width="100%" alt="8sh neofetch">
 <br><b>🖥️ 8sh</b><br>
-<sub>neofetch：内核摘要与语言构成</sub>
+<sub>neofetch: kernel summary and language breakdown</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/shot-files.png" width="100%" alt="FAT32 文件读取">
-<br><b>💾 FAT32 数据盘</b><br>
-<sub><code>ls /mnt</code> 与 <code>cat</code>，AHCI → FAT32 → VFS → 系统调用</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" align="center">
-<img src="docs/shot-run.png" width="100%" alt="运行 .zxe 与 ELF">
-<br><b>🧵 Ring 3 程序</b><br>
-<sub>同一份 hello 程序分别以 <code>.zxe</code> 与 ELF64 运行，退出码 7</sub>
-</td>
-<td width="50%" align="center">
-<img src="docs/shot-editor.png" width="100%" alt="系统内编译器">
-<br><b>🛠️ 系统内开发</b><br>
-<sub>历史版本的系统内编辑器：编辑后直接以 ring 3 运行 .zxe</sub>
+<img src="docs/shot-files.png" width="100%" alt="Reading files from FAT32">
+<br><b>💾 FAT32 data disk</b><br>
+<sub><code>ls /mnt</code> and <code>cat</code>; AHCI → FAT32 → VFS → syscall</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" align="center">
-<img src="docs/shot-disks.png" width="100%" alt="磁盘角色">
-<br><b>🗄️ 磁盘与角色</b><br>
-<sub><code>disks</code>：ZHAOXUDATA 数据分区 / ZHAOXUEFI ESP / 空白目标盘</sub>
+<img src="docs/shot-run.png" width="100%" alt="Running .zxe and ELF">
+<br><b>🧵 Ring 3 programs</b><br>
+<sub>The same hello program run as <code>.zxe</code> and as ELF64, exit code 7</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/shot-install.png" width="100%" alt="安装器">
-<br><b>📥 安装器</b><br>
-<sub><code>install</code>：目标盘写入 MBR/GPT + FAT32 ESP + ZHAOXUDATA 并校验</sub>
+<img src="docs/shot-editor.png" width="100%" alt="In-system compiler">
+<br><b>🛠️ In-system development</b><br>
+<sub>The in-system editor from an earlier release: edit, then run the .zxe in ring 3</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" align="center">
-<img src="docs/shot-desktop.png" width="100%" alt="Aqua 桌面与终端">
+<img src="docs/shot-disks.png" width="100%" alt="Disk roles">
+<br><b>🗄️ Disks and roles</b><br>
+<sub><code>disks</code>: ZHAOXUDATA data partition / ZHAOXUEFI ESP / blank target disk</sub>
+</td>
+<td width="50%" align="center">
+<img src="docs/shot-install.png" width="100%" alt="Installer">
+<br><b>📥 Installer</b><br>
+<sub><code>install</code>: writes MBR/GPT + FAT32 ESP + ZHAOXUDATA to the target disk and verifies it</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" align="center">
+<img src="docs/shot-desktop.png" width="100%" alt="Aqua desktop and terminal">
 <br><b>🎨 Aqua Desktop Environment · Aqua</b><br>
-<sub>菜单栏、窗口、Dock、软件光标；终端里运行真实的 neofetch</sub>
+<sub>Menu bar, windows, Dock, software cursor; a real neofetch running in the terminal</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/shot-desktop-apps.png" width="100%" alt="桌面应用">
-<br><b>🧮 原生桌面应用</b><br>
-<sub>欢迎、便签、监视器、计算器；TrueType 中文排版</sub>
+<img src="docs/shot-desktop-apps.png" width="100%" alt="Desktop applications">
+<br><b>🧮 Native desktop applications</b><br>
+<sub>Welcome, notes, monitor, calculator; TrueType Chinese typesetting</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" align="center">
-<img src="docs/shot-desktop-install.png" width="100%" alt="图形安装器">
-<br><b>💿 图形安装器</b><br>
-<sub>识别安装源与目标盘，确认后开始写入，支持 UEFI/BIOS 启动</sub>
+<img src="docs/shot-desktop-install.png" width="100%" alt="Graphical installer">
+<br><b>💿 Graphical installer</b><br>
+<sub>Detects the install source and target disk, writes after confirmation, boots under UEFI/BIOS</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/shot-fonttest.png" width="100%" alt="TrueType 字形">
-<br><b>🔤 TrueType 字形</b><br>
-<sub>TrueType 字形光栅：20×23 位图、24 px em（历史命令输出）</sub>
+<img src="docs/shot-fonttest.png" width="100%" alt="TrueType glyphs">
+<br><b>🔤 TrueType glyphs</b><br>
+<sub>TrueType glyph rasterization: 20×23 bitmap, 24 px em (command output from an earlier release)</sub>
 </td>
 </tr>
 </table>
 
 ---
 
-## 🧠 架构
+## 🧠 Architecture
 
-**微内核结构**：`kernel.elf` 只包含 CPU/内存/调度/IPC/VFS 核心，不含任何驱动或应用；AHCI、IDE、NVMe、SDHCI、USB MSC、PS/2、鼠标、RTC、串口、HDA、e1000、I2C/SPI/温度传感器由 Ring 3 `/bin/drivers` 独占，virtio-gpu 由 `/bin/display` 独占；Aqua Desktop Environment、8sh、`/bin/wayland` 与全部应用同样是 Ring 3 程序（规则 9）。
+**Microkernel structure**: `kernel.elf` contains only the CPU/memory/scheduling/IPC/VFS core, with no drivers or applications; AHCI, IDE, NVMe, SDHCI, USB MSC, PS/2, mouse, RTC, serial, HDA, e1000, and the I2C/SPI/temperature sensors are owned exclusively by Ring 3 `/bin/drivers`, virtio-gpu by `/bin/display`; Aqua Desktop Environment, 8sh, `/bin/wayland`, and every application are Ring 3 programs as well (rule 9).
 
 <table>
-<tr><th>层</th><th>语言</th><th>实现</th></tr>
-<tr><td>UEFI 引导</td><td>🧩 C + GAS</td><td><code>efi_bootmgr.c</code>（ZhaoxuBootMgr）→ <code>efi_main.c</code>（OSLDRX64）：GOP、RSDP、内存映射、页表、<code>ExitBootServices</code></td></tr>
-<tr><td>Legacy BIOS 引导</td><td>⚙️ FASM</td><td><code>bios_stage1.asm</code> → <code>bios_stage2.asm</code>：VBE、E820、长模式</td></tr>
-<tr><td>内核</td><td>🔧 C</td><td><code>kernel/</code>：GDT/TSS、IDT、PMM/VMM、堆、进程、VFS；不含任何驱动</td></tr>
-<tr><td>文件系统</td><td>💾 C（内核 + Ring3）</td><td>initramfs/rootfs/overlayfs/ramfs/ecryptfs、FAT32/vfat、ext4（<code>fs/ext4</code> + <code>/bin/ext4fs</code>）、只读 NTFS/exFAT/ISO 9660/CDFS/UDF/UBIFS</td></tr>
-<tr><td>底层汇编</td><td>🧱 GAS</td><td>入口、ISR 桩、用户态切换、内核镜像嵌入</td></tr>
-<tr><td>驱动</td><td>✨ Ada + C，Ring3</td><td><code>/bin/drivers</code>：AHCI/IDE/NVMe/SDHCI/USB MSC、PS/2/鼠标、RTC、UART、HDA、e1000、I2C/SPI、温度；<code>/bin/display</code>：virtio-gpu 2D scanout</td></tr>
-<tr><td>Shell / 桌面 / 应用</td><td>🚀 C + C++20</td><td><code>apps/csh/</code>（8sh）、<code>apps/ADE/</code>（C++20）、<code>apps/display/</code>（KMS）、<code>apps/wayland/</code>（Wayland 核心）、<code>apps/ext4fs/</code> 与 <code>user/</code> 下的独立客户端</td></tr>
-<tr><td>图形框架</td><td>🎨 C + C++20</td><td>Desktop Window Compositor + Desktop Window Manager；M1 KMS、M2 wl_shm 合成、M3 xdg-shell/seat；<code>zaf/</code> 仍是 Z0 光栅</td></tr>
-<tr><td>用户程序</td><td>🧵 C</td><td><code>user/</code>：`init`、`hello`、`wldemo` 等 ZXE；链接到 <code>0x10000000000</code>（1 TiB），运行在 ring 3</td></tr>
-<tr><td>工具链</td><td>💎 Make + Ruby</td><td>Makefile 是构建入口；<code>tools/</code> Ruby 只做 ELF→.zxe、BIOS 镜像、冒烟测试、截图、版本同步与 ISO 元数据</td></tr>
+<tr><th>Layer</th><th>Language</th><th>Implementation</th></tr>
+<tr><td>UEFI boot</td><td>🧩 C + GAS</td><td><code>efi_bootmgr.c</code> (ZhaoxuBootMgr) → <code>efi_main.c</code> (OSLDRX64): GOP, RSDP, memory map, page tables, <code>ExitBootServices</code></td></tr>
+<tr><td>Legacy BIOS boot</td><td>⚙️ FASM</td><td><code>bios_stage1.asm</code> → <code>bios_stage2.asm</code>: VBE, E820, long mode</td></tr>
+<tr><td>Kernel</td><td>🔧 C</td><td><code>kernel/</code>: GDT/TSS, IDT, PMM/VMM, heap, processes, VFS; no drivers</td></tr>
+<tr><td>File systems</td><td>💾 C (kernel + Ring3)</td><td>initramfs/rootfs/overlayfs/ramfs/ecryptfs, FAT32/vfat, ext4 (<code>fs/ext4</code> + <code>/bin/ext4fs</code>), read-only NTFS/exFAT/ISO 9660/CDFS/UDF/UBIFS</td></tr>
+<tr><td>Low-level assembly</td><td>🧱 GAS</td><td>Entry, ISR stubs, user-mode switch, kernel image embedding</td></tr>
+<tr><td>Drivers</td><td>✨ Ada + C, Ring3</td><td><code>/bin/drivers</code>: AHCI/IDE/NVMe/SDHCI/USB MSC, PS/2/mouse, RTC, UART, HDA, e1000, I2C/SPI, temperature; <code>/bin/display</code>: virtio-gpu 2D scanout</td></tr>
+<tr><td>Shell / desktop / applications</td><td>🚀 C + C++20</td><td><code>apps/csh/</code> (8sh), <code>apps/ADE/</code> (C++20), <code>apps/display/</code> (KMS), <code>apps/wayland/</code> (Wayland core), <code>apps/ext4fs/</code>, and standalone clients under <code>user/</code></td></tr>
+<tr><td>Graphics framework</td><td>🎨 C + C++20</td><td>Desktop Window Compositor + Desktop Window Manager; M1 KMS, M2 wl_shm compositing, M3 xdg-shell/seat; <code>zaf/</code> is still the Z0 rasterizer</td></tr>
+<tr><td>User programs</td><td>🧵 C</td><td><code>user/</code>: `init`, `hello`, `wldemo`, and other ZXE images; linked at <code>0x10000000000</code> (1 TiB), running in ring 3</td></tr>
+<tr><td>Toolchain</td><td>💎 Make + Ruby</td><td>The Makefile is the build entry point; the Ruby under <code>tools/</code> only handles ELF→.zxe, BIOS images, smoke tests, screenshots, version sync, and ISO metadata</td></tr>
 </table>
 
-**内存布局**
+**Memory layout**
 
 ```
-0xffffffff80000000  内核虚拟基址（higher-half）
-0xffffffff80f00000  内核栈顶
-0xffffffff90000000  内核堆
-0x00010000000000    ring 3 程序加载基址（1 TiB）
-0x00010100000000    ring 3 用户栈顶（32 页）
+0xffffffff80000000  kernel virtual base (higher half)
+0xffffffff80f00000  kernel stack top
+0xffffffff90000000  kernel heap
+0x00010000000000    ring 3 program load base (1 TiB)
+0x00010100000000    ring 3 user stack top (32 pages)
 ```
 
-**系统调用 ABI**：`int 0x80`，`rax` = 调用号，`rdi/rsi/rdx/r10` = 参数；用户指针按进程地址空间逐页校验。
+**Syscall ABI**: `int 0x80`, `rax` = call number, `rdi/rsi/rdx/r10` = arguments; user pointers are validated page by page against the process address space.
 
-| # | 调用 | # | 调用 |
+| # | Call | # | Call |
 | :---: | --- | :---: | --- |
 | 0 | `exit` | 1 | `write` |
 | 2 | `getpid` | 3 | `open` |
 | 4 | `read` | 5 | `close` |
 | 6 | `uptime` | 7 | `spawn` |
-| 8 | `wait` | 9–14 | 命名端口 `listen/connect/accept/send/recv/close` |
-| 15–18 | 共享内存 `create/map/unmap/close` | 19 | `fb_map` |
+| 8 | `wait` | 9–14 | named port `listen/connect/accept/send/recv/close` |
+| 15–18 | shared memory `create/map/unmap/close` | 19 | `fb_map` |
 | 20 | `mouse` | 21 | `key` |
 | 22 | `sleep` | 23 | `cpus` |
 | 24 | `rtc` | 25 | `read_path` |
@@ -195,7 +196,7 @@
 | 31 | `install` | 32 | `write_file` |
 | 33 | `unlink` | 34 | `data_volume` |
 | 35 | `dev_alloc_page` | 36 | `boot_font` |
-| 37 | `spawn_arg` | 38–42 | 块 I/O `blk_count/info/read/write/flush` |
+| 37 | `spawn_arg` | 38–42 | block I/O `blk_count/info/read/write/flush` |
 | 43 | `socket` | 44 | `bind` |
 | 45 | `listen` | 46 | `accept` |
 | 47 | `connect` | 48 | `sendmsg` |
@@ -205,54 +206,58 @@
 | 55 | `munmap` | 56 | `fcntl` |
 | 57 | `socketpair` | 58 | `boot_wallpaper` |
 | 59 | `memfd_phys` | 60 | `map_phys` |
+| 61 | `eventfd` | 62 | `timerfd_create` |
+| 63 | `timerfd_settime` | 64 | `timerfd_gettime` |
+| 65 | `epoll_create1` | 66 | `epoll_ctl` |
+| 67 | `epoll_wait` | | |
 
-完整定义在 `kernel/proc/syscall.c` 与 `user/userlib.h`，两处必须同步。59/60 只授予内核启动的 `/bin/display`（`display_cap`），用户进程无法读取扫描页物理地址或映射设备 BAR。
-
----
-
-## 🚀 引导流程
-
-**UEFI 路径**
-
-1. 固件加载 `EFI/BOOT/BOOTX64.EFI`（**ZhaoxuBootMgr**，C + `lld-link` 生成的 PE32+ 应用）。
-2. 引导管理器加载 `OSLDRX64.ELF`，由它取得 GOP 帧缓冲、ACPI RSDP 与 UEFI 内存映射。
-3. 从光盘根 `install/KERNEL.ELF`（ISO）或已安装 ext4 根下的 `KERNEL.ELF` 读入内核，复制到 4 GiB 以下的页对齐物理内存，建立低端恒等映射与 higher-half 页表。
-4. `ExitBootServices` → 切换 CR3 → 跳转 `0xffffffff80000000`。
-
-**Legacy BIOS 路径**
-
-1. SeaBIOS 从 El Torito（或安装盘 MBR）加载 512 字节 stage 1。
-2. stage 1 用 INT 13h 读 stage 2（ISO 上 stage 2 已驻留在引导镜像内，直接远跳 `0x8000`）。
-3. stage 2 选择 32bpp VBE LFB、收集 E820、扫描 RSDP，用 EDD LBA48 读入内核。
-4. 建立页表、清零 16 MiB 内核窗口、写 `boot_info`，进入长模式。
-
-**内核公共路径**
-
-5. GDT/IDT/PIC → PMM/VMM/堆 → CPUID/ACPI/RTC → VFS → 字体；块设备由 Ring3 驱动服务提供。
-6. 挂载 initramfs（`/`）与数据卷（`/mnt`）：FAT32 卷标 `ZHAOXUDATA`；安装后的 ext4 根由 `/bin/ext4fs` 服务经 VFS 转发。
-7. 自动以 ring 3 运行 `/bin/init`；有 GOP 帧缓冲时启动 **Aqua Desktop Environment**，无帧缓冲时进入 **8sh**。
+The full definitions live in `kernel/proc/syscall.c` and `user/userlib.h`, and the two must stay in sync. 59/60 are granted only to the kernel-started `/bin/display` (`display_cap`); user processes cannot read the physical address of a scanout page or map a device BAR.
 
 ---
 
-## 💻 8sh 命令
+## 🚀 Boot flow
+
+**UEFI path**
+
+1. Firmware loads `EFI/BOOT/BOOTX64.EFI` (**ZhaoxuBootMgr**, a PE32+ application built from C with `lld-link`).
+2. The boot manager loads `OSLDRX64.ELF`, which fetches the GOP framebuffer, the ACPI RSDP, and the UEFI memory map.
+3. The kernel is read from `install/KERNEL.ELF` at the disc root (ISO) or `KERNEL.ELF` under an installed ext4 root, copied into page-aligned physical memory below 4 GiB, and low identity mappings plus higher-half page tables are built.
+4. `ExitBootServices` → switch CR3 → jump to `0xffffffff80000000`.
+
+**Legacy BIOS path**
+
+1. SeaBIOS loads the 512-byte stage 1 from El Torito (or the MBR of an install disk).
+2. Stage 1 reads stage 2 with INT 13h (on the ISO, stage 2 already sits inside the boot image, so it far jumps to `0x8000` directly).
+3. Stage 2 picks a 32bpp VBE LFB, collects E820, scans for the RSDP, and reads the kernel with EDD LBA48.
+4. Page tables are built, the 16 MiB kernel window is zeroed, `boot_info` is written, and the CPU enters long mode.
+
+**Common kernel path**
+
+5. GDT/IDT/PIC → PMM/VMM/heap → CPUID/ACPI/RTC → VFS → fonts; block devices come from Ring3 driver services.
+6. Mount the initramfs (`/`) and the data volume (`/mnt`): FAT32 volume label `ZHAOXUDATA`; after installation the ext4 root is forwarded through the VFS to the `/bin/ext4fs` service.
+7. `/bin/init` runs automatically in ring 3; with a GOP framebuffer the system starts **Aqua Desktop Environment**, without one it enters **8sh**.
+
+---
+
+## 💻 8sh commands
 
 <table>
-<tr><th>命令</th><th>说明</th><th>命令</th><th>说明</th></tr>
-<tr><td><code>help</code></td><td>命令列表</td><td><code>neofetch</code></td><td>系统摘要</td></tr>
-<tr><td><code>version</code></td><td>OS 与内核版本</td><td><code>uname</code></td><td>系统标识</td></tr>
-<tr><td><code>echo</code></td><td>输出文本</td><td><code>uptime</code></td><td>运行时间</td></tr>
-<tr><td><code>ls [path]</code></td><td>列目录</td><td><code>cat &lt;path&gt;</code></td><td>输出文件内容</td></tr>
-<tr><td><code>write &lt;path&gt; &lt;text&gt;</code></td><td>创建/覆盖 /mnt 文件</td><td><code>rm &lt;path&gt;</code></td><td>删除 /mnt 文件</td></tr>
-<tr><td><code>run &lt;path&gt;</code></td><td>以 ring 3 运行 .zxe / ELF64</td><td><code>cpus</code></td><td>在线 CPU 数</td></tr>
-<tr><td><code>pid</code></td><td>8sh 进程号</td><td><code>disks</code></td><td>磁盘与安装角色</td></tr>
-<tr><td><code>install</code></td><td>安装到空白目标盘（MBR/GPT）</td><td><code>exit</code></td><td>退出 shell</td></tr>
+<tr><th>Command</th><th>Description</th><th>Command</th><th>Description</th></tr>
+<tr><td><code>help</code></td><td>Command list</td><td><code>neofetch</code></td><td>System summary</td></tr>
+<tr><td><code>version</code></td><td>OS and kernel versions</td><td><code>uname</code></td><td>System identity</td></tr>
+<tr><td><code>echo</code></td><td>Print text</td><td><code>uptime</code></td><td>Running time</td></tr>
+<tr><td><code>ls [path]</code></td><td>List a directory</td><td><code>cat &lt;path&gt;</code></td><td>Print file contents</td></tr>
+<tr><td><code>write &lt;path&gt; &lt;text&gt;</code></td><td>Create/overwrite an /mnt file</td><td><code>rm &lt;path&gt;</code></td><td>Delete an /mnt file</td></tr>
+<tr><td><code>run &lt;path&gt;</code></td><td>Run a .zxe / ELF64 in ring 3</td><td><code>cpus</code></td><td>Online CPU count</td></tr>
+<tr><td><code>pid</code></td><td>8sh process ID</td><td><code>disks</code></td><td>Disks and install roles</td></tr>
+<tr><td><code>install</code></td><td>Install to a blank target disk (MBR/GPT)</td><td><code>exit</code></td><td>Leave the shell</td></tr>
 </table>
 
-行编辑支持退格与 `Ctrl+C` 取消当前行。
+Line editing supports backspace and `Ctrl+C` to cancel the current line.
 
 ---
 
-## 🧬 可执行格式：ZXE v1
+## 🧬 Executable format: ZXE v1
 
 ```text
 zhaoxu> run /data/HELLO.ZXE
@@ -260,116 +265,116 @@ hello from ring 3
 [zxe] exit code 7
 ```
 
-- 头部 32 字节 + 段表 40 字节 + 原始数据；段权限强制 W^X（CODE=RX、RODATA=R、DATA/ZERO=RW）
-- 加载基址在 `[0x10000000000, +1 GiB)` 内按 64 KiB 对齐随机选择（ASLR，最多尝试 64 次）
-- 依赖按简单文件名从 `/lib` 加载配套库；`tools/zxe-fixture-lib.rb` 可生成测试共享库
-- `tools/zxe-pack.rb` 把 ELF64 转成 `.zxe`，`tools/zxe-check.rb` 校验结构
-- 入口是 `int user_main(long *stack)`；用户栈固定在 `0x10100000000`（32 页）
-- 旧式 ELF64 兼容路径保留，加载器按魔数自动分发
+- 32-byte header + 40-byte segment table + raw data; segment permissions enforce W^X (CODE=RX, RODATA=R, DATA/ZERO=RW)
+- The load base is chosen randomly, 64 KiB-aligned, inside `[0x10000000000, +1 GiB)` (ASLR, up to 64 attempts)
+- Dependencies load companion libraries from `/lib` by plain filename; `tools/zxe-fixture-lib.rb` generates test shared libraries
+- `tools/zxe-pack.rb` converts ELF64 into `.zxe`; `tools/zxe-check.rb` validates the structure
+- The entry point is `int user_main(long *stack)`; the user stack is fixed at `0x10100000000` (32 pages)
+- The legacy ELF64 compatibility path remains, and the loader dispatches on the magic number
 
 ---
 
-## 📦 构建与运行
+## 📦 Build and run
 
-构建必须支持四种宿主：**原生 Linux、原生 macOS、原生 Windows（MSYS2/MinGW）与 WSL2**。**构建系统是 Makefile**；Ruby 只负责辅助脚本（ELF→ZXE、版本同步、ISO 元数据、冒烟/截图）和可选的宿主探测。Windows 首选 WSL2，在其内部直接 `make`。
+The build must support four hosts: **native Linux, native macOS, native Windows (MSYS2/MinGW), and WSL2**. **The build system is the Makefile**; Ruby handles only auxiliary scripts (ELF→ZXE, version sync, ISO metadata, smoke tests/screenshots) and optional host probing. On Windows, prefer WSL2 and run `make` inside it.
 
 ```bash
 cd src
-make -j4                         # 构建全部（Linux/macOS/WSL）
-make iso                         # 生成 out/zhaoxu_{os_version}_installer.iso（UEFI + BIOS）
-make run-iso                     # UEFI 光盘启动（不挂数据盘）
-make host-test                   # 宿主检测单元测试
-ruby tools/build.rb --check      # 辅助：工具矩阵与安装提示
+make -j4                         # build everything (Linux/macOS/WSL)
+make iso                         # produce out/zhaoxu_{os_version}_installer.iso (UEFI + BIOS)
+make run-iso                     # UEFI CD boot (no data disk attached)
+make host-test                   # host-detection unit test
+ruby tools/build.rb --check      # auxiliary: tool matrix and install hints
 ```
 
 ```powershell
-# Windows（PowerShell 7+）：默认转发到 WSL2 执行 make；-HostMode native 才走原生 MSYS2
+# Windows (PowerShell 7+): forwards to WSL2 and runs make there by default; native MSYS2 only with -HostMode native
 ./src/build.ps1                  # WSL2 make all
-./src/build.ps1 -Check           # 工具矩阵（Ruby 辅助探测）
-./src/run.ps1 -Display gtk       # WSL2 QEMU 图形窗口
+./src/build.ps1 -Check           # tool matrix (Ruby-assisted probing)
+./src/run.ps1 -Display gtk       # WSL2 QEMU graphical window
 ```
 
-真机与虚拟机的安装步骤见 [docs/INSTALL.md](docs/INSTALL.md)（[Word 版](docs/INSTALL.docx)）。
+For installation on real hardware and in virtual machines, see [docs/INSTALL.md](docs/INSTALL.md) ([Word version](docs/INSTALL.docx)).
 
-**依赖**：逐项检查用 `ruby tools/build.rb --check`。Linux/WSL 需要 `gcc`、`g++`、`gcc-14`+`gnat-14`、`ld.lld`、`objcopy`、`clang`、`lld-link`、`qemu-system-x86_64`、OVMF、`mkfs.vfat`、`mtools`、`tar`、`xorriso`、`squashfs-tools`；macOS 用 Homebrew 的 `llvm`、`lld`、`qemu`、`xorriso`、`mtools`、`dosfstools`、`squashfs`；原生 Windows 用 MSYS2 中对应包加 Ruby。Ada 驱动需要 x86_64-elf GNAT（`ADA=` 指定），FASM 需使用宿主版本（`FASM=`，Windows 也可放 `src/tools/fasm.exe`）。
+**Dependencies**: run `ruby tools/build.rb --check` for an item-by-item check. Linux/WSL needs `gcc`, `g++`, `gcc-14`+`gnat-14`, `ld.lld`, `objcopy`, `clang`, `lld-link`, `qemu-system-x86_64`, OVMF, `mkfs.vfat`, `mtools`, `tar`, `xorriso`, and `squashfs-tools`; macOS uses `llvm`, `lld`, `qemu`, `xorriso`, `mtools`, `dosfstools`, and `squashfs` from Homebrew; native Windows uses the matching MSYS2 packages plus Ruby. Ada drivers need an x86_64-elf GNAT (set with `ADA=`), and FASM must be the host build (set with `FASM=`; on Windows you can also drop it at `src/tools/fasm.exe`).
 
-**验证工具**（Ruby）：
+**Verification tools** (Ruby):
 
 ```bash
-ruby tools/smoke.rb <marker> [commands]     # 无头冒烟，逐条发送 8sh 命令
-ruby tools/screenshot.rb 3.0 out/shot.png   # 实机启动并抓取帧缓冲
-SMOKE_BOOT=iso-install ruby tools/smoke.rb ... # ISO + 空白目标盘安装测试
-SMOKE_BOOT=installed ruby tools/smoke.rb ...   # 从安装后的目标盘启动
+ruby tools/smoke.rb <marker> [commands]     # headless smoke test that sends 8sh commands one by one
+ruby tools/screenshot.rb 3.0 out/shot.png   # boot for real and capture the framebuffer
+SMOKE_BOOT=iso-install ruby tools/smoke.rb ... # ISO + blank target disk install test
+SMOKE_BOOT=installed ruby tools/smoke.rb ...   # boot from the installed target disk
 ```
 
 ---
 
-## 🗂️ 目录结构
+## 🗂️ Repository layout
 
 ```
 Zhaoxu OS/
-├── README.md                 当前版本说明（历史见 CHANGELOG.md）
-├── CHANGELOG.md              全部版本记录
+├── README.md                 current release notes (history in CHANGELOG.md)
+├── CHANGELOG.md              full version history
 ├── LICENSE                   Apache License 2.0
-├── THIRD_PARTY_NOTICES.md    第三方代码与字体声明
-├── version.cfg               版本号唯一来源（os_version + kernel_version + build，make version 同步）
-├── docs/                     实机截图与架构/ZAF 设计文档
+├── THIRD_PARTY_NOTICES.md    third-party code and font notices
+├── version.cfg               single source of versions (os_version + kernel_version + build, synced by make version)
+├── docs/                     screenshots and architecture/ZAF design docs
 └── src/
-    ├── Makefile              四宿主构建规则（Linux/macOS/Windows/WSL）
+    ├── Makefile              four-host build rules (Linux/macOS/Windows/WSL)
     ├── boot/
-    │   ├── efi_bootmgr.c     UEFI 引导管理器 ZhaoxuBootMgr（C）
-    │   ├── efi_main.c        UEFI OS 加载器 OSLDRX64（C）
-    │   ├── bios_stage1.asm   MBR 引导扇区（FASM）
-    │   ├── bios_stage2.asm   实模式 → 长模式（FASM）
-    │   └── fonts/            引导用 unicode.pf2（Inter + grub-mkfont）
+    │   ├── efi_bootmgr.c     UEFI boot manager ZhaoxuBootMgr (C)
+    │   ├── efi_main.c        UEFI OS loader OSLDRX64 (C)
+    │   ├── bios_stage1.asm   MBR boot sector (FASM)
+    │   ├── bios_stage2.asm   real mode → long mode (FASM)
+    │   └── fonts/            boot-time unicode.pf2 (Inter + grub-mkfont)
     ├── kernel/
-    │   ├── arch/x86_64/      入口、GDT/TSS、ISR、PIC、ring 3 切换
-    │   ├── int/              IDT 与异常/IRQ/系统调用
-    │   ├── drivers/          计时与 ACPI/AHCI 胶水（硬件驱动在 Ring3）
-    │   ├── fs/               initramfs、FAT32、VFS、安装器
-    │   ├── proc/             ZXE/ELF64 加载与系统调用、fd 表
-    │   ├── ipc/              命名端口、共享内存、AF_UNIX、memfd、poll
-    │   ├── crypto/           AES、SHA-256
-    │   ├── mem/              PMM、VMM、MMU、可增长堆
-    │   ├── lib/              字符串、printf、UTF-8 控制台、inflate
-    │   ├── font/             8x8 点阵 + TrueType glyf 光栅化
-    │   └── include/          内核公共头文件
-    ├── fs/ext4/              OS 无关 ext4 核心（挂载/目录/读写/分配/格式化）
-    ├── zaf/                  Zhaoxu Aqua Framework（Z0 光栅接口）
-    ├── drivers/              Ada/SPARK 驱动（AHCI、IDE、NVMe、SDHCI、USB MSC/xHCI、PS/2、鼠标、串口）
-    ├── apps/                 8sh、Aqua Desktop Environment、display KMS、wayland 核心、ext4fs、Ring3 驱动 C 胶水
-    ├── user/                 ring 3 程序、Wayland/ADE 客户端、wl_demo、用户库
-    ├── initramfs/            ramfs 初始内容、数据盘素材与光标主题
-    ├── tests/                host 测试（ext4、构建宿主检测）
-    ├── tools/                Makefile 构建入口；Ruby 辅助：zxe-pack、iso-*、smoke、screenshot、version
-    └── out/                  构建产物（kernel.elf、ISO）
+    │   ├── arch/x86_64/      entry, GDT/TSS, ISRs, PIC, ring 3 switch
+    │   ├── int/              IDT and exceptions/IRQs/syscalls
+    │   ├── drivers/          timing and ACPI/AHCI glue (hardware drivers live in Ring3)
+    │   ├── fs/               initramfs, FAT32, VFS, installer
+    │   ├── proc/             ZXE/ELF64 loading and syscalls, fd table
+    │   ├── ipc/              named ports, shared memory, AF_UNIX, memfd, eventfd, timerfd, epoll
+    │   ├── crypto/           AES, SHA-256
+    │   ├── mem/              PMM, VMM, MMU, growable heap
+    │   ├── lib/              strings, printf, UTF-8 console, inflate
+    │   ├── font/             8x8 bitmap + TrueType glyf rasterizer
+    │   └── include/          shared kernel headers
+    ├── fs/ext4/              OS-independent ext4 core (mount/directory/read/write/allocate/format)
+    ├── zaf/                  Zhaoxu Aqua Framework (Z0 raster interface)
+    ├── drivers/              Ada/SPARK drivers (AHCI, IDE, NVMe, SDHCI, USB MSC/xHCI, PS/2, mouse, serial)
+    ├── apps/                 8sh, Aqua Desktop Environment, display KMS, wayland core, ext4fs, Ring3 driver C glue
+    ├── user/                 ring 3 programs, Wayland/ADE clients, wl_demo, user library
+    ├── initramfs/            ramfs initial contents, data disk assets and cursor themes
+    ├── tests/                host tests (ext4, build host detection)
+    ├── tools/                Makefile build entry; Ruby helpers: zxe-pack, iso-*, smoke, screenshot, version
+    └── out/                  build products (kernel.elf, ISO)
 ```
 
 ---
 
-## ⚠️ 当前限制
+## ⚠️ Current limits
 
-- 🧵 进程与线程：最多 16 个进程、32 个线程；已有抢占式 SMP 调度和 `spawn/wait`，但无 `fork/exec`、信号、COW 与交换
-- 🧠 内存：无按需分页，用户页在加载时一次性映射；用户栈固定 32 页；内核堆按需增长到可用内存 1/4，memfd 单对象 64 MiB、总量 1/4，PMM 位图上限 64 GiB
-- 💾 文件系统：FAT32/vfat 可写（8.3 短名、单文件 16 MiB）与 ext4 可写（Ring3 服务，单次 RPC 8 MiB）；NTFS/exFAT/ISO 9660/CDFS/UDF/UBIFS 只读；另含 initramfs/rootfs/overlayfs/ramfs/ecryptfs
-- 🔐 权限：无多用户、文件属主与 Unix 权限位，所有用户进程以同一特权运行
-- 🧱 兼容性：无 POSIX/libc 兼容层，系统调用为 ZOS API 1.0；ZXE v1 支持按文件名从 `/lib` 加载依赖，无 ELF 动态链接器；Wayland 是自研 wire/对象核心，stock libwayland 客户端尚不能直接运行
-- 🌐 网络：无 TCP/IP 协议栈；已有 AF_UNIX 流 socket、poll、SCM_RIGHTS、memfd，用于 Wayland 与 M0 传输
-- 🔌 外设：输入为 PS/2 键盘/鼠标与 COM1；存储覆盖 AHCI/IDE/NVMe/SDHCI/USB MSC；有 HDA、e1000、I2C/SPI 与温度传感器；无 USB HID 与完整网络协议栈
-- 🖼️ 图形：M1 virtio-gpu 2D KMS 扫描输出与双缓冲 flip；合成仍为软件光栅；M2/M3 Wayland 核心与 xdg-shell/seat 已通；M4 virgl 上下文与 3D 资源可创建并附着，Windows QEMU 的 virglrenderer 不注册 2D/3D 扫描资源（`SET_SCANOUT` 返回 `0x1203`），GPU 合成与 linux-dmabuf 待续；无多显示器
-- ⚡ 电源：ACPI 仅用于关机/重启，无睡眠与休眠
-- 🛡️ 启动：引导加载器未签名，开启 Secure Boot 的机器需要先关闭 Secure Boot 或自行签名
-- ⏱️ 时间：仅 RTC 本地时间，无 NTP 与时区处理
+- 🧵 Processes and threads: at most 16 processes and 32 threads; preemptive SMP scheduling and `spawn/wait` exist, but there is no `fork/exec`, signals, COW, or swapping
+- 🧠 Memory: no demand paging, user pages are mapped all at once at load time; the user stack is fixed at 32 pages; the kernel heap grows on demand up to 1/4 of available memory, memfd is capped at 64 MiB per object and 1/4 in total, and the PMM bitmap tops out at 64 GiB
+- 💾 File systems: FAT32/vfat is writable (8.3 short names, 16 MiB per file) and ext4 is writable (Ring3 service, 8 MiB per RPC); NTFS/exFAT/ISO 9660/CDFS/UDF/UBIFS are read-only; initramfs/rootfs/overlayfs/ramfs/ecryptfs are also included
+- 🔐 Permissions: no multi-user support, file ownership, or Unix permission bits; all user processes run with the same privileges
+- 🧱 Compatibility: no POSIX/libc compatibility layer, the syscall interface is ZOS API 1.0; ZXE v1 loads dependencies from `/lib` by filename and has no ELF dynamic linker; Wayland is a custom wire/object core, so stock libwayland clients cannot run directly yet, although the kernel now provides eventfd, timerfd, epoll, poll, AF_UNIX, SCM_RIGHTS, and memfd
+- 🌐 Networking: no TCP/IP stack; AF_UNIX stream sockets, poll, eventfd, timerfd, epoll, SCM_RIGHTS, and memfd exist for Wayland and the M0/M5 transport
+- 🔌 Peripherals: input is a PS/2 keyboard/mouse and COM1; storage covers AHCI/IDE/NVMe/SDHCI/USB MSC; HDA, e1000, I2C/SPI, and temperature sensors are present; no USB HID and no full network stack
+- 🖼️ Graphics: M1 virtio-gpu 2D KMS scanout and double-buffered flip; composition is still software rasterization; the M2/M3 Wayland core and xdg-shell/seat work; M4 virgl contexts and 3D resources can be created and attached, but virglrenderer in QEMU on Windows does not register 2D/3D scanout resources (`SET_SCANOUT` returns `0x1203`), so GPU composition and linux-dmabuf remain pending; no multi-monitor
+- ⚡ Power: ACPI is used for shutdown/reboot only; no sleep or hibernate
+- 🛡️ Boot: the boot loader is unsigned, so machines with Secure Boot enabled must turn Secure Boot off first or sign the loader themselves
+- ⏱️ Time: RTC local time only; no NTP or time zone handling
 
 ---
 
-## 📜 许可证
+## 📜 License
 
-本项目采用 [Apache License 2.0](LICENSE)。第三方组件与字体声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+This project is licensed under the [Apache License 2.0](LICENSE). Third-party component and font notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 <div align="center">
 
-**Zhaoxu OS · Yuanshuo** · C / FASM / GAS / Ada / C++ 技术栈
+**Zhaoxu OS · Yuanshuo** · built with C / FASM / GAS / Ada / C++
 
 Copyright © 2026 Nexsteaduser. All Rights Reserved. · admin@nexsteaduser.com
 

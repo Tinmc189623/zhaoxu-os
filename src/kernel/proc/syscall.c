@@ -90,6 +90,13 @@
 #define SYS_BOOT_WALLPAPER  58
 #define SYS_MEMFD_PHYS      59
 #define SYS_MAP_PHYS        60
+#define SYS_EVENTFD         61
+#define SYS_TIMERFD_CREATE  62
+#define SYS_TIMERFD_SETTIME 63
+#define SYS_TIMERFD_GETTIME 64
+#define SYS_EPOLL_CREATE1   65
+#define SYS_EPOLL_CTL       66
+#define SYS_EPOLL_WAIT      67
 
 #define BLK_SECTOR_BYTES 512u
 #define BLK_MAX_SECTORS  8u
@@ -901,6 +908,30 @@ void syscall_dispatch(struct interrupt_frame *frame)
         break;
     case SYS_MAP_PHYS:
         result = syscall_map_phys(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_EVENTFD:
+        result = sys_ipc_eventfd(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_TIMERFD_CREATE:
+        result = sys_ipc_timerfd_create(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_TIMERFD_SETTIME:
+        result = sys_ipc_timerfd_settime(process, frame->rdi, frame->rsi,
+                                         frame->rdx, frame->r10);
+        break;
+    case SYS_TIMERFD_GETTIME:
+        result = sys_ipc_timerfd_gettime(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_EPOLL_CREATE1:
+        result = sys_ipc_epoll_create1(process, frame->rdi);
+        break;
+    case SYS_EPOLL_CTL:
+        result = sys_ipc_epoll_ctl(process, frame->rdi, frame->rsi,
+                                   frame->rdx, frame->r10);
+        break;
+    case SYS_EPOLL_WAIT:
+        result = sys_ipc_epoll_wait(process, frame->rdi, frame->rsi,
+                                    frame->rdx, frame->r10);
         break;
     default:
         result = -1;

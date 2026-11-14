@@ -13,8 +13,11 @@
 #define ZFD_BASE 64
 #define ZFD_MAX 32
 
-#define ZFD_TYPE_SOCKET 1
-#define ZFD_TYPE_MEMFD  2
+#define ZFD_TYPE_SOCKET  1
+#define ZFD_TYPE_MEMFD   2
+#define ZFD_TYPE_EVENTFD 3
+#define ZFD_TYPE_TIMERFD 4
+#define ZFD_TYPE_EPOLL   5
 
 #define ZFD_O_NONBLOCK 0x800u
 

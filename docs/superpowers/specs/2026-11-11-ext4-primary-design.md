@@ -1,111 +1,122 @@
-# ext4 作为主文件系统 —— 设计
+# ext4 as the Primary File System — Design
 
-日期：2026-11-11
-状态：已批准（用户确认方向）
+Date: 2026-11-11
+Status: Approved (user confirmed the direction)
 
-## 1. 背景与目标
+## 1. Background and Goals
 
-安装后的 Zhaoxu OS 需要把 ext4 作为主文件系统，FAT32 只保留兼容用途，同时
-内核不得出现在引导扇区或 ESP（引导盘）里。现有工作区已有一版未提交的实现，
-但存在两个硬伤：
+An installed Zhaoxu OS has to make ext4 its primary file system, keeping FAT32 only for
+compatibility purposes, and the kernel must not appear in the boot sector or the ESP (boot
+volume). The existing working tree already holds an uncommitted implementation, but it has
+two hard defects:
 
-- legacy BIOS 从 ISO 启动时用 EDD 读软盘仿真镜像，SeaBIOS 不支持，启动失败。
-- `make all` 仍把 `KERNEL.ELF` 复制进 `esp/EFI/BOOT/`。
+- When legacy BIOS boots from the ISO it reads a floppy-emulation image through EDD, which
+  SeaBIOS does not support, so booting fails.
+- `make all` still copies `KERNEL.ELF` into `esp/EFI/BOOT/`.
 
-用户选择的目标：
+Targets the user chose:
 
-1. **ext4 完整 Linux 互操作**：能挂载 `mkfs.ext4` 默认参数生成的卷
-   （JBD2 日志、metadata_csum、64bit、flex_bg、htree、extents / 间接块），
-   读写之后 `e2fsck -fn` 干净。
-2. **完整 ext4 驱动放在 Ring3**：新增 `/bin/ext4fs` 服务；内核只保留 VFS
-   转发，不在内核里保留 ext4 实现（不采用双实现）。
-3. FAT32 仅用于 ESP 与老盘兼容。
+1. **Full ext4 Linux interoperability**: able to mount volumes produced by default
+   `mkfs.ext4` parameters (JBD2 journal, metadata_csum, 64bit, flex_bg, htree,
+   extents / indirect blocks), with `e2fsck -fn` clean after reads and writes.
+2. **The full ext4 driver lives in Ring3**: a new `/bin/ext4fs` service; the kernel keeps
+   only VFS forwarding and retains no ext4 implementation in the kernel (no dual
+   implementation).
+3. FAT32 serves only the ESP and legacy disk compatibility.
 
-非目标：加密、casefold、verity、bigalloc、DAX；配额只做“不破坏”处理，
-不实现配额管理。
+Non-goals: encryption, casefold, verity, bigalloc, DAX; quotas are handled only in the
+"do no harm" sense — quota management is not implemented.
 
-## 2. 磁盘布局（安装目标盘）
+## 2. Disk Layout (install target disk)
 
-MBR：
+MBR:
 
 ```
-LBA 0        stage1（512 字节，含分区表）
-LBA 1        stage2（MBR；≤32 KiB）
-LBA 1+S..2047 空隙（清零）
-LBA 2048     ESP（FAT32，64 MiB，卷标 ZHAOXUEFI）
-             仅含 EFI/BOOT/BOOTX64.EFI
-其后          ext4 根分区（卷标 ZHAOXUROOT）
-             含 KERNEL.ELF、KERNEL.BIN、WQY.TTC 与用户数据
+LBA 0        stage1 (512 bytes, incl. partition table)
+LBA 1        stage2 (MBR; ≤32 KiB)
+LBA 1+S..2047 gap (zeroed)
+LBA 2048     ESP (FAT32, 64 MiB, label ZHAOXUEFI)
+             contains only EFI/BOOT/BOOTX64.EFI
+after that   ext4 root partition (label ZHAOXUROOT)
+             contains KERNEL.ELF, KERNEL.BIN, WQY.TTC and user data
 ```
 
-GPT 布局中 stage2 改放 LBA 34（在 LBA1/2 的头与项之后），其余相同；
-末尾另有备份 GPT。
+In the GPT layout stage2 moves to LBA 34 (after the header and entries at LBA1/2); the rest
+is identical, with a backup GPT at the end.
 
-不变量：
+Invariants:
 
-- 内核字节只出现在 ext4 分区内。stage2 参数块里只有 `KERNEL.BIN` 的
-  LBA/字节数/扇区数，512 字节的引导扇区与 stage2 都不含内核。
-- ESP 只有 UEFI 加载器，不再写 `KERNEL.ELF`。
-- `KERNEL.BIN` 必须是单段连续 extent（BIOS stage2 只支持一个块表项）。
-  `ext4fs` 的 `WRITE_CONTIG` 负责满足，安装器校验后回填 stage2。
+- Kernel bytes appear only inside the ext4 partition. The stage2 parameter block holds only
+  the LBA/byte count/sector count of `KERNEL.BIN`; neither the 512-byte boot sector nor
+  stage2 contains the kernel.
+- The ESP holds only the UEFI loader; `KERNEL.ELF` is no longer written into it.
+- `KERNEL.BIN` must be a single contiguous extent (BIOS stage2 supports only one block
+  table entry). `WRITE_CONTIG` in `ext4fs` is responsible for satisfying this; the
+  installer verifies it and then patches the stage2 parameter block.
 
-## 3. 启动流程
+## 3. Boot Flow
 
 ### 3.1 UEFI
 
-- ISO：`BOOTX64.EFI` 用极简 ISO9660 读 `/install/KERNEL.ELF` 与
-  `/install/WQY.TTC`（现有逻辑保留）。
-- 安装盘：`BOOTX64.EFI` 用固件内的最小只读 ext4 读 `/KERNEL.ELF`
-  与 `/WQY.TTC`（现有逻辑保留，补 64bit 组描述符位、忽略 metadata_csum）。
-- 只读实现不校验 csum、不回放日志；安装器保证刚写完的卷是干净的。
+- ISO: `BOOTX64.EFI` reads `/install/KERNEL.ELF` and `/install/WQY.TTC` with a minimal
+  ISO9660 reader (existing logic retained).
+- Installed disk: `BOOTX64.EFI` reads `/KERNEL.ELF` and `/WQY.TTC` with a minimal read-only
+  ext4 implementation inside the firmware (existing logic retained; add the 64bit group
+  descriptor flag and ignore metadata_csum).
+- The read-only implementation does not verify csum and does not replay the journal; the
+  installer guarantees that a freshly written volume is clean.
 
 ### 3.2 legacy BIOS
 
-- 安装盘：stage1（MBR）→ stage2 → 按参数块用 EDD 读 ext4 内的
-  `KERNEL.BIN`。
-- ISO：El Torito 改为 **no-emulation**。`bios.img` 只含 stage1 + stage2，
-  固件把整块镜像装到 0x7C00；stage1 检测“已驻留”标志后直接跳 0x8000。
-  `KERNEL.BIN` 作为普通 ISO9660 文件放在光盘根，构建后由 Ruby 工具
-  （规则 6）解析 El Torito 目录与 ISO9660 目录记录，把它的 LBA 回填进
-  ISO 内的 stage2 参数块。脚本必须校验该文件是单 extent，否则构建失败。
+- Installed disk: stage1 (MBR) → stage2 → reads `KERNEL.BIN` from ext4 by EDD using the
+  parameter block.
+- ISO: El Torito switches to **no-emulation**. `bios.img` contains only stage1 + stage2;
+  the firmware loads the whole image at 0x7C00; stage1 detects the "already resident" flag
+  and jumps straight to 0x8000. `KERNEL.BIN` sits at the disc root as an ordinary ISO9660
+  file, and after the build a Ruby tool (rule 6) parses the El Torito directory and the
+  ISO9660 directory records to patch its LBA into the stage2 parameter block inside the
+  ISO. The script must verify that the file is a single extent, otherwise the build fails.
 
-## 4. 系统架构
+## 4. System Architecture
 
 ```
 Ring3  /bin/ext4fs
-         │ blk_read / blk_write / blk_flush（受信系统调用）
+         │ blk_read / blk_write / blk_flush (trusted syscalls)
          ▼
-Kernel  VFS ── 请求页 + 64 KiB 数据窗 ──► ext4fs
+Kernel  VFS ── request page + 64 KiB data window ──► ext4fs
          │
-         └─ dev_disk_read/write ──► /bin/drivers（AHCI，Ring3）
+         └─ dev_disk_read/write ──► /bin/drivers (AHCI, Ring3)
 
-Bootloader  UEFI 自带只读 ext4；BIOS 用 LBA 块表
-Installer   内核做 MBR/GPT/ESP/stage2；ext4 分区交给 ext4fs
+Bootloader  UEFI carries its own read-only ext4; BIOS uses an LBA block table
+Installer   Kernel does MBR/GPT/ESP/stage2; the ext4 partition is handed to ext4fs
 ```
 
-- `src/fs/ext4/` 放与 OS 无关的核心：`ext4_io.h` 定义
-  `read/write/flush/alloc/free/log` 回调。同一份源码用于：
-  - `/bin/ext4fs`（Ring3）
-  - Linux 主机测试夹具（文件映射块设备）
-- 内核不再编译 ext4 源码；`install.c` 不再包含 `ext4.h`。
-- 内核给 `/bin/ext4fs` 与 `/bin/drivers` 同等的恒等映射（按进程名判定），
-  以便访问内核分配的控制页与数据窗。
-- 启动顺序：`dev_start()` → `fs_service_start()` 等 READY →
-  `vfs_mount_data()` → Aqua Desktop Environment。无卷时保持现有行为（`/mnt` 回退到
-  initramfs 的 `/data`）。
-- FAT32 读写实现暂时留在内核，作为老盘兼容回退；ESP 格式化仍在内核。
-  后续可独立迁移，不阻塞本设计。
+- `src/fs/ext4/` holds the OS-independent core: `ext4_io.h` defines the
+  `read/write/flush/alloc/free/log` callbacks. The same source is used for:
+  - `/bin/ext4fs` (Ring3)
+  - the Linux host test fixture (file-mapped block device)
+- The kernel no longer compiles ext4 sources; `install.c` no longer includes `ext4.h`.
+- The kernel gives `/bin/ext4fs` the same identity mapping as `/bin/drivers` (decided by
+  process name) so the service can reach the control page and data window the kernel
+  allocated.
+- Boot order: `dev_start()` → `fs_service_start()` waits for READY →
+  `vfs_mount_data()` → Aqua Desktop Environment. With no volume the existing behaviour is
+  kept (`/mnt` falls back to the initramfs `/data`).
+- The FAT32 read/write implementation stays in the kernel for now as the legacy-disk
+  compatibility fallback; ESP formatting also stays in the kernel. It can be migrated
+  separately later and does not block this design.
 
-## 5. 内核 ↔ ext4fs 协议
+## 5. Kernel ↔ ext4fs Protocol
 
-内核分配一张控制页与 16 张数据页（64 KiB），物理地址经 `spawn_arg`
-传给服务。双方通过恒等映射访问，state 机：
+The kernel allocates one control page and 16 data pages (64 KiB); the physical addresses
+are passed to the service through `spawn_arg`. Both sides access them through the identity
+mapping; the state machine is:
 
 ```
 IDLE → REQUEST → DONE → IDLE
 ```
 
-控制页：
+Control page:
 
 ```c
 struct fs_rpc {
@@ -114,211 +125,227 @@ struct fs_rpc {
     u32 op;
     i32 status;
     u32 flags;
-    u32 length;              /* 数据窗内有效字节数 */
-    u64 offset;              /* 文件内偏移 */
-    u64 value0, value1;      /* FORMAT: base/sectors；CONTIG 回填 LBA/块数 */
+    u32 length;              /* valid bytes in the data window */
+    u64 offset;              /* offset within the file */
+    u64 value0, value1;      /* FORMAT: base/sectors; CONTIG returns LBA/block count */
     char path[256];
     char label[17];
 };
 ```
 
-操作：
+Operations:
 
-| op | 语义 |
+| op | semantics |
 |---|---|
-| MOUNT | 探测所有磁盘分区，按卷标优先挂 `ZHAOXUROOT`；回填卷信息 |
-| STAT | 路径 → is_dir/size |
-| LIST | 路径 → 序列化条目（类型+大小+名字），分块返回 |
-| READ | 路径+offset+len → 数据窗 |
-| WRITE | 路径+offset+len ← 数据窗（截断/追加由 flags 指定） |
-| UNLINK | 删除文件 |
-| SYNC | flush 元数据与块设备 |
-| FORMAT | disk/base/sectors/label → 新建 ext4 卷 |
-| WRITE_CONTIG | 写单个连续文件，回填起始 LBA 与块数 |
+| MOUNT | probe every disk partition, prefer the volume labelled `ZHAOXUROOT`; return volume info |
+| STAT | path → is_dir/size |
+| LIST | path → serialized entries (type+size+name), returned in chunks |
+| READ | path+offset+len → data window |
+| WRITE | path+offset+len ← data window (truncate/append chosen by flags) |
+| UNLINK | delete a file |
+| SYNC | flush metadata and the block device |
+| FORMAT | disk/base/sectors/label → create a new ext4 volume |
+| WRITE_CONTIG | write one contiguous file, returning its start LBA and block count |
 
-内核每次只允许一个未完成请求（VFS 锁），超时 5 s 后把卷标记为 IO 错误。
-控制页里的路径与数据窗分离，避免把 300 字节路径塞进 64 字节 IPC 消息。
+The kernel allows only one outstanding request at a time (VFS lock); after a 5 s timeout it
+marks the volume as having an I/O error. The path lives in the control page, separate from
+the data window, which avoids squeezing a 300-byte path into a 64-byte IPC message.
 
-## 6. 受信块 I/O 系统调用
+## 6. Trusted Block I/O Syscalls
 
-新增系统调用（编号接在 37 之后）：
+New syscalls (numbers continue after 37):
 
 ```
-38 = blk_count()                       -> 磁盘数
+38 = blk_count()                       -> disk count
 39 = blk_info(disk, *sectors, *port)   -> 0/-1
-40 = blk_read(disk, lba, count, buf)   -> 扇区数/-1
-41 = blk_write(disk, lba, count, buf)  -> 扇区数/-1
+40 = blk_read(disk, lba, count, buf)   -> sector count/-1
+41 = blk_write(disk, lba, count, buf)  -> sector count/-1
 42 = blk_flush(disk)                   -> 0/-1
 ```
 
-- 仅名字为 `/bin/ext4fs` 的进程拥有 `CAP_BLOCK`；其他进程调用返回 -1。
-- 内核校验用户缓冲（`user_range_ok`），内部复用 `dev_disk_read/write`，
-  受 `g_dev_busy` 串行化，避免两个 Ring3 进程并发写驱动共享页。
-- 单次最多 8 个扇区（4 KiB），与现有 dev RPC 上限一致。
+- Only the process named `/bin/ext4fs` holds `CAP_BLOCK`; calls from any other process
+  return -1.
+- The kernel validates the user buffer (`user_range_ok`) and reuses `dev_disk_read/write`
+  internally, serialized by `g_dev_busy`, so two Ring3 processes cannot concurrently write
+  the driver's shared page.
+- At most 8 sectors (4 KiB) per call, matching the existing dev RPC limit.
 
-## 7. ext4 功能矩阵
+## 7. ext4 Feature Matrix
 
-### 7.1 挂载与特性
+### 7.1 Mounting and features
 
-- 支持：`extents`、`filetype`、`64bit`、`flex_bg`、`meta_bg`、
-  `sparse_super`/`sparse_super2`、`metadata_csum`、`uninit_bg`、
-  `extra_isize`、`large_file`、`huge_file`、`dir_index`、`journal`、
-  `orphan_file`、`inline_data`（只读）。
-- 拒绝（置只读并报错）：`bigalloc`、`encrypt`、`casefold`、`verity`。
-- 日志：挂载时若 `s_errors`/日志需要恢复则回放 JBD2（v2/v3 校验和）；
-  写路径按 metadata 日志提交事务。
-- 孤儿：挂载时清理 `s_last_orphan` 与 `orphan_file`。
+- Supported: `extents`, `filetype`, `64bit`, `flex_bg`, `meta_bg`,
+  `sparse_super`/`sparse_super2`, `metadata_csum`, `uninit_bg`,
+  `extra_isize`, `large_file`, `huge_file`, `dir_index`, `journal`,
+  `orphan_file`, `inline_data` (read-only).
+- Rejected (mount read-only and report an error): `bigalloc`, `encrypt`, `casefold`,
+  `verity`.
+- Journal: on mount, replay JBD2 if `s_errors`/the journal requires recovery (v2/v3
+  checksums); the write path commits transactions as metadata journaling.
+- Orphans: clear `s_last_orphan` and `orphan_file` on mount.
 
-### 7.2 读
+### 7.2 Reads
 
-- 文件数据：内联 extent、extent 树（含 uninitialized 与空洞）、
-  间接块映射（ext2/3）、inline_data。
-- 目录：线性目录 + htree（逐叶块线性扫描；不依赖 dx 索引）。
-- 元数据：校验 csum（不一致时该对象按损坏处理，不崩溃）。
+- File data: inline extents, the extent tree (including uninitialized extents and holes),
+  indirect block mapping (ext2/3), inline_data.
+- Directories: linear directories + htree (linear scan per leaf block; no dependence on the
+  dx index).
+- Metadata: verify csum (on mismatch the object is treated as corrupt rather than crashing).
 
-### 7.3 写
+### 7.3 Writes
 
-- 分配器：组描述符 32/64、flex_bg 元数据组、位图更新与 csum。
-- 文件：extent 树插入/分裂、间接块分配、truncate、空洞。
-- 目录：线性插入/删除/分裂；对 htree 目录先做叶块内插入，空间不足时
-  分裂并更新 dx 索引。
-- 元数据：superblock、GDT、位图、inode、extent 块、目录块、日志的
-  csum 全链路更新。
-- 日志：JBD2 描述符/提交块、revoke、v3 校验和；先写日志再写原位。
-- `fsync`/`SYNC` 映射为日志提交 + `blk_flush`。
+- Allocator: 32/64 group descriptors, flex_bg metadata groups, bitmap updates and csum.
+- Files: extent tree insert/split, indirect block allocation, truncate, holes.
+- Directories: linear insert/delete/split; for htree directories, insert within the leaf
+  block first, and when space runs out split and update the dx index.
+- Metadata: full-chain csum updates for superblock, GDT, bitmaps, inodes, extent blocks,
+  directory blocks and the journal.
+- Journal: JBD2 descriptor/commit blocks, revoke, v3 checksums; write the journal before
+  writing in place.
+- `fsync`/`SYNC` map to journal commit + `blk_flush`.
 
-### 7.4 明确不做
+### 7.4 Explicitly Out of Scope
 
-配额管理、ACL/xattr 写入、项目配额、加密、压缩、快照、`mmp`。
+Quota management, ACL/xattr writes, project quotas, encryption, compression, snapshots,
+`mmp`.
 
-## 8. 安装器流程
+## 8. Installer Flow
 
-1. 扫描目标盘，校验空白或既有 Zhaoxu 布局（现有逻辑）。
-2. 计算布局：ESP 64 MiB，其余给 ext4 根。
-3. 通过 RPC `FORMAT` 建 ext4（卷标 `ZHAOXUROOT`）。
-4. `READ` 本机 `boot_info` 字体、运行中内核镜像：
-   - `WRITE` `/KERNEL.ELF`（UEFI 用）
-   - `WRITE_CONTIG` `/KERNEL.BIN`（BIOS 用，回填 LBA/块数）
+1. Scan the target disk and verify it is blank or already carries a Zhaoxu layout (existing
+   logic).
+2. Compute the layout: 64 MiB ESP, the remainder for the ext4 root.
+3. Create ext4 through the `FORMAT` RPC (label `ZHAOXUROOT`).
+4. `READ` this machine's `boot_info` font and running kernel image:
+   - `WRITE` `/KERNEL.ELF` (for UEFI)
+   - `WRITE_CONTIG` `/KERNEL.BIN` (for BIOS, returning LBA/block count)
    - `WRITE` `/WQY.TTC`
-5. 内核写 MBR/GPT、stage2（回填参数块）、ESP（仅 `BOOTX64.EFI`）、
-   空隙清零、`blk_flush`。
-6. 验证：ESP 是 FAT32、ext4 魔数、stage1 与参数块一致。
+5. The kernel writes MBR/GPT, stage2 (patching the parameter block), the ESP (only
+   `BOOTX64.EFI`), zeroes the gap and calls `blk_flush`.
+6. Verify: the ESP is FAT32, the ext4 magic is present, stage1 and the parameter block agree.
 
-`ext4fs` 需要字体时可直接调用 `boot_font` 系统调用；内核也可以按旧路径
-把字体随 `WRITE` 发送，二者等价。
+When `ext4fs` needs the font it can call the `boot_font` syscall directly; the kernel can
+also send the font along with `WRITE` as before. The two are equivalent.
 
-## 9. VFS 行为
+## 9. VFS Behaviour
 
-- `/` 仍是 initramfs；`/mnt` 由 `ext4fs` 提供。
-- `vfs_mount_data()`：先请求 `ext4fs` 的 `MOUNT`；失败时回退内核 FAT32，
-  再失败则回退 `/data` 镜像。
-- `open/read/close` 改为流式：fd 只保存路径、文件大小与偏移；`read`
-  按 64 KiB 数据窗分批向服务 `READ`，直接拷入调用者的用户缓冲，
-  不再把整个文件读进内核堆，因此不再受 16 MiB 上限约束
-  （`vfs_read_all` 保留给确实需要整块的旧路径，上限维持现状）。
-- `write_file`/`unlink` 通过 `WRITE`/`UNLINK`。
-- `readdir` 通过 `LIST`，内核把序列化条目还原成现有回调。
-- 内核 fs 系统调用在服务未就绪时返回 -1，不再 panic。
+- `/` is still initramfs; `/mnt` is served by `ext4fs`.
+- `vfs_mount_data()`: ask `ext4fs` for `MOUNT` first; on failure fall back to the kernel
+  FAT32 implementation, and on failure again fall back to the `/data` image.
+- `open/read/close` become streaming: an fd stores only the path, file size and offset;
+  `read` issues chunked `READ` requests over the 64 KiB data window and copies straight
+  into the caller's user buffer instead of pulling the whole file into the kernel heap, so
+  the 16 MiB limit no longer applies (`vfs_read_all` stays for old paths that genuinely
+  need the whole block, and its limit is unchanged).
+- `write_file`/`unlink` go through `WRITE`/`UNLINK`.
+- `readdir` goes through `LIST`; the kernel turns serialized entries back into the existing
+  callback.
+- Kernel fs syscalls return -1 while the service is not ready instead of panicking.
 
-## 10. 构建与打包
+## 10. Build and Packaging
 
-- `src/fs/ext4/`：核心源码 + `ext4_io.h`；不进内核对象列表。
-- 新增 `src/apps/ext4fs/main.c`：服务循环 + 块 I/O 回调；打包进
-  initramfs 的 `/bin/ext4fs`，Makefile 的 `RAMFS_FILES` 同步。
-- `src/tests/ext4/`：主机夹具；`tools/ext4-test.rb` 驱动（规则 6）。
-- 内核 `C_SRCS` 删除 `kernel/fs/ext4.c`、`kernel/fs/ext4_write.c`。
-- `make all` 删除 `esp/EFI/BOOT/KERNEL.ELF` 依赖与拷贝；
-  `clean` 同步删除。
-- ISO：`bios.img` 改为 no-emulation 的 stage1+stage2 镜像；
-  `install/KERNEL.BIN` 为普通文件；`tools/iso-bios.rb` 构建后回填 LBA。
-- `tools/bios-img.rb` 不再把内核拼进引导镜像，只输出 stage1+stage2。
+- `src/fs/ext4/`: core sources + `ext4_io.h`; not part of the kernel object list.
+- New `src/apps/ext4fs/main.c`: service loop + block I/O callbacks; packaged into the
+  initramfs as `/bin/ext4fs`, with `RAMFS_FILES` in the Makefile updated to match.
+- `src/tests/ext4/`: host fixture; driven by `tools/ext4-test.rb` (rule 6).
+- Kernel `C_SRCS` drops `kernel/fs/ext4.c` and `kernel/fs/ext4_write.c`.
+- `make all` drops the `esp/EFI/BOOT/KERNEL.ELF` dependency and copy; `clean` drops it too.
+- ISO: `bios.img` becomes a no-emulation stage1+stage2 image; `install/KERNEL.BIN` is an
+  ordinary file; `tools/iso-bios.rb` patches the LBA after the build.
+- `tools/bios-img.rb` no longer stitches the kernel into the boot image and outputs only
+  stage1+stage2.
 
-## 11. 测试策略
+## 11. Test Strategy
 
-### 11.1 主机夹具（先于 QEMU）
+### 11.1 Host fixture (before QEMU)
 
-- Linux 下编译 ext4 核心，块设备用文件映射。
-- `tools/ext4-test.rb` 用矩阵生成镜像：
-  - 文件系统：ext2、ext3、ext4
-  - 块大小：1 KiB、2 KiB、4 KiB
-  - 选项：`-O 64bit`、`-O metadata_csum`、`-O flex_bg`、
-    `-O meta_bg`、`-O ^has_journal`、`-O dir_index`
-- 每轮执行：读全部文件 → 写新文件/覆盖/删除/建目录 → `sync` →
-  `e2fsck -fn`，并断言 `debugfs` 可见内容一致。
-- 故障注入：在日志提交的每个阶段丢弃后续写，重新挂载后必须能回放或
-  回到干净状态。
-- 开启 ASAN/UBSAN。
+- Compile the ext4 core under Linux with a file-mapped block device.
+- `tools/ext4-test.rb` generates images from a matrix:
+  - file systems: ext2, ext3, ext4
+  - block sizes: 1 KiB, 2 KiB, 4 KiB
+  - options: `-O 64bit`, `-O metadata_csum`, `-O flex_bg`,
+    `-O meta_bg`, `-O ^has_journal`, `-O dir_index`
+- Each round: read every file → write new files/overwrite/delete/mkdir → `sync` →
+  `e2fsck -fn`, and assert that the content visible through `debugfs` matches.
+- Fault injection: drop subsequent writes at each stage of journal commit; after remount
+  the volume must either replay or come back clean.
+- Build with ASAN/UBSAN.
 
-### 11.2 QEMU 回归
+### 11.2 QEMU regression
 
-1. `make -j4`；`nm out/kernel.elf | grep ext4_` 必须为空；无未定义符号。
-2. ISO：UEFI 与 BIOS 均能进桌面，日志显示内核来自 `/install`。
-3. 安装：`make run-install`（GPT）与 `make run-install-bios`（MBR），
-   或 headless 8sh `install mbr|gpt`。
-4. 安装后仅用目标盘启动：UEFI 与 BIOS 都显示
-   `Kernel: /KERNEL.ELF from ext4.` / stage2 参数读取，
-   `[ext4fs] mounted "ZHAOXUROOT"`，中文正常。
-5. 用 `mtools` 列出 ESP，断言只有 `EFI/BOOT/BOOTX64.EFI`；
-   用 `dd` 读取 LBA0/1，断言不含内核 ELF 魔数。
-6. 在 8sh 中写/读/删 `/mnt` 文件；重启后内容仍在。
-7. 把目标盘换成 `mkfs.ext4` 默认参数预格式化的镜像，验证只读挂载。
+1. `make -j4`; `nm out/kernel.elf | grep ext4_` must be empty; no undefined symbols.
+2. ISO: both UEFI and BIOS reach the desktop, and the log shows the kernel coming from
+   `/install`.
+3. Install: `make run-install` (GPT) and `make run-install-bios` (MBR), or headless 8sh
+   `install mbr|gpt`.
+4. Boot afterwards from the target disk alone: both UEFI and BIOS show
+   `Kernel: /KERNEL.ELF from ext4.` / the stage2 parameter read, plus
+   `[ext4fs] mounted "ZHAOXUROOT"`, and Chinese text renders correctly.
+5. List the ESP with `mtools` and assert it contains only `EFI/BOOT/BOOTX64.EFI`; read
+   LBA0/1 with `dd` and assert no kernel ELF magic is present.
+6. In 8sh, write/read/delete a file under `/mnt`; the content is still there after reboot.
+7. Swap the target disk for an image pre-formatted with default `mkfs.ext4` parameters and
+   verify the read-only mount.
 
-## 12. 里程碑与验收
+## 12. Milestones and Acceptance
 
-### M0 服务骨架与去内核化
+### M0 Service skeleton and de-kernelisation
 
-- 抽取 `src/fs/ext4/` 核心，保留现有功能；主机夹具可跑通当前卷。
-- 新增 `/bin/ext4fs`、RPC、VFS 转发、块 I/O 系统调用。
-- 安装器改走 RPC；删除内核 ext4 源码与 ESP 内核拷贝。
-- 修复 BIOS ISO 启动（El Torito no-emulation + LBA 回填）。
-- 验收：UEFI/BIOS 安装并重启进桌面；ESP 只有加载器；`nm` 无 ext4。
+- Extract the `src/fs/ext4/` core, keeping current functionality; the host fixture can run
+  against the current volume.
+- Add `/bin/ext4fs`, the RPC, VFS forwarding and the block I/O syscalls.
+- Switch the installer to the RPC; delete the kernel ext4 sources and the ESP kernel copy.
+- Fix BIOS ISO booting (El Torito no-emulation + LBA patching).
+- Acceptance: UEFI/BIOS install and reboot to the desktop; the ESP holds only the loader;
+  `nm` shows no ext4.
 
-### M1 只读互操作
+### M1 Read-only interoperability
 
-- JBD2 回放、64bit、flex_bg/meta_bg、间接块、extent 树、
-  csum 校验、htree、inline_data、稀疏文件。
-- 验收：主机矩阵全部可读，`e2fsck -fn` 无错。
+- JBD2 replay, 64bit, flex_bg/meta_bg, indirect blocks, extent tree,
+  csum verification, htree, inline_data, sparse files.
+- Acceptance: the whole host matrix reads correctly, `e2fsck -fn` reports no errors.
 
-### M2 写互操作
+### M2 Write interoperability
 
-- 分配器、extent 树增长、目录分裂/htree 插入、间接块写入、
-  csum 全链路、JBD2 提交、孤儿处理。
-- 验收：主机矩阵读写后 `e2fsck -fn` 干净；断电注入可恢复。
+- Allocator, extent tree growth, directory split/htree insert, indirect block writes,
+  full-chain csum, JBD2 commit, orphan handling.
+- Acceptance: `e2fsck -fn` is clean after reads and writes across the host matrix;
+  power-cut injection is recoverable.
 
-### M3 加固
+### M3 Hardening
 
-- 大文件/大目录、ENOSPC 语义、只读降级、错误注入、性能基线。
-- 验收：故障注入与压力测试通过。
+- Large files/directories, ENOSPC semantics, read-only degradation, error injection,
+  performance baseline.
+- Acceptance: fault injection and stress tests pass.
 
-### M4 文档与发布
+### M4 Documentation and release
 
-- 更新 AGENTS.md（布局、验证、架构）、README、CHANGELOG。
-- 全量 QEMU 冒烟清单。
+- Update AGENTS.md (layout, validation, architecture), README, CHANGELOG.
+- Full QEMU smoke checklist.
 
-## 13. 风险与缓解
+## 13. Risks and Mitigations
 
-| 风险 | 缓解 |
+| Risk | Mitigation |
 |---|---|
-| JBD2 回放/提交复杂 | M1 先只读回放，M2 再写；主机故障注入 |
-| htree 分裂与 csum | 先叶块插入，后分裂；每步 `e2fsck -fn` |
-| ISO 回填依赖文件连续 | 构建脚本强制校验单 extent，失败即中止 |
-| RPC 往返慢 | 64 KiB 数据窗 + 批量读；后续可多请求并发 |
-| 内核移除 ext4 后安装失败 | M0 一次性切换并用 headless 安装回归兜底 |
-| 老 FAT32 盘兼容退化 | 保留内核 FAT32 回退，标记为兼容路径 |
+| JBD2 replay/commit is complex | M1 is read-only replay first, M2 adds writes; host fault injection |
+| htree splits and csum | leaf-block insert first, split later; `e2fsck -fn` at every step |
+| ISO patching depends on a contiguous file | the build script enforces a single extent and aborts on failure |
+| RPC round trips are slow | 64 KiB data window + batched reads; concurrent requests can come later |
+| Installer fails after ext4 leaves the kernel | one-shot switch in M0, backed by headless install regression |
+| Legacy FAT32 disk compatibility regresses | keep the kernel FAT32 fallback, marked as a compatibility path |
 
-## 14. 文件布局
+## 14. File Layout
 
 ```
-src/fs/ext4/           与 OS 无关的 ext4 核心（读、写、日志、csum）
-src/apps/ext4fs/       Ring3 服务（main.c、rpc.c、blk.c）
-src/kernel/fs/vfs.c    VFS 转发与回退
-src/kernel/proc/fsrpc.c 控制页/数据窗、等待与超时
-src/kernel/proc/dev.c  现有驱动 RPC（块 I/O 复用）
-src/kernel/proc/syscall.c  新增 blk_* 与 CAP_BLOCK 校验
-src/kernel/fs/install.c    布局 + ESP + stage2，ext4 交给服务
-src/boot/bios_stage1.asm   支持 no-emulation 直跳
-src/boot/bios_stage2.asm   参数块读取（EDD/CHS 自适应）
-src/tools/iso-bios.rb      ISO9660 + El Torito 回填
-src/tests/ext4/            主机夹具
-src/tools/ext4-test.rb     主机矩阵测试
+src/fs/ext4/           OS-independent ext4 core (read, write, journal, csum)
+src/apps/ext4fs/       Ring3 service (main.c, rpc.c, blk.c)
+src/kernel/fs/vfs.c    VFS forwarding and fallbacks
+src/kernel/proc/fsrpc.c control page/data window, waiting and timeouts
+src/kernel/proc/dev.c  existing driver RPC (block I/O reused)
+src/kernel/proc/syscall.c  new blk_* and CAP_BLOCK checks
+src/kernel/fs/install.c    layout + ESP + stage2, ext4 handed to the service
+src/boot/bios_stage1.asm   support for the no-emulation direct jump
+src/boot/bios_stage2.asm   parameter-block read (EDD/CHS adaptive)
+src/tools/iso-bios.rb      ISO9660 + El Torito patching
+src/tests/ext4/            host fixture
+src/tools/ext4-test.rb     host matrix test
 ```

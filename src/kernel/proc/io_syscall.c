@@ -9,12 +9,15 @@
 #include "process_internal.h"
 #include "io_syscall.h"
 
+#include <epoll.h>
+#include <eventfd.h>
 #include <mem.h>
 #include <memfd.h>
 #include <poll.h>
 #include <string.h>
 #include <thread.h>
 #include <timer.h>
+#include <timerfd.h>
 #include <types.h>
 #include <unix_socket.h>
 #include <zfd.h>
@@ -31,6 +34,27 @@
 #define ZF_SETFL 4
 
 #define ZO_NONBLOCK 0x800
+
+#define ZEFD_SEMAPHORE 1
+#define ZTFD_TIMER_ABSTIME 1
+#define ZEPOLL_CTL_ADD 1
+#define ZEPOLL_CTL_DEL 2
+#define ZEPOLL_CTL_MOD 3
+
+struct ztimespec {
+    i64 seconds;
+    i64 nanoseconds;
+};
+
+struct zitimerspec {
+    struct ztimespec interval;
+    struct ztimespec value;
+};
+
+struct zepoll_event {
+    u32 events;
+    u64 data;
+} __attribute__((packed));
 
 #define ZMSG_MAX 65536u
 #define ZIOV_MAX 16
@@ -553,4 +577,165 @@ long sys_ipc_write(struct process *process, u64 fd, u64 buffer, u64 length)
 long sys_ipc_close(struct process *process, u64 fd)
 {
     return zfd_close(process, (int)fd);
+}
+
+/* Create an eventfd.  EFD_SEMAPHORE selects one-per-read semantics and
+ * EFD_NONBLOCK is stored in the descriptor flags for read/write. */
+long sys_ipc_eventfd(struct process *process, u64 initial, u64 flags)
+{
+    struct eventfd *event =
+        eventfd_create((u32)initial, (flags & ZEFD_SEMAPHORE) != 0);
+    if (!event)
+        return -1;
+    int fd = zfd_alloc(process, ZFD_TYPE_EVENTFD, event,
+                       (flags & ZO_NONBLOCK) ? ZFD_O_NONBLOCK : 0);
+    if (fd < 0) {
+        eventfd_release(event);
+        return -1;
+    }
+    return fd;
+}
+
+/* Create a timerfd.  Both clock ids use the scheduler tick source. */
+long sys_ipc_timerfd_create(struct process *process, u64 clock_id, u64 flags)
+{
+    struct timerfd *timer = timerfd_create((u32)clock_id);
+    if (!timer)
+        return -1;
+    int fd = zfd_alloc(process, ZFD_TYPE_TIMERFD, timer,
+                       (flags & ZO_NONBLOCK) ? ZFD_O_NONBLOCK : 0);
+    if (fd < 0) {
+        timerfd_release(timer);
+        return -1;
+    }
+    return fd;
+}
+
+/* Arm or disarm a timerfd.  The user passes the Linux itimerspec layout; the
+ * old value is optional and written back when the pointer is non-zero. */
+long sys_ipc_timerfd_settime(struct process *process, u64 fd, u64 flags,
+                             u64 new_value, u64 old_value)
+{
+    struct zfd_entry *entry = zfd_get(process, (int)fd);
+    if (!entry || entry->type != ZFD_TYPE_TIMERFD)
+        return -1;
+    if (!new_value)
+        return -1;
+
+    struct zitimerspec value;
+    if (copy_from_user(process, &value, new_value, sizeof(value)) != 0)
+        return -1;
+
+    struct timerfd_spec new_spec = { value.value.seconds,
+                                     value.value.nanoseconds };
+    struct timerfd_spec new_interval = { value.interval.seconds,
+                                         value.interval.nanoseconds };
+    struct timerfd_spec old_spec;
+    struct timerfd_spec old_interval;
+    if (timerfd_settime((struct timerfd *)entry->object,
+                        (flags & ZTFD_TIMER_ABSTIME) != 0, new_spec,
+                        new_interval, &old_spec, &old_interval) != 0)
+        return -1;
+
+    if (old_value) {
+        struct zitimerspec result;
+        result.interval.seconds = old_interval.seconds;
+        result.interval.nanoseconds = old_interval.nanoseconds;
+        result.value.seconds = old_spec.seconds;
+        result.value.nanoseconds = old_spec.nanoseconds;
+        if (process_user_write(process, old_value, &result, sizeof(result)) !=
+            0)
+            return -1;
+    }
+    return 0;
+}
+
+/* Read the remaining time and interval of a timerfd. */
+long sys_ipc_timerfd_gettime(struct process *process, u64 fd, u64 current)
+{
+    struct zfd_entry *entry = zfd_get(process, (int)fd);
+    if (!entry || entry->type != ZFD_TYPE_TIMERFD || !current)
+        return -1;
+    if (user_range_ok(process, current, sizeof(struct zitimerspec)) != 1)
+        return -1;
+
+    struct timerfd_spec value;
+    struct timerfd_spec interval;
+    if (timerfd_gettime((struct timerfd *)entry->object, &value, &interval) !=
+        0)
+        return -1;
+
+    struct zitimerspec result;
+    result.interval.seconds = interval.seconds;
+    result.interval.nanoseconds = interval.nanoseconds;
+    result.value.seconds = value.seconds;
+    result.value.nanoseconds = value.nanoseconds;
+    return process_user_write(process, current, &result, sizeof(result)) == 0
+               ? 0
+               : -1;
+}
+
+/* Create an epoll registration table. */
+long sys_ipc_epoll_create1(struct process *process, u64 flags)
+{
+    (void)flags;
+    struct epoll *epoll = epoll_create();
+    if (!epoll)
+        return -1;
+    int fd = zfd_alloc(process, ZFD_TYPE_EPOLL, epoll, 0);
+    if (fd < 0) {
+        epoll_release(epoll);
+        return -1;
+    }
+    return fd;
+}
+
+/* Add, modify or remove an epoll registration. */
+long sys_ipc_epoll_ctl(struct process *process, u64 epfd, u64 op, u64 fd,
+                       u64 event_pointer)
+{
+    struct zfd_entry *entry = zfd_get(process, (int)epfd);
+    if (!entry || entry->type != ZFD_TYPE_EPOLL)
+        return -1;
+
+    struct zepoll_event event;
+    memset(&event, 0, sizeof(event));
+    if (op != ZEPOLL_CTL_DEL) {
+        if (!event_pointer ||
+            copy_from_user(process, &event, event_pointer, sizeof(event)) != 0)
+            return -1;
+    }
+    return epoll_ctl(process, (struct epoll *)entry->object, (int)op, (int)fd,
+                     event.events, event.data);
+}
+
+/* Wait for registered descriptors and copy the ready events back to user
+ * memory.  The kernel event layout is the packed 12-byte Linux ABI. */
+long sys_ipc_epoll_wait(struct process *process, u64 epfd, u64 events,
+                        u64 max_events, u64 timeout)
+{
+    struct zfd_entry *entry = zfd_get(process, (int)epfd);
+    if (!entry || entry->type != ZFD_TYPE_EPOLL)
+        return -1;
+    if (!events || max_events == 0)
+        return -1;
+    if (max_events > EPOLL_MAX_ENTRIES)
+        max_events = EPOLL_MAX_ENTRIES;
+    if (user_range_ok(process, events,
+                      max_events * sizeof(struct zepoll_event)) != 1)
+        return -1;
+
+    struct zepoll_event output[EPOLL_MAX_ENTRIES];
+    memset(output, 0, sizeof(output));
+    int ready = epoll_wait(process, (struct epoll *)entry->object,
+                           (struct epoll_result *)output, (int)max_events,
+                           (int)(i64)timeout);
+    if (ready < 0)
+        return -1;
+    if (ready == 0)
+        return 0;
+    if (process_user_write(process, events, output,
+                           (u64)ready * sizeof(struct zepoll_event)) != 0)
+        return -1;
+    return ready;
 }

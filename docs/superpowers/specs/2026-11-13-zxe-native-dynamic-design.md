@@ -1,203 +1,203 @@
-# ZXE 原生可执行文件格式设计
+# ZXE Native Executable Format Design
 
-日期：2026-11-13  
-状态：格式 v1 字段决策已确认；工具链与部分运行策略仍待补充
+Date: 2026-11-13  
+Status: Format v1 field decisions confirmed; toolchain and some loading policy still to be added
 
-## 1. 目的与范围
+## 1. Purpose and Scope
 
-本文记录当前讨论确定的 ZXE 目标方向：ZXE 是供 Ring3 用户程序使用的原生可执行文件格式，采用原生段表，并在格式层支持动态链接。ZXE 文件不以 ELF 作为运行时载荷容器；ELF 可以作为编译器或链接器的中间产物，但最终 ZXE 应由打包工具生成原生段表与载荷。
+This document records the ZXE target direction settled in the current discussion: ZXE is the native executable format used by Ring3 user programs, adopts a native segment table, and supports dynamic linking at the format layer. ZXE files do not use ELF as the runtime payload container; ELF may serve as a compiler or linker intermediate, but the final ZXE should be produced by the packaging tool as native segment tables and payloads.
 
-存储以 ext4 为主。FAT32 保留为 ESP 文件系统及兼容介质用途，不将内核写入引导扇区或 ESP。ZXE 应用和共享库存放于 ext4 文件系统中。该格式不负责引导加载器或内核映像。
+Storage is primarily ext4. FAT32 remains for the ESP file system and as a compatibility medium, and the kernel is not written into the boot sector or the ESP. ZXE applications and shared libraries live on the ext4 file system. This format does not cover the boot loader or the kernel image.
 
-本文记录已确认的格式 v1 字段决策，以及仍需在工具链和装载策略阶段补齐的规则。它不表示加载器、链接器或动态链接功能已经实现。
+This document records the confirmed format v1 field decisions and the rules still to be filled in during the toolchain and loading-policy phase. It does not mean the loader, linker or dynamic linking features are already implemented.
 
-## 2. 设计目标
+## 2. Design Goals
 
-- 供 x86-64 Ring3 用户程序使用，与微内核隔离模型一致。
-- 描述原生代码段、只读数据段、可读写数据段及其内存映像，不依赖运行时解析 ELF。
-- 支持应用依赖共享库、导入/导出符号解析和重定位。
-- 采用有版本标识、边界可验证、可扩展的文件布局。
-- 允许 Zhaoxu Aqua Framework（ZAF）、Aqua Desktop Environment 和普通应用作为用户态软件，通过库依赖关系组织，不将 GUI 框架或应用代码并入内核。
-- 文件格式不限定 Aqua 主题。ZAF 负责 GUI 渲染、控件、窗口管理、合成、动画和主题；它及其库属于用户态组件。
+- For x86-64 Ring3 user programs, consistent with the microkernel isolation model.
+- Describe native code segments, read-only data segments and read-write data segments and their memory image without relying on runtime ELF parsing.
+- Support applications depending on shared libraries, import/export symbol resolution and relocation.
+- Use a versioned file layout with verifiable boundaries and room to extend.
+- Allow Zhaoxu Aqua Framework (ZAF), Aqua Desktop Environment and ordinary applications to be organised as user-mode software through library dependencies, without merging GUI framework or application code into the kernel.
+- The file format does not prescribe the Aqua theme. ZAF owns GUI rendering, widgets, window management, composition, animation and theming; it and its libraries are user-mode components.
 
-## 3. 文件总体布局
+## 3. Overall File Layout
 
-ZXE 文件由固定头部、段表、动态链接元数据、字符串数据和段载荷组成。可选扩展数据放在明确标记的扩展区域，加载器应能跳过不认识且标为可忽略的扩展；遇到未知必需特性时必须拒绝执行。
+A ZXE file consists of a fixed header, segment table, dynamic linking metadata, string data and segment payloads. Optional extension data goes into explicitly marked extension areas; the loader should be able to skip extensions it does not recognise that are marked ignorable, and must refuse to execute when it meets an unknown required feature.
 
 ```text
 +---------------------------+
-| 固定头部                  |
+| Fixed header              |
 +---------------------------+
-| 原生段表                  |
+| Native segment table      |
 +---------------------------+
-| 动态依赖与符号元数据      |
+| Dynamic link metadata     |
 +---------------------------+
-| 重定位表                  |
+| Relocation tables         |
 +---------------------------+
-| 字符串表                  |
+| String table              |
 +---------------------------+
-| 可选扩展区                |
+| Optional extension area   |
 +---------------------------+
-| 段载荷                    |
+| Segment payloads          |
 +---------------------------+
 ```
 
-### 3.1 固定头部与表目录
+### 3.1 Fixed header and table directory
 
-所有整数均为小端固定宽度字段。ZXE v1 使用固定 128 字节头部：
+All integers are fixed-width little-endian fields. ZXE v1 uses a fixed 128-byte header:
 
-| 偏移 | 宽度 | 字段 | 规则 |
+| Offset | Width | Field | Rule |
 |---:|---:|---|---|
-| 0 | 4 | `magic` | 固定 `ZXE\0` |
-| 4 | 2 | `format_version` | 固定 1 |
-| 6 | 2 | `machine` | `0x003E`，x86-64 |
-| 8 | 2 | `header_size` | 固定 128 |
-| 10 | 2 | `flags` | bit 0=SHARED；其余位必须为 0。SHARED 文件为库且 `entry_rva=0`；非 SHARED 文件为可执行程序且入口有效 |
-| 12 | 2 | `directory_entry_size` | 固定 24 |
-| 14 | 2 | `directory_count` | 不超过 16 |
-| 16 | 8 | `file_size` | 必须等于实际文件长度，最大 256 MiB |
-| 24 | 8 | `entry_rva` | 入口相对映像基址的偏移 |
-| 32 | 8 | `image_size` | 从 RVA 0 到最高段末尾的最小覆盖长度，最大 1 GiB |
-| 40 | 8 | `directory_offset` | 表目录文件偏移，按 8 字节对齐 |
-| 48 | 16 | `build_id` | 128-bit 构建标识；调试文件配对使用 |
-| 64 | 4 | `api_abi_major` | 固定为 1；不匹配时拒绝执行 |
-| 68 | 4 | `reserved0` | 必须为 0 |
-| 72 | 56 | `reserved1` | 必须全部为 0 |
+| 0 | 4 | `magic` | fixed `ZXE\0` |
+| 4 | 2 | `format_version` | fixed 1 |
+| 6 | 2 | `machine` | `0x003E`, x86-64 |
+| 8 | 2 | `header_size` | fixed 128 |
+| 10 | 2 | `flags` | bit 0=SHARED; all other bits must be 0. A SHARED file is a library and `entry_rva=0`; a non-SHARED file is an executable program and its entry point is valid |
+| 12 | 2 | `directory_entry_size` | fixed 24 |
+| 14 | 2 | `directory_count` | no more than 16 |
+| 16 | 8 | `file_size` | must equal the actual file length, at most 256 MiB |
+| 24 | 8 | `entry_rva` | entry point offset relative to the image base |
+| 32 | 8 | `image_size` | minimum coverage length from RVA 0 to the end of the highest segment, at most 1 GiB |
+| 40 | 8 | `directory_offset` | file offset of the table directory, 8-byte aligned |
+| 48 | 16 | `build_id` | 128-bit build identifier; used to pair with debug files |
+| 64 | 4 | `api_abi_major` | fixed at 1; execution is refused on mismatch |
+| 68 | 4 | `reserved0` | must be 0 |
+| 72 | 56 | `reserved1` | must all be 0 |
 
-ZXE v1 文件采用固定物理顺序：128 字节头部、表目录、元数据表、段载荷。所有区域按 8 字节对齐，间隙字节必须为零；可选未知表可插入元数据表区域。加载器仍须以目录中的偏移和长度为准并验证范围。
+ZXE v1 files use a fixed physical order: the 128-byte header, the table directory, the metadata tables, then the segment payloads. Every region is 8-byte aligned, gap bytes must be zero, and optional unknown tables may be inserted into the metadata table area. The loader must still take the offsets and lengths from the directory and validate the ranges.
 
-表项数量上限：依赖 64、导入 4096、导出 4096、重定位 65536；字符串表最大 1 MiB。`entry_size` 必须等于对应表的固定结构大小。空表允许目录项 `count=0`。
+Table entry limits: 64 dependencies, 4096 imports, 4096 exports, 65536 relocations; the string table is at most 1 MiB. `entry_size` must equal the fixed structure size of the corresponding table. An empty table may have a directory entry with `count=0`.
 
-重定位均为 8 字节写入；`target_rva` 必须按 8 字节对齐，且完整落在可写 DATA 或 ZERO 段内。不可重定位到代码、只读段或段外。共享库依赖图必须无环；发现循环依赖时拒绝加载。
+Relocations are always 8-byte writes; `target_rva` must be 8-byte aligned and fall entirely inside a writable DATA or ZERO segment. Relocating into code, into read-only segments or outside segments is not allowed. The shared library dependency graph must be acyclic; loading is refused when a cycle is detected.
 
-### 3.2 原生段表
+### 3.2 Native segment table
 
-段表最多 32 项，每项固定 48 字节，字段顺序为：`type:u32`、`flags:u32`、`file_offset:u64`、`file_size:u64`、`mem_size:u64`、`vaddr_rva:u64`、`alignment:u64`。
+The segment table holds at most 32 entries, each a fixed 48 bytes, with the field order: `type:u32`, `flags:u32`, `file_offset:u64`, `file_size:u64`, `mem_size:u64`, `vaddr_rva:u64`, `alignment:u64`.
 
-段类型编号：CODE=1、RODATA=2、DATA=3、ZERO=4。权限位为 bit 0=R、bit 1=W、bit 2=X，其他位必须为零。CODE 固定为 R|X，RODATA 固定为 R，DATA 与 ZERO 固定为 R|W；所有 W|X 组合非法。ZERO 段的文件长度为 0，其内存由加载器清零。所有 RVA、内存大小及对齐值固定为 4096 字节；`alignment` 只能为 4096。段 RVA 范围不得重叠，入口 RVA 必须落在 CODE 段中。
+Segment type numbers: CODE=1, RODATA=2, DATA=3, ZERO=4. Permission bits are bit 0=R, bit 1=W, bit 2=X, and all other bits must be zero. CODE is fixed at R|X, RODATA is fixed at R, DATA and ZERO are fixed at R|W; every W|X combination is illegal. A ZERO segment has a file length of 0 and its memory is zeroed by the loader. All RVAs, memory sizes and alignment values are fixed at 4096 bytes; `alignment` can only be 4096. Segment RVA ranges must not overlap, and the entry RVA must fall inside a CODE segment.
 
-PIE 主程序和共享库使用相对各自映像基址的 RVA。进程内主程序与所有依赖库共同使用 `[USER_LOAD_BASE, USER_LOAD_BASE + 1 GiB)` 映像窗口，合计映像范围不得超过 1 GiB；每个映像的 `image_size` 也不得超过 1 GiB。内核熵源最多随机尝试 64 个按 64 KiB 对齐的基址，并排除用户栈、共享内存和其他已占用区域；无可用地址时拒绝启动，不回退固定基址。所有偏移、长度、地址加法都必须做溢出与边界检查。
+PIE main programs and shared libraries use RVAs relative to their respective image base. Within a process, the main program and all dependent libraries together use the `[USER_LOAD_BASE, USER_LOAD_BASE + 1 GiB)` image window, and the combined image range must not exceed 1 GiB; each image's `image_size` must also not exceed 1 GiB. The kernel entropy source tries at most 64 randomly chosen 64 KiB-aligned bases and excludes the user stack, shared memory and other occupied regions; when no address is available it refuses to start and does not fall back to a fixed base. All offset, length and address additions must perform overflow and boundary checks.
 
-### 3.3 动态链接元数据
+### 3.3 Dynamic linking metadata
 
-| 编号 | 类型 | 计算结果 |
+| Number | Type | Computed result |
 |---:|---|---|
-| 1 | RELATIVE | `load_base + addend`；`symbol_index` 必须为 0 |
+| 1 | RELATIVE | `load_base + addend`; `symbol_index` must be 0 |
 | 2 | 64 | `symbol_address + addend` |
 | 3 | GLOB_DAT | `symbol_address` |
 | 4 | JUMP_SLOT | `symbol_address` |
 
-未分配的重定位编号拒绝加载。重定位项固定 24 字节：`target_rva:u64`、`type:u32`、`symbol_index:u32`、`addend:i64`。除 RELATIVE 外，`symbol_index` 索引导入表；越界索引拒绝加载。RELATIVE 不引用符号；弱导入缺失时只允许 64、GLOB_DAT、JUMP_SLOT，按符号值为 0 计算（64 写入 addend，另两种写入 0）。
+Unassigned relocation numbers are refused at load. A relocation entry is a fixed 24 bytes: `target_rva:u64`, `type:u32`, `symbol_index:u32`, `addend:i64`. Apart from RELATIVE, `symbol_index` indexes the import table; an out-of-range index is refused at load. RELATIVE does not reference a symbol; when a weak import is missing, only 64, GLOB_DAT and JUMP_SLOT are allowed and the symbol value counts as 0 (64 writes the addend, the other two write 0).
 
-依赖项固定 16 字节：`name_offset:u32`、`abi_major:u32`、`flags:u32`、`reserved:u32`。依赖均为必需；`flags` 与 `reserved` 必须为 0。名称只能是简单文件名，内核只从 `/lib` 加载，不允许路径穿越或应用目录覆盖。库名绑定一个 ABI 主版本号，依赖声明与库导出必须匹配。
+A dependency entry is a fixed 16 bytes: `name_offset:u32`, `abi_major:u32`, `flags:u32`, `reserved:u32`. All dependencies are required; `flags` and `reserved` must be 0. The name can only be a plain file name, the kernel loads only from `/lib`, and path traversal or overriding through an application directory is not allowed. A library name is bound to one ABI major version, and the dependency declaration and the library export must match.
 
-导入表项固定 16 字节：`dependency_index:u32`、`name_offset:u32`、`abi_major:u32`、`flags:u32`。`flags` bit 0 表示 WEAK，其余位必须为零；强导入缺失时拒绝加载，弱导入缺失时解析为 0。导出表项固定 24 字节：`name_offset:u32`、`abi_major:u32`、`value_rva:u64`、`size:u32`、`flags:u32`；导出项 flags bit 0 表示 GLOBAL，其余位为零。`size` 表示符号对象字节数；函数可用 0 表示未知大小，非函数对象必须大于 0。符号名称引用字符串表，字符串使用 UTF-8、NUL 结尾，最长 255 字节且不允许名称内嵌 NUL。导入 ABI 主版本必须与所属依赖一致；导出 ABI 主版本必须与依赖声明一致。导入按依赖索引、名称和 ABI 主版本精确匹配；目标库中必须唯一匹配，重复导出视为格式错误。
+An import table entry is a fixed 16 bytes: `dependency_index:u32`, `name_offset:u32`, `abi_major:u32`, `flags:u32`. `flags` bit 0 means WEAK and all other bits must be zero; loading is refused when a strong import is missing, and a missing weak import resolves to 0. An export table entry is a fixed 24 bytes: `name_offset:u32`, `abi_major:u32`, `value_rva:u64`, `size:u32`, `flags:u32`; export flags bit 0 means GLOBAL and the other bits are zero. `size` is the byte size of the symbol object; functions may use 0 to mean unknown size, and non-function objects must be greater than 0. Symbol names reference the string table; strings are UTF-8, NUL-terminated, at most 255 bytes long, and may not contain an embedded NUL. The import ABI major version must match that of the owning dependency; the export ABI major version must match the dependency declaration. Imports are matched exactly by dependency index, name and ABI major version; there must be exactly one match in the target library, and a duplicate export counts as a format error.
 
-ASLR 基址由内核熵源随机选择，最多尝试 64 次；仍无可用不重叠区域时拒绝启动，不回退固定基址。`.zxe.debug` 是独立调试文件格式，包含独立魔数、版本、匹配的 128-bit `build_id` 和 DWARF 5 调试载荷；ID 不匹配时忽略调试文件，运行时加载器不解析调试信息。
+The ASLR base is chosen randomly from the kernel entropy source, with at most 64 attempts; if there is still no free non-overlapping region it refuses to start and does not fall back to a fixed base. `.zxe.debug` is a separate debug file format with its own magic, version, a matching 128-bit `build_id` and a DWARF 5 debug payload; when the ID does not match, the debug file is ignored, and the runtime loader does not parse debug information.
 
-## 4. 加载与验证流程
+## 4. Loading and Validation Flow
 
-加载器按以下顺序处理 ZXE：
+The loader processes a ZXE file in this order:
 
-1. 读取并验证魔数、格式版本、架构、文件长度和特性标志。
-2. 验证所有表格及字符串引用均位于文件边界内，检查整数溢出、数量上限和对齐。
-3. 验证段地址范围、段间重叠、入口点及权限组合。
-4. 为进程建立 Ring3 地址映射，按段权限映射页面，载入文件内容并清零未初始化区域。
-5. 由内核装载器从固定 `/lib` 解析必需依赖，校验 ABI 主版本并映射共享库段。
-6. 由内核装载器立即解析导入并应用白名单重定位；遇到不支持或非法的重定位时拒绝启动。
-7. 验证最终入口位于可执行用户映射中，再以 Ring3 权限启动程序。
+1. Read and validate the magic, format version, architecture, file length and feature flags.
+2. Validate that all tables and string references lie within the file boundaries, and check integer overflow, count limits and alignment.
+3. Validate segment address ranges, inter-segment overlap, the entry point and permission combinations.
+4. Establish the Ring3 address mappings for the process, map pages according to segment permissions, load file contents and zero uninitialised regions.
+5. The kernel loader resolves required dependencies from the fixed `/lib`, verifies the ABI major version and maps the shared library segments.
+6. The kernel loader resolves imports immediately and applies the whitelisted relocations; it refuses to start when it meets an unsupported or illegal relocation.
+7. Verify that the final entry point lies in an executable user mapping, then start the program with Ring3 privileges.
 
-格式解析失败、依赖缺失或重定位失败都应在进入用户态前终止加载；不得因此导致内核崩溃。文件路径访问由 ext4/VFS 提供，ZXE 格式本身不包含磁盘分区或文件系统信息。
+A format parse failure, a missing dependency or a relocation failure should all abort loading before entering user mode; none of them may crash the kernel as a result. File path access is provided by ext4/VFS, and the ZXE format itself carries no disk partition or file system information.
 
-## 5. 系统边界与组件关系
+## 5. System Boundaries and Component Relationships
 
 ```text
 ext4
-  ├── 用户程序：*.zxe
-  ├── 共享库：系统 ABI 库、ZAF 库及其他用户态库
-  └── 系统运行资源
+  ├── user programs: *.zxe
+  ├── shared libraries: system ABI libraries, ZAF libraries and other user-mode libraries
+  └── system runtime resources
 
 Ring3
-  ├── Zhaoxu Aqua Framework（ZAF）及 Aqua 默认主题
-  ├── Aqua Desktop Environment、Desktop Window Manager、桌面合成器和应用
+  ├── Zhaoxu Aqua Framework (ZAF) and the default Aqua theme
+  ├── Aqua Desktop Environment, Desktop Window Manager, desktop compositor and applications
 
 Yuanshuo
-  ├── ZXE 装载器：映像验证、依赖装载、立即绑定与重定位
-  └── 进程地址空间、Ring3 进入、内存映射、IPC 与系统调用
+  ├── ZXE loader: image validation, dependency loading, immediate binding and relocation
+  └── process address space, Ring3 entry, memory mapping, IPC and syscalls
 ```
 
-ZXE 只定义可执行映像及链接元数据，不规定 ZAF 的控件接口或主题资源格式。ZAF 的库 ABI 可通过 ZXE 动态依赖机制暴露给应用；未来其他主题或 GUI 框架仍可使用同一可执行格式。
+ZXE defines only executable images and linking metadata; it does not prescribe ZAF's widget interfaces or theme resource format. ZAF's library ABI can be exposed to applications through the ZXE dynamic dependency mechanism; future themes or GUI frameworks can still use the same executable format.
 
-内核映像和引导程序使用各自规定的格式与启动路径。不得把内核塞入 ZXE 用户程序载荷、引导扇区或 ESP。ESP 维持 FAT32 约束，ZXE 用户程序不因该约束而改为存放在 ESP。
+Kernel images and boot programs use their own prescribed formats and boot paths. The kernel must not be stuffed into ZXE user program payloads, the boot sector or the ESP. The ESP keeps the FAT32 constraint, and ZXE user programs are not moved onto the ESP because of that constraint.
 
-## 6. 兼容性与迁移
+## 6. Compatibility and Migration
 
-当前仓库存在静态段表 ZXE 与 ELF 转换工具。本文决定重新定义 ZXE v1：固定魔数 `ZXE\0`，独立版本字段为 1。旧静态布局与本文 v1 不兼容，不要求新加载器兼容旧布局；实现迁移时应同步更新打包器、加载器、样例和已有 `.zxe` 产物，避免同一魔数/版本承载两种解释。
+The repository currently has a static-segment-table ZXE and an ELF conversion tool. This document decides to redefine ZXE v1: a fixed magic `ZXE\0` with an independent version field of 1. The old static layout is incompatible with v1 here, and the new loader is not required to support the old layout; when implementing the migration, the packer, loader, samples and existing `.zxe` artifacts should be updated together so that the same magic/version never carries two interpretations.
 
-ELF 中间产物限定为 x86-64 ELF64 PIE（ET_DYN），只接受 PT_LOAD；禁止 ELF 解释器和 PT_DYNAMIC。静态链接阶段解析本地符号；需运行时处理的 SHT_RELA 项由打包器转换为 ZXE 专属重定位码（1..4）。
+The ELF intermediate is restricted to x86-64 ELF64 PIE (ET_DYN) accepting only PT_LOAD; the ELF interpreter and PT_DYNAMIC are forbidden. The static link stage resolves local symbols; the SHT_RELA entries that need runtime handling are converted by the packer into ZXE-specific relocation codes (1..4).
 
-依赖、导入、导出和手工重定位清单通过非加载 ELF 自定义节传给打包器，载荷为 UTF-8 JSON 数组：
+Dependencies, imports, exports and the manual relocation list are passed to the packer through non-loadable ELF custom sections whose payload is a UTF-8 JSON array:
 
-- `.zxe.deps`：`[{"name":"libexample.zxe","abi_major":1}]`
-- `.zxe.imports`：`[{"dependency_index":0,"name":"example_call","abi_major":1,"weak":false}]`
-- `.zxe.exports`：`[{"name":"example_call","symbol":"example_call","abi_major":1,"type":"function","global":true}]`；`size` 可选，默认取 ELF 符号大小。
-- `.zxe.relocs`：`[{"target_rva":8192,"type":"RELATIVE","symbol_index":0,"addend":0}]`；通常由打包器从 ELF SHT_RELA 自动生成，不必手工提供。
+- `.zxe.deps`: `[{"name":"libexample.zxe","abi_major":1}]`
+- `.zxe.imports`: `[{"dependency_index":0,"name":"example_call","abi_major":1,"weak":false}]`
+- `.zxe.exports`: `[{"name":"example_call","symbol":"example_call","abi_major":1,"type":"function","global":true}]`; `size` is optional and defaults to the ELF symbol size.
+- `.zxe.relocs`: `[{"target_rva":8192,"type":"RELATIVE","symbol_index":0,"addend":0}]`; these are normally generated automatically by the packer from ELF SHT_RELA and do not have to be supplied by hand.
 
-`.zxe.*` 非加载节可由源文件内联汇编或链接时输入对象提供；例如用 `.section .zxe.deps,"",@progbits` 配合 `.ascii` 写入 UTF-8 JSON 数组字节（不附加终止 NUL）。`.zxe.deps`、`.zxe.imports`、`.zxe.exports` 和 `.zxe.relocs` 均可省略；省略时表示空表。JSON 记录转换成 ZXE 原生表后，自定义节不进入运行时载荷。打包器还会将 SHF_ALLOC 的 ELF SHT_RELA 项转换为 ZXE 重定位表：x86-64 类型 1/6/7/8 映射为 ZXE `64`/`GLOB_DAT`/`JUMP_SLOT`/`RELATIVE`；其他动态重定位类型由打包器拒绝。非 RELATIVE 的 ELF 符号名必须唯一匹配一个 `.zxe.imports` 项。
+The `.zxe.*` non-loadable sections may be supplied by inline assembly in the source file or by objects passed in at link time; for example, use `.section .zxe.deps,"",@progbits` together with `.ascii` to write the UTF-8 JSON array bytes (with no terminating NUL). `.zxe.deps`, `.zxe.imports`, `.zxe.exports` and `.zxe.relocs` may all be omitted; omitting one means an empty table. Once the JSON records have been converted into native ZXE tables, the custom sections do not enter the runtime payload. The packer also converts SHF_ALLOC ELF SHT_RELA entries into the ZXE relocation table: x86-64 types 1/6/7/8 map to ZXE `64`/`GLOB_DAT`/`JUMP_SLOT`/`RELATIVE`; other dynamic relocation types are rejected by the packer. A non-RELATIVE ELF symbol name must uniquely match one `.zxe.imports` entry.
 
-系统 API `Zhaoxu Operating System Application Programming Interface Version 1.0` 对应 `api_abi_major=1`，加载器只接受该主版本。共享库 ABI 主版本按每个库依赖项匹配。ZAF 的库 ABI 由 ZAF 独立规范管理；ZXE 只承载其 ABI 主版本，不将 ZAF 版本与系统 API ABI 绑定。
+The system API `Zhaoxu Operating System Application Programming Interface Version 1.0` corresponds to `api_abi_major=1`, and the loader accepts only that major version. Shared library ABI major versions are matched per dependency entry. ZAF's library ABI is governed by a separate ZAF specification; ZXE carries only its ABI major version and does not bind the ZAF version to the system API ABI.
 
-不得在未来格式版本中静默改变已发布字段语义；如需不兼容修改，必须升级格式版本。
+Published field semantics must not be changed silently in a future format version; an incompatible change requires a format version bump.
 
-## 7. 已确认决策与剩余问题
+## 7. Confirmed Decisions and Open Questions
 
-以下决策由用户确认，后续格式实现应以此为准。未列为已确认的行为仍需在编码前明确，不能由打包器和加载器各自猜测。
+The following decisions were confirmed by the user and should govern later format implementation. Behaviour not listed as confirmed still has to be pinned down before coding, and the packer and loader must not each guess their own answer.
 
-### 7.1 已确认的 v1 规则
+### 7.1 Confirmed v1 rules
 
-- 固定魔数 `ZXE\0`，独立 `format_version=1`；重新定义 v1，不兼容旧静态 ZXE 布局。
-- 小端、固定宽度整数；128 字节头部，字段偏移见 §3.1；所有保留字段和未定义标志为零。
-- 文件顺序固定为头部、表目录、元数据表、段载荷；各区域 8 字节对齐，间隙填零。表项上限为依赖 64、导入 4096、导出 4096、重定位 65536，字符串表最大 1 MiB；`entry_size` 必须匹配固定项大小，空表可用 `count=0`。
-- 共享库依赖图拒绝循环；重定位统一写 8 字节，目标 RVA 8 字节对齐并完整落入可写 DATA/ZERO 段。
-- 文件最大 256 MiB；最多 32 个段。
-- 头部 `flags` bit 0=SHARED；共享库 `entry_rva=0`，应用映像入口有效；其余位必须为零。
-- 所有映像共同使用 1 GiB 进程窗口，单个映像和映像合计均不得超过 1 GiB；ASLR 使用内核熵源最多尝试 64 次，失败则拒绝启动、不回退固定基址。
-- 弱导入缺失仅允许用于 64/GLOB_DAT/JUMP_SLOT，按符号值 0 计算；RELATIVE 不引用符号。
-- 导入以依赖索引、符号名和 ABI 主版本精确匹配，依赖库中必须唯一匹配，重复导出为错误；导出 `size` 为符号对象大小，函数可为 0，非函数对象必须大于 0。
-- `.zxe.debug` 使用独立头部并携带匹配的 build ID，调试载荷采用 DWARF 5；加载器忽略调试载荷。
-- 段项 48 字节；类型 CODE=1、RODATA=2、DATA=3、ZERO=4；段权限固定为 RX、R、RW、RW；所有段 RVA、内存大小与 `alignment` 为 4 KiB 对齐，段不得重叠，拒绝 W+X。
-- 动态链接由内核装载器执行并立即绑定。重定位项 24 字节；ZXE 专属编号 RELATIVE=1、64=2、GLOB_DAT=3、JUMP_SLOT=4，未分配编号拒绝。
-- 库只从 `/lib` 查找，依赖名称只允许简单文件名；所有依赖必需，库 ABI 主版本精确匹配。系统 API v1.0 对应 `api_abi_major=1`，必须精确匹配。
-- 导入、导出符号使用独立表；导入项 16 字节、导出项 24 字节；符号名为 UTF-8 NUL 结尾字符串，最长 255 字节且名称内不允许 NUL。
-- 导入 flags bit 0 为 WEAK，其余位为零；导出 flags bit 0 为 GLOBAL，其余位为零。强导入缺失时拒绝，弱导入缺失时解析为 0。
-- 外置调试文件名为 `.zxe.debug`，使用独立魔数/版本并携带相同 128-bit build ID；ID 不匹配时忽略，运行时加载器不解析调试内容。
-- 首版不要求签名、压缩；未确认的特性不得视为 v1 必需能力。
-- ELF 中间产物为 x86-64 ELF64 PIE（ET_DYN），仅 PT_LOAD；不含解释器或 PT_DYNAMIC。动态元数据使用非加载 `.zxe.*` JSON 数组节，编码见 §6；打包器将受支持的 ELF SHT_RELA 转为 ZXE 专属重定位码。
-- 系统 API ABI 主版本与 OS 精确匹配；ZAF 库 ABI 独立管理，ZXE 仅携带其 ABI 主版本。
+- Fixed magic `ZXE\0` with a separate `format_version=1`; v1 is redefined and is not compatible with the old static ZXE layout.
+- Little-endian, fixed-width integers; a 128-byte header with field offsets as in §3.1; every reserved field and undefined flag is zero.
+- Fixed file order is header, table directory, metadata tables, segment payloads; every region is 8-byte aligned with zero-filled gaps. Table limits are 64 dependencies, 4096 imports, 4096 exports, 65536 relocations, and the string table is at most 1 MiB; `entry_size` must match the fixed entry size, and an empty table may use `count=0`.
+- The shared library dependency graph rejects cycles; relocations uniformly write 8 bytes, and the target RVA is 8-byte aligned and falls entirely inside a writable DATA/ZERO segment.
+- Files are at most 256 MiB; at most 32 segments.
+- Header `flags` bit 0=SHARED; a shared library has `entry_rva=0`, an application image has a valid entry point; every other bit must be zero.
+- All images share the 1 GiB process window, and neither a single image nor the combined images may exceed 1 GiB; ASLR uses the kernel entropy source with at most 64 attempts, and on failure refuses to start rather than falling back to a fixed base.
+- A missing weak import is only allowed for 64/GLOB_DAT/JUMP_SLOT and counts as symbol value 0; RELATIVE references no symbol.
+- Imports are matched exactly by dependency index, symbol name and ABI major version, must match uniquely in the dependency library, and a duplicate export is an error; the export `size` is the symbol object size, functions may use 0, and non-function objects must be greater than 0.
+- `.zxe.debug` uses a separate header and carries a matching build ID, with a DWARF 5 debug payload; the loader ignores debug payloads.
+- Segment entries are 48 bytes; types CODE=1, RODATA=2, DATA=3, ZERO=4; segment permissions are fixed at RX, R, RW, RW; all segment RVAs, memory sizes and `alignment` are 4 KiB aligned, segments must not overlap, and W+X is rejected.
+- Dynamic linking is performed by the kernel loader with immediate binding. Relocation entries are 24 bytes; the ZXE-specific numbers are RELATIVE=1, 64=2, GLOB_DAT=3, JUMP_SLOT=4, and unassigned numbers are rejected.
+- Libraries are looked up only in `/lib`, and dependency names may only be plain file names; all dependencies are required and the library ABI major version must match exactly. System API v1.0 corresponds to `api_abi_major=1` and must match exactly.
+- Imports and exports use separate tables; import entries are 16 bytes and export entries 24 bytes; symbol names are UTF-8 NUL-terminated strings of at most 255 bytes with no NUL inside the name.
+- Import flags bit 0 is WEAK and the other bits are zero; export flags bit 0 is GLOBAL and the other bits are zero. A missing strong import is rejected, a missing weak import resolves to 0.
+- The external debug file is named `.zxe.debug`, uses a separate magic/version and carries the same 128-bit build ID; a mismatch means the file is ignored, and the runtime loader does not parse debug content.
+- The first version requires no signing or compression; unconfirmed features must not be treated as v1 requirements.
+- The ELF intermediate is x86-64 ELF64 PIE (ET_DYN) with PT_LOAD only; it contains no interpreter or PT_DYNAMIC. Dynamic metadata uses non-loadable `.zxe.*` JSON array sections encoded as in §6; the packer converts supported ELF SHT_RELA into ZXE-specific relocation codes.
+- The system API ABI major version matches the OS exactly; the ZAF library ABI is managed independently and ZXE carries only its ABI major version.
 
-### 7.2 实现状态
+### 7.2 Implementation status
 
-格式 v1 已在仓库落地：
+Format v1 has landed in the repository:
 
-- 内核 `src/kernel/proc/zxe_loader.c` 与 `src/kernel/include/zxe_format.h` 实现头部/表目录/段/依赖/导入/导出/重定位的完整校验、立即绑定、PIE 映像映射、W^X 页权限与 64 KiB 对齐 ASLR（最多 64 次尝试，失败拒绝启动）。共享库依赖递归从 `/lib` 加载并拒绝循环依赖。
-- 打包器 `src/tools/zxe-pack.rb` 接受 x86-64 ELF64 PIE（仅 PT_LOAD），从非加载 `.zxe.deps/.zxe.imports/.zxe.exports/.zxe.relocs` JSON 节生成原生表，并把受支持的 ELF SHT_RELA 转成 ZXE 重定位码。
-- 用户程序统一以 `-fpie`/`-fPIC` 链接到 RVA 0（`src/user/user.ld`），不再使用 `-mcmodel=large`；内核在 UEFI 与 BIOS 两条路径打开 EFER.NXE 以支持段级 NX。
+- The kernel's `src/kernel/proc/zxe_loader.c` and `src/kernel/include/zxe_format.h` implement full validation of the header/table directory/segments/dependencies/imports/exports/relocations, immediate binding, PIE image mapping, W^X page permissions and 64 KiB-aligned ASLR (at most 64 attempts, refusing to start on failure). Shared library dependencies are loaded recursively from `/lib` and cyclic dependencies are rejected.
+- The packer `src/tools/zxe-pack.rb` accepts x86-64 ELF64 PIE (PT_LOAD only), generates native tables from the non-loadable `.zxe.deps/.zxe.imports/.zxe.exports/.zxe.relocs` JSON sections, and converts supported ELF SHT_RELA into ZXE relocation codes.
+- User programs are linked uniformly with `-fpie`/`-fPIC` at RVA 0 (`src/user/user.ld`), no longer using `-mcmodel=large`; the kernel enables EFER.NXE on both the UEFI and BIOS paths to support segment-level NX.
 
-验证工具与证据：
+Validation tool and evidence:
 
-- `src/tools/zxe-check.rb` 按本文校验任意 `.zxe`（头部常量、表边界与不重叠、段权限与页对齐、映像覆盖、入口位于 CODE、重定位目标可写、字符串 UTF-8 与长度）。全部 11 个产物通过。
-- `src/tools/zxe-fixture-lib.rb` 生成最小共享库 `libztest.zxe`；`src/user/ztestmain.c` 声明 `.zxe.deps`/`.zxe.imports` 并导入 `ztest_value`。`make run-iso QEMU_SMP=1` 冒烟日志显示 `[ztest] imported ztest_value() = 42` 与 `[ztest] exit 0`，随后 Aqua Desktop Environment 桌面与 welcome/calc/install 客户端正常，证明依赖装载、导出查找、JUMP_SLOT 重定位与 ASLR 基址协同工作。
-- 已知限制：仓库既有的 UEFI `QEMU_SMP=4` AP 启动在部分运行中停在上线首个 AP 之后，与 ZXE 无关；单核 UEFI 与 BIOS 路径均正常。该问题需单独修复。
+- `src/tools/zxe-check.rb` validates any `.zxe` against this document (header constants, table boundaries and non-overlap, segment permissions and page alignment, image coverage, entry point inside CODE, writable relocation targets, UTF-8 and string length). All 11 artifacts pass.
+- `src/tools/zxe-fixture-lib.rb` generates the minimal shared library `libztest.zxe`; `src/user/ztestmain.c` declares `.zxe.deps`/`.zxe.imports` and imports `ztest_value`. The `make run-iso QEMU_SMP=1` smoke log shows `[ztest] imported ztest_value() = 42` and `[ztest] exit 0`, after which the Aqua Desktop Environment desktop and the welcome/calc/install clients behave normally, proving that dependency loading, export lookup, JUMP_SLOT relocation and the ASLR base work together.
+- Known limitation: the repository's existing UEFI `QEMU_SMP=4` AP bring-up halts after bringing up the first AP in some runs, unrelated to ZXE; the single-core UEFI and the BIOS paths are both fine. That problem needs a separate fix.
 
-## 8. 实现验收方向
+## 8. Implementation Acceptance Direction
 
-格式进入实现后至少验证：
+Once the format reaches implementation, at least the following must be validated:
 
-- 合法原生 ZXE 的段映射、BSS 清零及 Ring3 入口执行。
-- 截断文件、越界表格、整数溢出、非法地址、重叠段及错误权限均被拒绝。
-- 缺失依赖、缺失符号、ABI 不匹配和不支持的重定位均明确失败。
-- 多个程序共享只读库映射时权限正确；可写数据互不串扰。
-- 在 ext4 主文件系统上能读取、执行和更新用户程序；FAT32 兼容路径不改变 ESP 不含内核的不变量。
-- ZAF 及使用 ZAF 的应用以普通 Ring3 程序/库运行，内核不链接 GUI 实现。
+- Segment mapping, BSS zeroing and Ring3 entry execution for a valid native ZXE.
+- Truncated files, out-of-bounds tables, integer overflow, invalid addresses, overlapping segments and wrong permissions are all rejected.
+- Missing dependencies, missing symbols, ABI mismatches and unsupported relocations all fail explicitly.
+- When several programs share read-only library mappings, permissions are correct and writable data does not bleed between them.
+- User programs can be read, executed and updated from the ext4 primary file system; the FAT32 compatibility path does not change the invariant that the ESP holds no kernel.
+- ZAF and applications using ZAF run as ordinary Ring3 programs/libraries, and the kernel links no GUI implementation.
 
-本文记录设计目标，不代表以上验收已经通过。
+This document records design goals and does not mean the acceptance items above have already passed.

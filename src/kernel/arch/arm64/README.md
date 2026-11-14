@@ -1,11 +1,11 @@
-# arm64 移植层
+# arm64 port layer
 
-本目录存放 Zhaoxu OS 的 ARM64 平台代码，不参与 x86_64 的 `kernel.elf` 构建。
+This directory holds the ARM64 platform code for Zhaoxu OS and does not participate in the x86_64 `kernel.elf` build.
 
-- `gic.c`：GICv3 分发器、重分发器与 CPU 接口初始化，提供 `intc.h` 声明的
-  `gic_*` 接口。x86 构建使用 `kernel/int/intc_x86.c` 中的 APIC/PIC 前端。
-- `systick.c`：ARMv7-M/Cortex-M SysTick。ARM64 通用定时器（CNTPCT/CNTVCT）
-  在后续移植中以同一节拍接口接入。
+- `gic.c`: GICv3 distributor, redistributor, and CPU interface initialization, providing the
+  `gic_*` interfaces declared by `intc.h`. The x86 build uses the APIC/PIC front-end in `kernel/int/intc_x86.c`.
+- `systick.c`: ARMv7-M/Cortex-M SysTick. The ARM64 generic timer (CNTPCT/CNTVCT)
+  will hook into the same tick interface in a later port.
 
-启用方式：在 Makefile 的 `C_SRCS` 中加入这些文件，并替换入口与 GDT/IDT 层；
-当前 x86_64 主机不会编译它们。
+Enabling it: add these files to `C_SRCS` in the Makefile and replace the entry point and GDT/IDT layers;
+current x86_64 hosts do not compile them.

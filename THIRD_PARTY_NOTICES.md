@@ -44,7 +44,7 @@ Zhaoxu OS kernel image.
 
 - File: `src/initramfs/data/wqy.ttc` → shipped as `/mnt/WQY.TTC` on the FAT32
   data image (built by `make out/data.img`)
-- Author: WenQuanYi 社区 (info@wenqiangithub.berlios.de)
+- Author: WenQuanYi Community (info@wenqiangithub.berlios.de)
 - License: GNU General Public License v3 with the font embedding exception
   (see the upstream `GPL` text). The font is only redistributed as a data
   file on the generated volume; it is not linked into the kernel image.

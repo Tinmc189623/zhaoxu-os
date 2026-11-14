@@ -1,5 +1,5 @@
-Welcome to Zhaoxu OS 0.7.1 "Yuanshuo" (Yuanshuo kernel 0.7.1, build 2).
-欢迎使用兆旭操作系统 0.7.1（Yuanshuo 0.7.1 内核，构建 2）：已支持中文显示与自研 .zxe 可执行格式。
+Welcome to Zhaoxu OS 0.7.1 "Yuanshuo" (Yuanshuo kernel 0.7.1, build 3).
+欢迎使用兆旭操作系统 0.7.1（Yuanshuo 0.7.1 内核，构建 3）：已支持中文显示与自研 .zxe 可执行格式。
 
 This message is served from the initramfs (ustar archive) by the
 in-kernel ramfs.  The kernel, drivers and shell are written in FASM,

@@ -193,6 +193,20 @@ void kernel_main(struct boot_info *boot)
         hlt();
 #endif
 
+#if M5_BOOT_TEST == 1
+    kprintf("[m5 ] running /data/M5_TEST.ZXE\n");
+    u64 m5_pid = process_spawn("/data/M5_TEST.ZXE", 0, NULL);
+    if (m5_pid) {
+        int m5_status = -1;
+        process_wait(m5_pid, &m5_status);
+        kprintf("[m5 ] M5_TEST exit %d\n", m5_status);
+    } else {
+        kprintf("[m5 ] M5_TEST spawn failed\n");
+    }
+    for (;;)
+        hlt();
+#endif
+
     /* M1: the KMS service owns virtio-gpu scanout and runs before the
      * desktop.  Without a virtio-gpu it exits immediately. */
     u64 display_pid = process_spawn("/bin/display", 0, NULL);

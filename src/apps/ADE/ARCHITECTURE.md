@@ -1,62 +1,62 @@
-# Aqua Desktop Environment 桌面架构
+# Aqua Desktop Environment Desktop Architecture
 
-## 定位
+## Role
 
-`Aqua Desktop Environment` 是 Zhaoxu OS 的桌面环境，运行在 Ring3，同时承担显示服务器与 Desktop Window Manager
-窗口管理器的职责。应用是独立 `.zxe` 进程，不打包进 Aqua Desktop Environment。
+`Aqua Desktop Environment` is the Zhaoxu OS desktop environment. It runs in Ring3 and serves as both display server and
+Desktop Window Manager. Applications are separate `.zxe` processes and are not bundled into Aqua Desktop Environment.
 
-## 目录
+## Directory
 
 ```
 src/apps/ADE/
-  main.cpp        进程入口、ade_app 注册表、服务启动、事件循环
-  wallpaper.cpp   壁纸（rule 33 图片，整数缩放；无数据盘时 Aqua 渐变回退）
-  menubar.cpp     Aqua 菜单栏与 RTC 时钟
-  dock.cpp        Dock 绘制、悬停与点击启动器
-  icons.cpp       应用图标（内联 SVG，交给系统 SVG 光栅器）
-  about.cpp       关于窗口（Aqua Desktop Environment 内部应用）
-  winmgr/         Desktop Window Manager：焦点、z 序、拖动/关闭、输入路由、窗口装饰调用
-  compositor/     Desktop Window Compositor：后缓冲、损伤提交、软件光标
-  display/        命名端口服务、窗口协议、输入路由
-  （Z1 计划新增）decoration.cpp  窗口装饰绘制，颜色/度量来自 ZAF Aqua 令牌
+  main.cpp        process entry, ade_app registry, service startup, event loop
+  wallpaper.cpp   wallpaper (rule 33 image, integer scaling; Aqua gradient fallback without a data disk)
+  menubar.cpp     Aqua menu bar and RTC clock
+  dock.cpp        Dock drawing, hover, click launcher
+  icons.cpp       application icons (inline SVG, handed to the system SVG rasterizer)
+  about.cpp       About window (Aqua Desktop Environment internal application)
+  winmgr/         Desktop Window Manager: focus, z-order, drag/close, input routing, window decoration calls
+  compositor/     Desktop Window Compositor: back buffer, damage present, software cursor
+  display/        named port service, window protocol, input routing
+  (planned for Z1) decoration.cpp  window decoration drawing, colors/metrics from ZAF Aqua tokens
 ```
 
-Desktop Window Compositor（`compositor/`）拥有后缓冲和从后缓冲到帧缓冲的提交路径：Desktop
-Window Manager 决定每一层画什么，compositor 决定已完成的矩形何时上屏，并独立维护光标位置。
-ZAF（`src/zaf/`）提供图形光栅与主题令牌，模块地图见 `src/zaf/README.md`。
+Desktop Window Compositor (`compositor/`) owns the back buffer and the present path from the back buffer to the framebuffer: Desktop
+Window Manager decides what each layer draws, the compositor decides when completed rectangles go to the screen, and it maintains the cursor position independently.
+ZAF (`src/zaf/`) provides graphical rasterization and theme tokens; see `src/zaf/README.md` for the module map.
 
-光标形状来自 `/usr/share/cursors/Aqua` 的 PNG + `cursor.theme` 文本描述
-（`compositor/cursor.c`，PNG 由 `stb_image` 解码）。Desktop Window Manager 每轮按命中区域
-选择形状：菜单栏可点区域、Dock 图标和窗口关闭按钮用 `hand`；窗口内容交给应用的
-`ade_app.cursor_at` 回调；客户端用 `ADE_OP_CURSOR`（`ade_cursor()`）登记内容坐标里的
-光标区域，最后登记的优先。没有主题时回退到 Built-in 箭头。
+Cursor shapes come from PNG files plus a `cursor.theme` text descriptor under `/usr/share/cursors/Aqua`
+(`compositor/cursor.c`, with PNGs decoded by `stb_image`). Desktop Window Manager selects a shape per hit region on each round:
+menu bar clickable areas, Dock icons, and window close buttons use `hand`; window content goes to the application's
+`ade_app.cursor_at` callback; clients register cursor regions in content coordinates with `ADE_OP_CURSOR` (`ade_cursor()`),
+and the last registration wins. Without a theme it falls back to the built-in arrow.
 
-## 边界
+## Boundaries
 
-- Aqua Desktop Environment 不包含任何应用实现，只向外提供客户端 API 与端口协议。
-- Desktop Window Manager 不直接写帧缓冲：像素经 ZAF painter（当前转到系统 `render_*` API），
-  最终由 Desktop Window Compositor 提交。
-- 应用通过端口命令流提交绘制命令；Aqua Desktop Environment 校验并执行。
-- 输入事件由 Aqua Desktop Environment 路由到焦点窗口。
-- 字体由系统 `libzos` 从 `/mnt` 加载（MiSans / MiSans Global / Inter），
-  Aqua Desktop Environment 与应用都不自带字体。
+- Aqua Desktop Environment contains no application implementations; it only exposes the client API and port protocol.
+- Desktop Window Manager does not write the framebuffer directly: pixels go through the ZAF painter (currently forwarded to the system `render_*` API)
+  and are ultimately presented by Desktop Window Compositor.
+- Applications submit drawing commands through the port command stream; Aqua Desktop Environment validates and executes them.
+- Input events are routed by Aqua Desktop Environment to the focused window.
+- Fonts are loaded by the system `libzos` from `/mnt` (MiSans / MiSans Global / Inter);
+  neither Aqua Desktop Environment nor applications ship fonts.
 
-## 窗口协议（概要）
+## Window protocol (summary)
 
-客户端连接命名端口 `ade`，完成握手后：
+A client connects to the named port `ade`; after the handshake:
 
-- `CREATE_WINDOW`：标题、尺寸、图标、命令环共享内存。
-- `COMMIT`：序号 + damage 矩形，通知 Aqua Desktop Environment 执行命令流。
-- `CONFIGURE / DESTROY`：窗口状态与生命周期。
-- `INPUT`：Aqua Desktop Environment → 客户端的按键、点击、焦点事件。
-- `CLOSE`：Aqua Desktop Environment → 客户端关闭请求。
-- `CURSOR`：客户端 → Aqua Desktop Environment 的光标区域提示，矩形用内容坐标，
-  文本字段填主题里的光标名；`CLEAR` 会清空本帧登记的区域。
+- `CREATE_WINDOW`: title, size, icon, command ring shared memory.
+- `COMMIT`: sequence number + damage rectangles, telling Aqua Desktop Environment to execute the command stream.
+- `CONFIGURE / DESTROY`: window state and lifecycle.
+- `INPUT`: Aqua Desktop Environment → client key, click, and focus events.
+- `CLOSE`: Aqua Desktop Environment → client close request.
+- `CURSOR`: client → Aqua Desktop Environment cursor region hint; rectangles use content coordinates,
+  and the text field holds the cursor name from the theme. `CLEAR` clears the regions registered for this frame.
 
-命令流使用定长命令（opcode + 参数），覆盖填充、圆角、渐变、文本、SVG、
-裁剪与位图；Aqua Desktop Environment 用系统渲染接口在窗口表面执行，再合成到帧缓冲。
+The command stream uses fixed-length commands (opcode + arguments) covering fill, rounded corners, gradients, text, SVG,
+clipping, and bitmaps; Aqua Desktop Environment executes them on the window surface through the system rendering interface, then composites to the framebuffer.
 
-## 启动
+## Startup
 
-内核完成设备与文件系统初始化后启动 `/bin/aqua`；Aqua Desktop Environment 读取
-`/etc/ade/apps/*.desk` 构建 Dock 与启动器，按需 `spawn` 应用进程。
+After the kernel finishes device and filesystem initialization it starts `/bin/aqua`; Aqua Desktop Environment reads
+`/etc/ade/apps/*.desk` to build the Dock and launcher, and `spawn`s application processes on demand.

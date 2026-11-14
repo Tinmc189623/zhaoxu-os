@@ -9,9 +9,12 @@
  */
 #include "../proc/process_internal.h"
 
+#include <epoll.h>
+#include <eventfd.h>
 #include <memfd.h>
 #include <spinlock.h>
 #include <string.h>
+#include <timerfd.h>
 #include <types.h>
 #include <unix_socket.h>
 #include <zfd.h>
@@ -26,6 +29,12 @@ static void object_ref(int type, void *object)
         unix_ref((struct unix_socket *)object);
     else if (type == ZFD_TYPE_MEMFD)
         memfd_ref((struct memfd *)object);
+    else if (type == ZFD_TYPE_EVENTFD)
+        eventfd_ref((struct eventfd *)object);
+    else if (type == ZFD_TYPE_TIMERFD)
+        timerfd_ref((struct timerfd *)object);
+    else if (type == ZFD_TYPE_EPOLL)
+        epoll_ref((struct epoll *)object);
 }
 
 static void object_release(int type, void *object)
@@ -36,6 +45,12 @@ static void object_release(int type, void *object)
         unix_release((struct unix_socket *)object);
     else if (type == ZFD_TYPE_MEMFD)
         memfd_release((struct memfd *)object);
+    else if (type == ZFD_TYPE_EVENTFD)
+        eventfd_release((struct eventfd *)object);
+    else if (type == ZFD_TYPE_TIMERFD)
+        timerfd_release((struct timerfd *)object);
+    else if (type == ZFD_TYPE_EPOLL)
+        epoll_release((struct epoll *)object);
 }
 
 struct zfd_entry *zfd_get(struct process *process, int fd)
@@ -164,6 +179,26 @@ int zfd_read(struct process *process, int fd, void *buffer, u64 length)
     if (entry->type == ZFD_TYPE_MEMFD)
         return memfd_read((struct memfd *)entry->object, &entry->offset,
                           buffer, length);
+    if (entry->type == ZFD_TYPE_EVENTFD) {
+        if (length < sizeof(u64))
+            return -1;
+        u64 value = 0;
+        int result = eventfd_read((struct eventfd *)entry->object, nonblock,
+                                  &value);
+        if (result == 8)
+            memcpy(buffer, &value, sizeof(value));
+        return result;
+    }
+    if (entry->type == ZFD_TYPE_TIMERFD) {
+        if (length < sizeof(u64))
+            return -1;
+        u64 value = 0;
+        int result = timerfd_read((struct timerfd *)entry->object, nonblock,
+                                  &value);
+        if (result == 8)
+            memcpy(buffer, &value, sizeof(value));
+        return result;
+    }
     return -1;
 }
 
@@ -179,6 +214,13 @@ int zfd_write(struct process *process, int fd, const void *buffer, u64 length)
     if (entry->type == ZFD_TYPE_MEMFD)
         return memfd_write((struct memfd *)entry->object, &entry->offset,
                            buffer, length);
+    if (entry->type == ZFD_TYPE_EVENTFD) {
+        if (length < sizeof(u64))
+            return -1;
+        u64 value = 0;
+        memcpy(&value, buffer, sizeof(value));
+        return eventfd_write((struct eventfd *)entry->object, value, nonblock);
+    }
     return -1;
 }
 
@@ -208,6 +250,13 @@ short zfd_poll_events(struct process *process, int fd, short events)
         return unix_poll((struct unix_socket *)entry->object, events);
     if (entry->type == ZFD_TYPE_MEMFD)
         return memfd_poll((struct memfd *)entry->object, events);
+    if (entry->type == ZFD_TYPE_EVENTFD)
+        return eventfd_poll((struct eventfd *)entry->object, events);
+    if (entry->type == ZFD_TYPE_TIMERFD)
+        return timerfd_poll((struct timerfd *)entry->object, events);
+    /* epoll descriptors are waited on with epoll_wait, not polled. */
+    if (entry->type == ZFD_TYPE_EPOLL)
+        return 0;
     return 32;
 }
 

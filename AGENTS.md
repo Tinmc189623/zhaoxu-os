@@ -135,6 +135,7 @@ iso-root/
 7. legacy BIOS 的 RSDP 由 stage2 在低端 1 MiB 按字节扫描（QEMU q35/SeaBIOS 会放在非规范位置）；内核 `apic_locate_rsdp` 再做一次兜底扫描，二者都找不到时退回单 CPU，仍用 LAPIC 计时。
 8. 帧缓冲与桌面：`make run-iso QEMU_DISPLAY="-display gtk"` 人工查看；无头回归用 QEMU HMP `screendump /tmp/ade.ppm`（QEMU 输出 PPM，可用脚本转 PNG），检查菜单栏、窗口层叠、Dock 与 SVG 图标。`ruby src/tools/smoke.rb` 的 Shell 命令流程仅在无帧缓冲回退 8sh 时有效。
 9. M0 传输回归：`ruby tools/build.rb M0_BOOT_TEST=1 out/kernel.elf -o out/initramfs.tar` 构建自测内核（initramfs 需含 `/data/NET_TEST.ZXE`），用 OVMF 从 FAT ESP 引导后，串口应出现 `[m0] socket, poll, memfd, mmap, SCM_RIGHTS PASS` 和 `[m0 ] NET_TEST exit 0`。该测试覆盖 socketpair、poll、memfd、mmap、SCM_RIGHTS 与 O_NONBLOCK。
+10. M5 事件循环回归：ISO 启动后在 8sh 运行 `/data/M5_TEST.ZXE`，串口应出现 `[m5] eventfd PASS`、`[m5] epoll PASS`、`[m5] timerfd PASS` 与 `[m5] eventfd, timerfd, epoll PASS`。该测试覆盖系统调用 61–67：eventfd 计数/非阻塞读写、timerfd 一次性到期、epoll 注册/等待/超时。
 
 ## 架构与不变量
 

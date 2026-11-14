@@ -116,8 +116,8 @@ patch(File.join(src, "initramfs", "etc", "version"), [
 ])
 
 patch(File.join(ROOT, "README.md"), [
-  [/\*\*当前版本：[0-9.]+ 「[^」]*」( · 内核 [0-9.]+)?( · 构建 \d+)?\*\*/,
-   "**当前版本：#{OS_VERSION} 「#{CODENAME}」 · 内核 #{KERNEL_VERSION} · 构建 #{BUILD}**"],
+  [/\*\*Current version: [0-9.]+ 「[^」]*」( · kernel [0-9.]+)?( · build \d+)?\*\*/,
+   "**Current version: #{OS_VERSION} 「#{CODENAME}」 · kernel #{KERNEL_VERSION} · build #{BUILD}**"],
 ])
 
 puts "version.cfg -> #{NAME} #{OS_VERSION} \"#{CODENAME}\", " \

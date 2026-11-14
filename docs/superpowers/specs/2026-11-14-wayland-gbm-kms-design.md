@@ -1,145 +1,170 @@
-# Wayland 合成器 + GBM + DRM/KMS 强制架构
+# Wayland Compositor + GBM + DRM/KMS Mandatory Architecture
 
-状态：已定稿（2026-11-14）
-适用范围：Desktop Window Compositor、Aqua Desktop Environment、Ring3 显示驱动、内核 IPC。
+Status: Final (2026-11-14)
+Scope: Desktop Window Compositor, Aqua Desktop Environment, Ring3 display driver, kernel IPC.
 
-## 1. 合规基线
+## 1. Compliance baseline
 
-最终系统必须让 stock `libwayland` 客户端直接连上并工作，不是“类似 Wayland”的自定义协议。
+The final system must let stock `libwayland` clients connect and work directly — not a "Wayland-like" custom protocol.
 
-- Wayland 1.x 核心接口：`wl_display`、`wl_registry`、`wl_callback`、`wl_compositor`、
-  `wl_surface`、`wl_region`、`wl_shm`、`wl_shm_pool`、`wl_buffer`、`wl_seat`、
-  `wl_pointer`、`wl_keyboard`、`wl_output`。
-- `xdg-shell`（`xdg_wm_base`、`xdg_surface`、`xdg_toplevel`、`xdg_popup`）。
-- 缓冲区：`wl_shm` 与 `linux-dmabuf-unstable-v1`；不接受自定义 buffer 接口作为唯一路径。
-- 传输：`AF_UNIX` + `SOCK_STREAM`，socket 路径 `$XDG_RUNTIME_DIR/wayland-0`。
-- 文件描述符：`SCM_RIGHTS` 随消息传递；`wl_shm_pool.create_buffer` 拿到的是真实 fd。
-- 阻塞与多路复用：`poll`/`ppoll` 至少支持 socket 与 Wayland 内部事件源。
-- 消息编码严格按 `wayland.xml`：`sender_id`、`opcode | size << 16`、参数按接口签名
-  顺序打包，字符串与数组按 4 字节对齐，fd 走 ancillary data。
-- 验收客户端：`weston-simple-shm`、`weston-terminal`、一个 `xdg-shell` 测试客户端。
+- Wayland 1.x core interfaces: `wl_display`, `wl_registry`, `wl_callback`, `wl_compositor`,
+  `wl_surface`, `wl_region`, `wl_shm`, `wl_shm_pool`, `wl_buffer`, `wl_seat`,
+  `wl_pointer`, `wl_keyboard`, `wl_output`.
+- `xdg-shell` (`xdg_wm_base`, `xdg_surface`, `xdg_toplevel`, `xdg_popup`).
+- Buffers: `wl_shm` and `linux-dmabuf-unstable-v1`; a custom buffer interface is not accepted as the only path.
+- Transport: `AF_UNIX` + `SOCK_STREAM`, socket path `$XDG_RUNTIME_DIR/wayland-0`.
+- File descriptors: `SCM_RIGHTS` travels with messages; `wl_shm_pool.create_buffer` receives a real fd.
+- Blocking and multiplexing: `poll`/`ppoll` must support at least sockets and Wayland's internal event sources.
+- Message encoding follows `wayland.xml` strictly: `sender_id`, `opcode | size << 16`, arguments packed in
+  interface signature order, strings and arrays 4-byte aligned, fds carried in ancillary data.
+- Acceptance clients: `weston-simple-shm`, `weston-terminal`, one `xdg-shell` test client.
 
-## 2. 强制呈现管线
+## 2. Mandatory presentation pipeline
 
 ```
-客户端 wl_surface.commit
+Client wl_surface.commit
         │
         ▼
-合成器导入缓冲区（wl_shm / dma-buf）
+Compositor imports the buffer (wl_shm / dma-buf)
         │
         ▼
-GPU 渲染、合成到 GBM BO
+GPU renders and composites into a GBM BO
         │
         ▼
-KMS 原子提交（plane + framebuffer + crtc）
+KMS atomic commit (plane + framebuffer + crtc)
         │
         ▼
-扫描输出，page flip 完成（vsync/fence）后回收旧 BO
+Scan out; recycle the old BO once the page flip completes (vsync/fence)
 ```
 
-软件光栅只能作为 GPU 不可用时的回退，且必须写入同一块 GBM BO，走同一条 KMS 提交路径；
-不允许再把 `render_blit` 直接写 `fb_map` 作为桌面主路径。
+Software rasterization is allowed only as a fallback when the GPU is unavailable, and it must write into the same
+GBM BO and take the same KMS commit path; `render_blit` writing straight into `fb_map` is no longer permitted as the
+desktop's main path.
 
-## 3. 当前差距
+## 3. Current gaps
 
-| 层 | 现状 | 目标 |
+| Layer | Current state | Target |
 | --- | --- | --- |
-| 传输 | 命名端口 `sys_port_*`，消息式 | AF_UNIX 流 socket + SCM_RIGHTS |
-| fd | 全局 VFS 文件表、端口句柄，无 per-process fd | 统一 fd 表，支持 socket、memfd、dma-buf |
-| 缓冲 | `shm_create/map` 共享页，无 fd | memfd + dma-buf export/import |
-| 显示 | 固件 GOP 线性帧缓冲，`fb_map` | KMS 服务：CRTC/connector/plane/framebuffer |
-| 提交 | `render_blit` 到帧缓冲 | atomic commit + page flip + fence |
-| GPU | virtio-gpu 仅 virgl `SUBMIT_3D` | 2D scanout + virgl 合成 + dmabuf |
-| GBM | 无 | `gbm_device`/`gbm_bo`/`gbm_surface` |
-| 桌面协议 | ADE 自定义端口命令流 | Wayland 服务端 + xdg-shell |
+| Transport | Named ports `sys_port_*`, message-based | AF_UNIX stream sockets + SCM_RIGHTS |
+| fd | Global VFS file table, port handles, no per-process fd | Unified fd table supporting socket, memfd, dma-buf |
+| Buffer | `shm_create/map` shared pages, no fd | memfd + dma-buf export/import |
+| Display | Firmware GOP linear framebuffer, `fb_map` | KMS service: CRTC/connector/plane/framebuffer |
+| Present | `render_blit` into the framebuffer | atomic commit + page flip + fence |
+| GPU | virtio-gpu virgl `SUBMIT_3D` only | 2D scanout + virgl compositing + dmabuf |
+| GBM | None | `gbm_device`/`gbm_bo`/`gbm_surface` |
+| Desktop protocol | ADE custom port command stream | Wayland server + xdg-shell |
 
-## 4. 分层与文件
+## 4. Layering and files
 
-### 4.1 内核
+### 4.1 Kernel
 
-- `src/kernel/net/unix.c`：`AF_UNIX` 流 socket、监听、连接、背压、关闭。
-- `src/kernel/ipc/fd.c`：统一 fd 表；socket/memfd/dma-buf/shm 句柄都进这张表。
-- `src/kernel/ipc/scm.c`：`sendmsg`/`recvmsg` 与 `SCM_RIGHTS`。
-- `src/kernel/fs/memfd.c`：匿名可 seek 的共享内存文件，支持多次 mmap。
-- `src/kernel/ipc/dmabuf.c`：dma-buf 对象、attach、map、export fd。
-- `src/kernel/ipc/poll.c`：`poll`/`ppoll`，等待队列与唤醒。
-- 系统调用号追加在 `kernel/proc/syscall.c` 与 `user/userlib.h`，两边同步。
+- `src/kernel/net/unix.c`: `AF_UNIX` stream sockets, listen, connect, backpressure, close.
+- `src/kernel/ipc/fd.c`: unified fd table; socket/memfd/dma-buf/shm handles all live in this table.
+- `src/kernel/ipc/scm.c`: `sendmsg`/`recvmsg` with `SCM_RIGHTS`.
+- `src/kernel/fs/memfd.c`: anonymous seekable shared-memory files, mmap-able more than once.
+- `src/kernel/ipc/dmabuf.c`: dma-buf objects, attach, map, export fd.
+- `src/kernel/ipc/poll.c`: `poll`/`ppoll`, wait queues and wakeups.
+- Syscall numbers are appended in `kernel/proc/syscall.c` and `user/userlib.h`, kept in sync on both sides.
 
-### 4.2 Ring3 显示服务（KMS）
+### 4.2 Ring3 display service (KMS)
 
-- `src/apps/display/`：独立进程 `/bin/display`，内核启动时以可信身份 spawn，拥有
-  0..4 GiB 恒等映射与 IOPL=3。
-- `kms.c`：CRTC/connector/plane/framebuffer/dumb buffer 对象与原子提交状态机。
-- `virtio_gpu.c`：2D resource、backing、set_scanout、transfer、flush、fence。
-- `scanout.c`：双缓冲/三缓冲、flip 队列、完成回执。
-- `protocol.h`：与合成器的端口消息（创建 fb、提交 flip、等待完成）。
-- 现有 `/bin/drivers` 不再初始化 virtio-gpu，避免两个进程抢同一个控制队列。
+- `src/apps/display/`: a standalone process `/bin/display`, spawned with trusted identity at kernel boot, owning
+  the 0..4 GiB identity mapping and IOPL=3.
+- `kms.c`: CRTC/connector/plane/framebuffer/dumb buffer objects and the atomic commit state machine.
+- `virtio_gpu.c`: 2D resource, backing, set_scanout, transfer, flush, fence.
+- `scanout.c`: double/triple buffering, flip queue, completion acknowledgements.
+- `protocol.h`: port messages with the compositor (create fb, submit flip, wait for completion).
+- The existing `/bin/drivers` no longer initializes virtio-gpu, so two processes never fight over the same control queue.
 
 ### 4.3 GBM
 
-- `src/user/lib/gbm/`：`gbm_create_device`、`gbm_device_get_fd`、`gbm_bo_create`、
-  `gbm_bo_map`、`gbm_bo_get_stride`、`gbm_bo_get_fd`、`gbm_surface_*`。
-- dumb 后端：memfd + KMS dumb buffer。
-- gpu 后端：virgl resource + dmabuf；接口不变。
+- `src/user/lib/gbm/`: `gbm_create_device`, `gbm_device_get_fd`, `gbm_bo_create`,
+  `gbm_bo_map`, `gbm_bo_get_stride`, `gbm_bo_get_fd`, `gbm_surface_*`.
+- dumb backend: memfd + KMS dumb buffer.
+- gpu backend: virgl resource + dmabuf; the interface is unchanged.
 
-### 4.4 合成器与 Wayland 服务端
+### 4.4 Compositor and Wayland server
 
-- `src/apps/ADE/wayland/`：对象表、`wl_display` 事件循环、资源生命周期。
-- `interfaces/`：按 XML 生成的接口表（生成器用 Ruby，遵守规则 6）。
-- `compositor.c`：surface 状态、damage、frame callback、subsurface。
-- `xdg_shell.c`：toplevel/popup 状态机、configure/ack_configure。
-- `seat.c`：pointer/keyboard 焦点、enter/leave、按键映射。
-- `output.c`：`wl_output`、KMS connector 绑定。
-- `renderer/`：软件光栅与 virgl 两条实现，输出到 GBM BO。
-- `output_kms.c`：GBM surface → KMS atomic commit → flip 完成回收。
+- `src/apps/ADE/wayland/`: object table, `wl_display` event loop, resource lifetimes.
+- `interfaces/`: interface tables generated from the XML (the generator is Ruby, per rule 6).
+- `compositor.c`: surface state, damage, frame callbacks, subsurfaces.
+- `xdg_shell.c`: toplevel/popup state machine, configure/ack_configure.
+- `seat.c`: pointer/keyboard focus, enter/leave, keymap.
+- `output.c`: `wl_output`, KMS connector binding.
+- `renderer/`: software raster and virgl implementations, both writing into a GBM BO.
+- `output_kms.c`: GBM surface → KMS atomic commit → recycle on flip completion.
 
-### 4.5 客户端
+### 4.5 Clients
 
-- `src/user/lib/wayland/`：Zhaoxu 的 `libwayland-client` 实现，API 与 stock 库一致，
-  传输走 AF_UNIX + SCM_RIGHTS。
-- 现有 welcome/calc/install 迁移为 Wayland 客户端，删除 `ADE_OP_*` 绘制命令流。
+- `src/user/lib/wayland/`: Zhaoxu's `libwayland-client` implementation, API-identical to the stock library,
+  with AF_UNIX + SCM_RIGHTS transport.
+- The existing welcome/calc/install migrate to Wayland clients, and the `ADE_OP_*` drawing command stream is deleted.
 
-## 5. 里程碑与验收
+## 5. Milestones and acceptance
 
-| 里程碑 | 内容 | 验收 |
+| Milestone | Content | Acceptance |
 | --- | --- | --- |
-| M0 | AF_UNIX、fd 表、SCM_RIGHTS、memfd、poll | 已验证。`kernel/ipc/zfd.c`、`unix_socket.c`、`memfd.c`、`proc/io_syscall.c`；`/data/NET_TEST.ZXE` 在 OVMF 下输出 `[m0] socket, poll, memfd, mmap, SCM_RIGHTS PASS`，退出码 0 |
-| M1 | `/bin/display` KMS 服务 + virtio-gpu 2D + GBM dumb | 已验证：modern virtio-pci、memfd 扫描缓冲、双缓冲 flip；QEMU 1280x800 两帧不同（`out/m1e.png` / `out/m1f.png`） |
-| M2 | Wayland 核心 + wl_shm + wl_compositor | 已验证到 KMS：`/bin/wayland` 提供 wl_display/registry/compositor/surface/wl_shm/wl_shm_pool/wl_buffer，`/bin/wldemo` 经 AF_UNIX + SCM_RIGHTS 提交 320x240 memfd；服务端把帧合成到 `/bin/display` 的 1280x800 扫描缓冲并翻页，`out/m2frame.png` 可见居中蓝块。stock `weston-simple-shm` 仍缺 libwayland/epoll/eventfd |
-| M3 | xdg-shell + wl_seat | 已验证：xdg configure/ack、wl_seat/wl_pointer、wl_keyboard keymap/enter、服务端标题栏/关闭按钮/拖动、demo toplevel 合成；按键事件与 welcome/calc 迁移待续 |
-| M4 | virgl GPU 合成 + linux-dmabuf | 进行中：modern virtio 控制队列按设备值接受 256/64，`CTX_CREATE`、3D 资源（72 字节命令含 padding）创建与 `CTX_ATTACH_RESOURCE` 在 `virtio-gpu-gl-pci` 上成功；Windows QEMU 的 virglrenderer 对 2D/3D 资源均不注册，`SET_SCANOUT` 返回 `0x1203`，GPU 合成与 dmabuf 未完成 |
-| M5 | stock 客户端与一致性回归 | `weston-terminal`、xdg-shell 测试套件全绿 |
+| M0 | AF_UNIX, fd table, SCM_RIGHTS, memfd, poll | Validated. `kernel/ipc/zfd.c`, `unix_socket.c`, `memfd.c`, `proc/io_syscall.c`; under OVMF `/data/NET_TEST.ZXE` prints `[m0] socket, poll, memfd, mmap, SCM_RIGHTS PASS` and exits with code 0 |
+| M1 | `/bin/display` KMS service + virtio-gpu 2D + GBM dumb | Validated: modern virtio-pci, memfd scanout buffer, double-buffered flip; two QEMU frames at 1280x800 differ (`out/m1e.png` / `out/m1f.png`) |
+| M2 | Wayland core + wl_shm + wl_compositor | Validated through to KMS: `/bin/wayland` provides wl_display/registry/compositor/surface/wl_shm/wl_shm_pool/wl_buffer, and `/bin/wldemo` submits a 320x240 memfd over AF_UNIX + SCM_RIGHTS; the server composites the frame into `/bin/display`'s 1280x800 scanout buffer and flips it, with the centered blue block visible in `out/m2frame.png`. Stock `weston-simple-shm` still needs libwayland/epoll/eventfd |
+| M3 | xdg-shell + wl_seat | Validated: xdg configure/ack, wl_seat/wl_pointer, wl_keyboard keymap/enter, server-side title bar/close button/dragging, demo toplevel compositing; key events and the welcome/calc migration are pending |
+| M4 | virgl GPU compositing + linux-dmabuf | In progress: modern virtio control queues accept 256/64 per the device values, `CTX_CREATE`, 3D resource creation (72-byte command including padding) and `CTX_ATTACH_RESOURCE` succeed on `virtio-gpu-gl-pci`; virglrenderer under Windows QEMU registers neither 2D nor 3D resources, `SET_SCANOUT` returns `0x1203`, and GPU compositing plus dmabuf are unfinished |
+| M5 | Stock clients and consistency regression | Kernel prerequisites validated: `eventfd`, `timerfd`, and `epoll` (syscalls 61–67) with per-descriptor object types, and `/data/M5_TEST.ZXE` prints `[m5] eventfd, timerfd, epoll PASS` plus `[m5 ] M5_TEST exit 0` under OVMF. The stock libwayland client library port and the welcome/calc migration are still pending, so `weston-terminal` and the xdg-shell test suite are not green yet |
 
-依赖关系：M0 是 M2 的前提；M1 是 M2 呈现的前提；M4 可以并行于 M3。
+Dependencies: M0 is a prerequisite for M2; M1 is a prerequisite for M2 presentation; M4 can run in parallel with M3.
 
-### M0 验证记录（2026-11-14）
+### M0 verification record (2026-11-14)
 
-`M0_BOOT_TEST=1` 构建的内核通过 OVMF + vvfat ESP 启动，内核直接 spawn
-`/data/NET_TEST.ZXE`；串口输出：
+A kernel built with `M0_BOOT_TEST=1` booted through OVMF + a vvfat ESP and spawned
+`/data/NET_TEST.ZXE` directly; serial output:
 
 ```
 [m0] socket, poll, memfd, mmap, SCM_RIGHTS PASS
 [m0 ] NET_TEST exit 0
 ```
 
-验证过程中修掉一个已有的堆破坏：`kernel/fs/blockfs.c` 的 `read_block_raw()` 按
-`stride` 分配 bounce buffer，但 `block_disk_read()` 总是传 `sectors * 512` 字节；
-当逻辑块为 2352 字节（5 个 512 扇区）时越界 208 字节，踩坏内核堆块头并导致
-后续 `kmalloc` 全部失败。现在按 `sectors * 512` 分配。
+The verification run fixed a pre-existing heap corruption: `read_block_raw()` in
+`kernel/fs/blockfs.c` sized its bounce buffer from `stride`, but `block_disk_read()` always
+passes `sectors * 512` bytes; with a 2352-byte logical block (5 × 512 sectors) that ran 208
+bytes past the end, trampled the kernel heap chunk header, and made every later `kmalloc`
+fail. It now allocates `sectors * 512`.
 
-## 6. 风险与约束
+### M5 verification record (2026-11-14)
 
-- 固件 GOP 已经初始化显示控制器。KMS 接管前必须读取当前模式并做一次干净的
-  modeset，不能假设设备处于复位状态。
-- legacy virtio-pci 只有 I/O BAR，没有 MSI-X；fence 完成用控制队列 used ring
-  轮询，不能假装有中断。
-- 真实硬件需要 i915/amdgpu 级别的 KMS 驱动；首期只承诺 virtio-gpu，
-  其他 GPU 走软件渲染回退。
-- `SCM_RIGHTS` 与 dma-buf 是安全边界：fd 只能传给同一用户/会话，显示服务是
-  唯一持有 scanout 能力的进程。
-- 当前开发机缺 `xorriso`、`dosfstools`、`mtools`、`squashfs-tools`、PATH 中的
-  QEMU，以及 `x86_64-elf-gcc`（Ada 驱动）。这些不补齐，M0/M1 无法做运行验证。
+A kernel built with `M5_BOOT_TEST=1` booted through OVMF and spawned
+`/data/M5_TEST.ZXE` directly; serial output:
 
-## 7. 非目标
+```
+[m5 ] running /data/M5_TEST.ZXE
+[m5] eventfd PASS
+[m5] epoll PASS
+[m5] timerfd PASS
+[m5] eventfd, timerfd, epoll PASS
+[m5 ] M5_TEST exit 0
+```
 
-XWayland、多 GPU、HDR、可变刷新率、分数缩放、远程桌面、无障碍树。
+The test covers the Linux-compatible event ABI: `eventfd` counter reads and writes,
+`EFD_NONBLOCK` returning `-1` on an empty counter, `timerfd` one-shot expiration,
+`epoll_ctl` registration, level-triggered `epoll_wait`, and a timeout with no ready
+descriptors. Descriptors are stored in the existing per-process zfd table above
+`ZFD_BASE`; `epoll` entries are fixed at 32 per object, and the wait path sleeps in
+1 ms slices like the existing `poll` syscall.
+
+## 6. Risks and constraints
+
+- Firmware GOP has already initialized the display controller. Before KMS takes over it must
+  read the current mode and perform one clean modeset; the device cannot be assumed to be in
+  a reset state.
+- Legacy virtio-pci has only an I/O BAR and no MSI-X; fence completion polls the control
+  queue's used ring instead of pretending an interrupt exists.
+- Real hardware needs i915/amdgpu-class KMS drivers; the first phase commits only to
+  virtio-gpu, and other GPUs go through the software rendering fallback.
+- `SCM_RIGHTS` and dma-buf are security boundaries: fds may only be passed within the same
+  user/session, and the display service is the only process holding scanout capability.
+- The current development machine lacks `xorriso`, `dosfstools`, `mtools`, `squashfs-tools`,
+  QEMU on PATH, and `x86_64-elf-gcc` (for the Ada drivers). Until those are supplied, M0/M1
+  cannot be run-verified.
+
+## 7. Non-goals
+
+XWayland, multiple GPUs, HDR, variable refresh rate, fractional scaling, remote desktop, accessibility tree.

@@ -92,15 +92,22 @@ SCHED_STATS ?= 0
 CFLAGS += -DPROC_SELFTEST=$(PROC_SELFTEST) -DDEBUG_SERIAL=$(DEBUG_SERIAL) -DSCHED_STATS=$(SCHED_STATS)
 M0_BOOT_TEST ?= 0
 CFLAGS += -DM0_BOOT_TEST=$(M0_BOOT_TEST)
-# make does not track CFLAGS changes; a stamp keyed by the test mode forces
-# kernel/main.o to rebuild when M0_BOOT_TEST toggles, so an ISO cannot
-# silently ship the boot-time transport self-test kernel.
+M5_BOOT_TEST ?= 0
+CFLAGS += -DM5_BOOT_TEST=$(M5_BOOT_TEST)
+# make does not track CFLAGS changes; stamps keyed by the test mode force
+# kernel/main.o to rebuild when a boot-time test toggles, so an ISO cannot
+# silently ship a self-test kernel.
 M0_STAMP := $(BUILD)/m0-$(M0_BOOT_TEST).stamp
 $(BUILD)/m0-%.stamp:
 	@mkdir -p $(BUILD)
 	@rm -f $(BUILD)/m0-*.stamp
 	@touch $@
-$(BUILD)/kernel/main.o: $(M0_STAMP)
+M5_STAMP := $(BUILD)/m5-$(M5_BOOT_TEST).stamp
+$(BUILD)/m5-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/m5-*.stamp
+	@touch $@
+$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP)
 ADAFLAGS := -c -gnatp -gnat2022 -O2 -g -fno-pie \
             -fno-stack-protector -mno-red-zone -mcmodel=kernel \
             -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -mno-avx \
@@ -171,6 +178,9 @@ C_SRCS := kernel/main.c \
           kernel/ipc/zfd.c \
           kernel/ipc/unix_socket.c \
           kernel/ipc/memfd.c \
+          kernel/ipc/eventfd.c \
+          kernel/ipc/timerfd.c \
+          kernel/ipc/epoll.c \
           kernel/lib/string.c \
           kernel/lib/printf.c \
           kernel/lib/console.c \
@@ -475,7 +485,7 @@ RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/aqua $(RAMFS)/bin/8sh \
                $(RAMFS)/data/HELLO.ELF \
                $(RAMFS)/data/DOCS/INFO.TXT \
                $(RAMFS)/data/PING.ZXE $(RAMFS)/data/PONG.ZXE \
-               $(RAMFS)/data/NET_TEST.ZXE
+               $(RAMFS)/data/NET_TEST.ZXE $(RAMFS)/data/M5_TEST.ZXE
 
 # PNG + text cursor theme.  The compositor loads this from
 # /usr/share/cursors/Aqua at startup and falls back to the built-in arrow
@@ -569,6 +579,11 @@ $(RAMFS)/data/PONG.ZXE: $(OUT)/pong.zxe
 
 # M0 transport regression: socketpair, poll, memfd, mmap, SCM_RIGHTS.
 $(RAMFS)/data/NET_TEST.ZXE: $(OUT)/net_test.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+# M5 event loop regression: eventfd, timerfd, epoll.
+$(RAMFS)/data/M5_TEST.ZXE: $(OUT)/m5_test.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 

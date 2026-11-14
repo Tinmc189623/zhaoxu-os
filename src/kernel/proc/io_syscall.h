@@ -33,5 +33,15 @@ long sys_ipc_fcntl(struct process *process, u64 fd, u64 command,
 long sys_ipc_read(struct process *process, u64 fd, u64 buffer, u64 length);
 long sys_ipc_write(struct process *process, u64 fd, u64 buffer, u64 length);
 long sys_ipc_close(struct process *process, u64 fd);
+long sys_ipc_eventfd(struct process *process, u64 initial, u64 flags);
+long sys_ipc_timerfd_create(struct process *process, u64 clock_id, u64 flags);
+long sys_ipc_timerfd_settime(struct process *process, u64 fd, u64 flags,
+                             u64 new_value, u64 old_value);
+long sys_ipc_timerfd_gettime(struct process *process, u64 fd, u64 current);
+long sys_ipc_epoll_create1(struct process *process, u64 flags);
+long sys_ipc_epoll_ctl(struct process *process, u64 epfd, u64 op, u64 fd,
+                       u64 event_pointer);
+long sys_ipc_epoll_wait(struct process *process, u64 epfd, u64 events,
+                        u64 max_events, u64 timeout);
 
 #endif
