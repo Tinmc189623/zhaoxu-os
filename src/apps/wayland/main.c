@@ -22,7 +22,13 @@ enum object_type {
     OBJ_SURFACE,
     OBJ_SHM,
     OBJ_POOL,
-    OBJ_BUFFER
+    OBJ_BUFFER,
+    OBJ_XDG_WM_BASE,
+    OBJ_XDG_SURFACE,
+    OBJ_XDG_TOPLEVEL,
+    OBJ_SEAT,
+    OBJ_POINTER,
+    OBJ_KEYBOARD
 };
 
 struct object {
@@ -291,6 +297,63 @@ static void send_done(u32 callback, u32 data)
     send_all(message, at);
 }
 
+static u32 g_serial = 1;
+
+static void send_xdg_configure(u32 toplevel, u32 surface)
+{
+    u8 message[32];
+    u32 at = put_header(message, toplevel, 0);
+    at = put_u32(message, at, 400);
+    at = put_u32(message, at, 300);
+    at = put_u32(message, at, 0); /* empty states array */
+    finish_message(message, at);
+    send_all(message, at);
+
+    at = put_header(message, surface, 0);
+    at = put_u32(message, at, g_serial++);
+    finish_message(message, at);
+    send_all(message, at);
+}
+
+static void send_seat_caps(u32 seat)
+{
+    u8 message[16];
+    u32 at = put_header(message, seat, 0);
+    at = put_u32(message, at, 3); /* pointer | keyboard */
+    finish_message(message, at);
+    send_all(message, at);
+}
+
+static void send_pointer_events(u32 pointer, u32 surface)
+{
+    u8 message[32];
+    u32 time = (u32)sys_uptime();
+    u32 at = put_header(message, pointer, 0); /* enter */
+    at = put_u32(message, at, g_serial++);
+    at = put_u32(message, at, surface);
+    at = put_u32(message, at, 160u << 8);
+    at = put_u32(message, at, 120u << 8);
+    finish_message(message, at);
+    send_all(message, at);
+
+    at = put_header(message, pointer, 2); /* motion */
+    at = put_u32(message, at, time);
+    at = put_u32(message, at, 160u << 8);
+    at = put_u32(message, at, 120u << 8);
+    finish_message(message, at);
+    send_all(message, at);
+
+    for (u32 state = 1; state <= 2; state++) {
+        at = put_header(message, pointer, 3); /* button */
+        at = put_u32(message, at, g_serial++);
+        at = put_u32(message, at, time);
+        at = put_u32(message, at, 0x110);
+        at = put_u32(message, at, state == 1 ? 1 : 0);
+        finish_message(message, at);
+        send_all(message, at);
+    }
+}
+
 static u32 get_u32(const u8 *message, u32 at)
 {
     return *(const u32 *)(message + at);
@@ -328,6 +391,8 @@ static int dispatch(u32 id, u16 opcode, const u8 *message, u32 size)
             if (object_new(registry_id, OBJ_REGISTRY)) {
                 send_global(registry_id, 1, "wl_compositor", 1);
                 send_global(registry_id, 2, "wl_shm", 1);
+                send_global(registry_id, 3, "xdg_wm_base", 1);
+                send_global(registry_id, 4, "wl_seat", 1);
             }
         }
         break;
@@ -348,6 +413,12 @@ static int dispatch(u32 id, u16 opcode, const u8 *message, u32 size)
                 object_new(new_id, OBJ_COMPOSITOR);
             else if (str_equal(interface, "wl_shm"))
                 object_new(new_id, OBJ_SHM);
+            else if (str_equal(interface, "xdg_wm_base"))
+                object_new(new_id, OBJ_XDG_WM_BASE);
+            else if (str_equal(interface, "wl_seat")) {
+                object_new(new_id, OBJ_SEAT);
+                send_seat_caps(new_id);
+            }
         }
         break;
     case OBJ_COMPOSITOR:
@@ -378,6 +449,43 @@ static int dispatch(u32 id, u16 opcode, const u8 *message, u32 size)
                 buffer->stride = get_u32(message, 24);
                 buffer->format = get_u32(message, 28);
             }
+        }
+        break;
+    case OBJ_XDG_WM_BASE:
+        if (opcode == 2 && size >= 16) {
+            u32 new_id = get_u32(message, 8);
+            u32 surface = get_u32(message, 12);
+            struct object *xdg = object_new(new_id, OBJ_XDG_SURFACE);
+            if (xdg)
+                xdg->buffer_id = surface;
+        }
+        break;
+    case OBJ_XDG_SURFACE:
+        if (opcode == 1 && size >= 12) {
+            u32 new_id = get_u32(message, 8);
+            if (object_new(new_id, OBJ_XDG_TOPLEVEL))
+                send_xdg_configure(new_id, object->id);
+        } else if (opcode == 4 && size >= 12) {
+            u_puts("[wayland] xdg ack_configure ");
+            u_putn((long)get_u32(message, 8));
+            u_puts("\n");
+        }
+        break;
+    case OBJ_SEAT:
+        if (opcode == 0 && size >= 12) {
+            u32 new_id = get_u32(message, 8);
+            if (object_new(new_id, OBJ_POINTER)) {
+                u32 surface = 0;
+                for (int i = 0; i < MAX_OBJECTS; i++)
+                    if (g_objects[i].used &&
+                        g_objects[i].type == OBJ_SURFACE) {
+                        surface = g_objects[i].id;
+                        break;
+                    }
+                send_pointer_events(new_id, surface);
+            }
+        } else if (opcode == 1 && size >= 12) {
+            object_new(get_u32(message, 8), OBJ_KEYBOARD);
         }
         break;
     case OBJ_SURFACE:

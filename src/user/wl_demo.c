@@ -160,6 +160,11 @@ int user_main(long *stack)
 
     int compositor = -1;
     int shm = -1;
+    int xdg = -1;
+    int seat = -1;
+    int setup_sent = 0;
+    int configured = 0;
+    int frame_sent = 0;
     u8 input[4096];
     u32 have = 0;
     int done = 0;
@@ -190,13 +195,33 @@ int user_main(long *stack)
                         new_id = 3;
                     else if (str_equal(interface, "wl_shm"))
                         new_id = 4;
+                    else if (str_equal(interface, "xdg_wm_base"))
+                        new_id = 9;
+                    else if (str_equal(interface, "wl_seat"))
+                        new_id = 12;
                     message_at = put_u32(buffer, message_at, new_id);
                     send_plain(socket, buffer, message_at);
                     if (str_equal(interface, "wl_compositor"))
                         compositor = (int)new_id;
                     else if (str_equal(interface, "wl_shm"))
                         shm = (int)new_id;
+                    else if (str_equal(interface, "xdg_wm_base"))
+                        xdg = (int)new_id;
+                    else if (str_equal(interface, "wl_seat"))
+                        seat = (int)new_id;
                 }
+            } else if (id == 10 && opcode == 0) {
+                u32 serial = *(const u32 *)(input + offset + 8);
+                u32 ack_at = put_header(buffer, 10, 4);
+                ack_at = put_u32(buffer, ack_at, serial);
+                send_plain(socket, buffer, ack_at);
+                configured = 1;
+            } else if (id == 13 && opcode == 0) {
+                u_puts("[wldemo] pointer enter\n");
+            } else if (id == 13 && opcode == 2) {
+                u_puts("[wldemo] pointer motion\n");
+            } else if (id == 13 && opcode == 3) {
+                u_puts("[wldemo] pointer button\n");
             } else if (id == 6 && opcode == 0) {
                 done = 1;
             }
@@ -207,12 +232,28 @@ int user_main(long *stack)
                 input[i - offset] = input[i];
             have -= offset;
         }
-        if (compositor >= 0 && shm >= 0 && !done) {
+        if (!setup_sent && compositor >= 0 && shm >= 0 && xdg >= 0 &&
+            seat >= 0) {
             u32 message_at = put_header(buffer, (u32)compositor, 0);
             message_at = put_u32(buffer, message_at, 5);
             send_plain(socket, buffer, message_at);
 
-            message_at = put_header(buffer, (u32)shm, 0);
+            message_at = put_header(buffer, (u32)xdg, 2);
+            message_at = put_u32(buffer, message_at, 10);
+            message_at = put_u32(buffer, message_at, 5);
+            send_plain(socket, buffer, message_at);
+
+            message_at = put_header(buffer, 10, 1);
+            message_at = put_u32(buffer, message_at, 11);
+            send_plain(socket, buffer, message_at);
+
+            message_at = put_header(buffer, (u32)seat, 0);
+            message_at = put_u32(buffer, message_at, 13);
+            send_plain(socket, buffer, message_at);
+            setup_sent = 1;
+        }
+        if (configured && !frame_sent && !done) {
+            u32 message_at = put_header(buffer, (u32)shm, 0);
             message_at = put_u32(buffer, message_at, 7);
             message_at = put_u32(buffer, message_at, POOL_BYTES);
             send_with_fd(socket, buffer, message_at, (int)pool_fd);
@@ -245,7 +286,7 @@ int user_main(long *stack)
             message_at = put_header(buffer, 1, 0);
             message_at = put_u32(buffer, message_at, 6);
             send_plain(socket, buffer, message_at);
-            compositor = -2; /* frame already submitted */
+            frame_sent = 1;
         }
     }
 

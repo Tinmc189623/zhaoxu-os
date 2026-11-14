@@ -106,7 +106,7 @@ KMS 原子提交（plane + framebuffer + crtc）
 | M0 | AF_UNIX、fd 表、SCM_RIGHTS、memfd、poll | 已验证。`kernel/ipc/zfd.c`、`unix_socket.c`、`memfd.c`、`proc/io_syscall.c`；`/data/NET_TEST.ZXE` 在 OVMF 下输出 `[m0] socket, poll, memfd, mmap, SCM_RIGHTS PASS`，退出码 0 |
 | M1 | `/bin/display` KMS 服务 + virtio-gpu 2D + GBM dumb | 已验证：modern virtio-pci、memfd 扫描缓冲、双缓冲 flip；QEMU 1280x800 两帧不同（`out/m1e.png` / `out/m1f.png`） |
 | M2 | Wayland 核心 + wl_shm + wl_compositor | 已验证到 KMS：`/bin/wayland` 提供 wl_display/registry/compositor/surface/wl_shm/wl_shm_pool/wl_buffer，`/bin/wldemo` 经 AF_UNIX + SCM_RIGHTS 提交 320x240 memfd；服务端把帧合成到 `/bin/display` 的 1280x800 扫描缓冲并翻页，`out/m2frame.png` 可见居中蓝块。stock `weston-simple-shm` 仍缺 libwayland/epoll/eventfd |
-| M3 | xdg-shell + wl_seat | 窗口拖动/关闭、键盘输入；welcome/calc 迁移 |
+| M3 | xdg-shell + wl_seat | 核心已验证：xdg_wm_base/xdg_surface/xdg_toplevel configure/ack，wl_seat 能力与 wl_pointer enter/motion/button；服务端装饰、拖动/关闭、键盘 keymap 与 welcome/calc 迁移待续 |
 | M4 | virgl GPU 合成 + linux-dmabuf | 合成器 GPU 出帧，客户端 dmabuf 导入 |
 | M5 | stock 客户端与一致性回归 | `weston-terminal`、xdg-shell 测试套件全绿 |
 

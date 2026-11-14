@@ -33,6 +33,7 @@
 - 修复 `sendmsg` 控制消息长度回绕；memfd 与内核堆按可用内存的 1/4 动态限额/增长
 - M1：新增 Ring3 `/bin/display` KMS 服务（modern virtio-pci、2D 扫描输出、双缓冲 flip）
 - M2：新增 `/bin/wayland` 与 `/bin/wldemo`，Wayland wire/对象/wl_shm + SCM_RIGHTS 帧提交并合成到 KMS 扫描输出，QEMU 已验证
+- M3 核心：xdg-shell configure/ack 与 wl_seat/wl_pointer 事件已在 QEMU 串口验证
 
 <table>
 <tr>
