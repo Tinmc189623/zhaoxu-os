@@ -37,7 +37,12 @@ Yuanshuo Kernel：地址空间、进程、IPC、IRQ/MMIO 授权、帧缓冲映�
 ### Ring3 边界
 
 - `src/apps/ADE/` 只放桌面环境：`wallpaper.cpp`/`menubar.cpp`/`dock.cpp`（桌面外观）、
-  `winmgr/`（DWM）、`display/`（端口服务、窗口协议、输入路由）。
+  `winmgr/`（DWM）、`display/`（端口服务、窗口协议、输入路由）；Z1 计划新增
+  `decoration.cpp`（窗口装饰）。
+- `src/zaf/` 是 Zhaoxu Aqua Framework：`core/`（矩形与损伤区域）、`gfx/`（渲染封装）、
+  `compositor/`（图层、后缓冲、damage 提交、软件光标）、`wm/`（窗口表、焦点、z 序、
+  命中、拖动）、`theme/`（Aqua 令牌）。ZAF 运行在 Ring3，链接进 `/bin/ade`；内核不含
+  ZAF。文件职责表见 `src/zaf/README.md`。
 - `src/apps/drivers/` 是 Ring3 驱动服务：AHCI、PS/2、鼠标、RTC、串口；内核通过 `kernel/include/dev.h` 的共享页请求块 I/O，日志与输入走共享环。
 - `src/apps/csh/` 是 Ring3 Shell：`main.c`（REPL）、`builtins.c`、`files.c`、
   `run.c`、`install.c`、`io.c`，一个文件只负责一类命令。
@@ -91,6 +96,22 @@ Yuanshuo Kernel：地址空间、进程、IPC、IRQ/MMIO 授权、帧缓冲映�
 - 关闭窗口后客户端进程退出，ADE 检测通道断开、注销应用并强制重绘 Dock。
 - ADE 运行期日志走 `serial_write` 系统调用，不再写入内核 FB 控制台。
 - 待办：Files/Monitor 客户端、`.desk` 启动器按需 spawn、自动 spawn 移除。
+
+## ZAF 里程碑（规则 32）
+
+ZAF（Zhaoxu Aqua Framework）是 ADE/DWM 之下的 Ring3 GUI 框架。总设计见
+`docs/superpowers/specs/2026-11-13-zaf-architecture-design.md`。
+
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| Z0 | `zaf_gfx` 后端中立光栅 + 软件实现 + Ring3 fps demo | 完成 |
+| Z1 | 合成器（图层/损伤/提交/光标）+ 窗口管理 + Aqua 令牌 + 装饰拆分 | 设计定稿，待实现 |
+| Z2 | 控件系统、事件分发、布局 | 未开始 |
+| Z3 | 动画引擎、主题包与运行时切换 | 未开始 |
+| Z4 | ADE/DWM 全面迁移；ZAF 作为 ZXE 共享库发布 | 未开始 |
+
+Z1 设计：`docs/superpowers/specs/2026-11-14-zaf-z1-compositor-design.md`；
+Z1 实施计划：`docs/superpowers/plans/2026-11-14-zaf-z1-compositor.md`。
 
 ## 驱动外移约束
 

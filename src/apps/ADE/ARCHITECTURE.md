@@ -9,17 +9,25 @@
 
 ```
 src/apps/ADE/
-  main.cpp        进程入口、服务启动、事件循环
-  shell/          壁纸、菜单栏、Dock、启动器
-  winmgr/         DWM：焦点、z 序、装饰、拖动、合成
+  main.cpp        进程入口、ade_app 注册表、服务启动、事件循环
+  wallpaper.cpp   壁纸（rule 33 图片，整数缩放；无数据盘时 Aqua 渐变回退）
+  menubar.cpp     Aqua 菜单栏与 RTC 时钟
+  dock.cpp        Dock 绘制、悬停与点击启动器
+  icons.cpp       应用图标（内联 SVG，交给系统 SVG 光栅器）
+  about.cpp       关于窗口（ADE 内部应用）
+  winmgr/         DWM：焦点、z 序、拖动/关闭、输入路由、窗口装饰调用
   display/        命名端口服务、窗口协议、输入路由
+  （Z1 计划新增）decoration.cpp  窗口装饰绘制，颜色/度量来自 ZAF Aqua 令牌
 ```
+
+ZAF（`src/zaf/`）提供合成器、窗口核心状态与主题令牌：DWM 只负责窗口策略与
+输入，图层合成/损伤提交/软件光标归 ZAF 合成器。模块地图见 `src/zaf/README.md`。
 
 ## 边界
 
 - ADE 不包含任何应用实现，只向外提供客户端 API 与端口协议。
-- DWM 只通过系统渲染接口合成，不直接写帧缓冲，不绘制应用页面。
-- 应用通过共享内存命令环提交绘制命令；ADE 校验并执行。
+- DWM 不直接写帧缓冲：像素经 ZAF painter（当前转到系统 `render_*` API）。
+- 应用通过端口命令流提交绘制命令；ADE 校验并执行。
 - 输入事件由 ADE 路由到焦点窗口。
 - 字体由系统 `libzos` 从 `/mnt` 加载（MiSans / MiSans Global / Inter），
   ADE 与应用都不自带字体。
