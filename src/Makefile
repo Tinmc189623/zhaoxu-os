@@ -1,19 +1,70 @@
-# Zhaoxu OS build system (run inside WSL2)
+# Zhaoxu OS build system.
+#
+# Four host environments are supported: native Linux, macOS, Windows
+# (MSYS2/MinGW) and WSL2.  `ruby tools/build.rb` detects the host and passes
+# the right tool paths; `make` can also be run directly from a POSIX shell
+# with the toolchain on PATH.
 
-CC      ?= gcc
-CXX     ?= g++
-ADA     ?= gcc-14
-LD      := ld.lld
-OBJCOPY ?= objcopy
-FASM    ?= tools/fasm
+ifeq ($(OS),Windows_NT)
+  ZOS_HOST ?= windows
+else
+  UNAME_S := $(shell uname -s 2>/dev/null)
+  ifeq ($(UNAME_S),Darwin)
+    ZOS_HOST ?= macos
+  else
+    ZOS_HOST ?= linux
+  endif
+endif
+
+# Bare-metal ELF objects on macOS/Windows need clang's cross target; Linux
+# and WSL use their native ELF toolchain.  Ada is the one host-specific
+# compiler (drivers are Ada): install a x86_64-elf GNAT on macOS/Windows and
+# point ADA= at it, or override ADA=... for another cross compiler.
+ifeq ($(ZOS_HOST),linux)
+  CC      ?= gcc
+  CXX     ?= g++
+  ADA     ?= gcc-14
+  LD      ?= ld.lld
+  OBJCOPY ?= objcopy
+  CROSS   ?=
+else
+  CC      ?= clang
+  CXX     ?= clang++
+  ADA     ?= x86_64-elf-gcc
+  LD      ?= ld.lld
+  OBJCOPY ?= llvm-objcopy
+  CROSS   ?= --target=x86_64-elf
+endif
+ifeq ($(ZOS_HOST),linux)
+  FASM ?= tools/fasm
+else ifeq ($(ZOS_HOST),macos)
+  FASM ?= fasm
+else
+  FASM ?= fasm.exe
+endif
 BOOT_CC ?= clang
 BOOT_LD ?= lld-link
+
+# Image/packaging tools: overridable so build.rb can point at the host copy
+# (MSYS2 prefixes, Homebrew, or a custom PATH).
+MKFS_VFAT  ?= mkfs.vfat
+MMD        ?= mmd
+MCOPY      ?= mcopy
+MKSQUASHFS ?= mksquashfs
+XORRISO    ?= xorriso
+QEMU       ?= qemu-system-x86_64
+TAR        ?= tar
+ifeq ($(ZOS_HOST),linux)
+  TAR_OWNER := --owner=0 --group=0 --numeric-owner
+else
+  TAR_OWNER :=
+endif
 
 BUILD   := build
 OUT     := out
 ESP     := esp/EFI/BOOT
 
-CFLAGS  := -m64 -std=gnu11 -O2 -g -ffreestanding -fno-pie -fno-pic \
+CFLAGS  := $(CROSS) -m64 -std=gnu11 -O2 -g -ffreestanding -fno-pie -fno-pic \
            -fno-stack-protector -fno-asynchronous-unwind-tables \
            -mno-red-zone -mcmodel=kernel -mgeneral-regs-only \
            -mno-sse -mno-sse2 -mno-mmx -mno-avx \
@@ -97,7 +148,7 @@ $(HEADLESS_HEADER): FORCE
 
 FORCE:
 
-.PHONY: all clean run iso run-iso run-install run-bios run-install-bios version fonts FORCE
+.PHONY: all clean run iso run-iso run-install run-bios run-install-bios version fonts host-test FORCE
 
 # The kernel is built for the ISO and the installer; rule 25 keeps it out of
 # BOOTX64.EFI and the ESP only carries the loader.
@@ -114,18 +165,39 @@ fonts:
 $(FONT_FILES):
 	$(RUBY) tools/fetch-fonts.rb
 
-# Sync the version from version.php (repo root) into all surfaces.
+# Sync the version from version.cfg (repo root) into all surfaces.
 version:
 	$(RUBY) tools/version.rb
 
+# Host-detection unit tests (pure Ruby, runs on every supported host).
+host-test:
+	$(RUBY) tests/tools/host_test.rb
+
 # ---- Ring 3 programs -------------------------------------------------
-USER_CFLAGS := -m64 -std=gnu11 -O2 -ffreestanding -fpie \
+USER_CFLAGS := $(CROSS) -m64 -std=gnu11 -O2 -ffreestanding -fpie \
                -fno-stack-protector -fno-asynchronous-unwind-tables \
                -mno-red-zone -mno-sse -mno-sse2 \
                -mno-mmx -mno-avx -Wall -Wextra -Wno-unused-parameter
-USER_LDFLAGS := -nostdlib -shared -Wl,-Bsymbolic,--build-id=none \
+# clang is only the compile driver on macOS/Windows; steer its links to lld
+# so user programs/ADE are linked for the x86_64-elf target, not the host.
+ifeq ($(ZOS_HOST),linux)
+  USER_LINK_TARGET :=
+else
+  USER_LINK_TARGET := $(CROSS) -fuse-ld=lld
+endif
+USER_LDFLAGS := $(USER_LINK_TARGET) -nostdlib -shared -Wl,-Bsymbolic,--build-id=none \
                 -Wl,-T,user/user.ld -Wl,-z,max-page-size=0x1000
-RUBY ?= /mnt/c/Ruby40-x64/bin/ruby.exe
+# Ruby drives the ELF->.zxe and ISO tooling.  Linux/macOS normally provide
+# it on PATH; WSL may not, so fall back to a Windows RubyInstaller path
+# under /mnt/c.  tools/build.rb passes the exact path when it orchestrates.
+ifeq ($(ZOS_HOST),windows)
+  RUBY ?= ruby.exe
+else
+  RUBY ?= $(shell command -v ruby 2>/dev/null || ls -d /mnt/c/Ruby*/bin/ruby.exe 2>/dev/null | head -n 1)
+  ifeq ($(strip $(RUBY)),)
+    RUBY := ruby
+  endif
+endif
 
 # A recipe that dies half way must not leave its target behind: some WSL
 # interop builds report exit 0 for a Windows binary that aborted, so the ISO
@@ -379,8 +451,7 @@ $(RAMFS)/data/DOCS/INFO.TXT: initramfs/data/info.txt
 
 $(OUT)/initramfs.tar: $(RAMFS_FILES)
 	@mkdir -p $(OUT)
-	tar --format=ustar --owner=0 --group=0 --numeric-owner \
-	    -cf $@ -C $(RAMFS) .
+	$(TAR) --format=ustar $(TAR_OWNER) -cf $@ -C $(RAMFS) .
 
 $(BUILD)/initramfs.o: $(OUT)/initramfs.tar
 	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 \
@@ -395,16 +466,16 @@ DATA_IMG := $(OUT)/data.img
 
 $(DATA_IMG): $(OUT)/hello.zxe $(BUILD)/hello.uelf initramfs/data/hello.txt initramfs/data/info.txt initramfs/data/wqy.ttc $(FONT_FILES)
 	@mkdir -p $(OUT)
-	dd if=/dev/zero of=$@ bs=1M count=64 status=none
-	mkfs.vfat -F 32 -n ZHAOXUDATA $@ >/dev/null
-	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/DOCS
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/hello.txt ::/HELLO.TXT
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/hello.zxe ::/HELLO.ZXE
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(BUILD)/hello.uelf ::/HELLO.ELF
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/MiSans-Regular.ttf ::/
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/MiSansLatinVF.ttf ::/
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/Inter-Regular.otf ::/
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ initramfs/data/info.txt ::/DOCS/INFO.TXT
+	dd if=/dev/zero of=$@ bs=1M count=64 2>/dev/null
+	$(MKFS_VFAT) -F 32 -n ZHAOXUDATA $@ >/dev/null
+	MTOOLS_SKIP_CHECK=1 $(MMD) -i $@ ::/DOCS
+	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ initramfs/data/hello.txt ::/HELLO.TXT
+	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ $(OUT)/hello.zxe ::/HELLO.ZXE
+	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ $(BUILD)/hello.uelf ::/HELLO.ELF
+	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ initramfs/data/MiSans-Regular.ttf ::/
+	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ initramfs/data/MiSansLatinVF.ttf ::/
+	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ initramfs/data/Inter-Regular.otf ::/
+	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ initramfs/data/info.txt ::/DOCS/INFO.TXT
 
 $(BUILD)/efi_main.o: boot/efi_main.c boot/uefi.h $(HEADLESS_HEADER)
 	@mkdir -p $(BUILD)
@@ -446,8 +517,7 @@ $(BIOS_S2): boot/bios_stage2.asm $(HEADLESS_HEADER)
 
 $(BIOS1_INC): $(BIOS_S2)
 	@mkdir -p $(BUILD)
-	@size=`stat -c %s $<`; \
-	 printf 'STAGE2_SECTORS = %u\n' $$(( (size + 511) / 512 )) > $@
+	@$(RUBY) -e 'print "STAGE2_SECTORS = #{(File.size(ARGV[0]) + 511) / 512}\n"' $< > $@
 
 $(BIOS_S1): boot/bios_stage1.asm $(BIOS1_INC)
 	@mkdir -p $(OUT)
@@ -497,7 +567,7 @@ $(BUILD)/%.o: %.cpp
 
 $(BUILD)/%.o: %.S
 	@mkdir -p $(dir $@)
-	$(CC) -m64 -c $< -o $@
+	$(CC) $(CROSS) -m64 -c $< -o $@
 
 $(BUILD)/%.o: %.adb
 	@mkdir -p $(dir $@)
@@ -522,8 +592,16 @@ clean:
 	       $(OUT)/target.img $(ESP)/BOOTX64.EFI $(ESP)/OSLDRX64.efi
 	rm -f $(ESP)/KERNEL.ELF
 
-OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
-OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
+ifeq ($(ZOS_HOST),macos)
+  OVMF_CODE ?= $(firstword $(wildcard /opt/homebrew/share/qemu/edk2-x86_64-code.fd /usr/local/share/qemu/edk2-x86_64-code.fd))
+  OVMF_VARS ?= $(firstword $(wildcard /opt/homebrew/share/qemu/edk2-i386-vars.fd /usr/local/share/qemu/edk2-i386-vars.fd))
+else ifeq ($(ZOS_HOST),windows)
+  OVMF_CODE ?= $(firstword $(wildcard /mingw64/share/qemu/edk2-x86_64-code.fd /mingw64/share/edk2-ovmf/x64/OVMF_CODE.fd /mingw64/share/edk2-ovmf/OVMF_CODE.fd))
+  OVMF_VARS ?= $(firstword $(wildcard /mingw64/share/qemu/edk2-i386-vars.fd /mingw64/share/edk2-ovmf/x64/OVMF_VARS.fd /mingw64/share/edk2-ovmf/OVMF_VARS.fd))
+else
+  OVMF_CODE ?= $(firstword $(wildcard /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2/ovmf/OVMF_CODE.fd))
+  OVMF_VARS ?= $(firstword $(wildcard /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd /usr/share/edk2/ovmf/OVMF_VARS.fd))
+endif
 QEMU_MACHINE ?= q35
 QEMU_MEM ?= 512M
 QEMU_SMP ?= 4
@@ -537,7 +615,7 @@ EFI_IMG := $(OUT)/efi.img
 
 $(TARGET_IMG):
 	@mkdir -p $(OUT)
-	dd if=/dev/zero of=$@ bs=1M count=256 status=none
+	dd if=/dev/zero of=$@ bs=1M count=256 2>/dev/null
 
 # ISO-only testing (rule 27): the CD carries loader, kernel and assets, so no
 # data disk is attached.  run-install adds one blank target for the installer.
@@ -554,13 +632,13 @@ ISO_ESP_MB ?= 64
 # root by the loader's ISO9660 reader (not from the ESP).
 $(EFI_IMG): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi boot/zhaoxu.cfg
 	@mkdir -p $(OUT)
-	dd if=/dev/zero of=$@ bs=1M count=$(ISO_ESP_MB) status=none
-	mkfs.vfat -F 32 -n ZHAOXUEFI $@ >/dev/null
-	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/EFI
-	MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/EFI/BOOT
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ $(OUT)/OSLDRX64.efi ::/EFI/BOOT/OSLDRX64.efi
-	MTOOLS_SKIP_CHECK=1 mcopy -o -i $@ boot/zhaoxu.cfg ::/EFI/BOOT/zhaoxu.cfg
+	dd if=/dev/zero of=$@ bs=1M count=$(ISO_ESP_MB) 2>/dev/null
+	$(MKFS_VFAT) -F 32 -n ZHAOXUEFI $@ >/dev/null
+	MTOOLS_SKIP_CHECK=1 $(MMD) -i $@ ::/EFI
+	MTOOLS_SKIP_CHECK=1 $(MMD) -i $@ ::/EFI/BOOT
+	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ $(OUT)/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
+	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ $(OUT)/OSLDRX64.efi ::/EFI/BOOT/OSLDRX64.efi
+	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ boot/zhaoxu.cfg ::/EFI/BOOT/zhaoxu.cfg
 
 $(ISO): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG) \
         initramfs/data/wqy.ttc tools/kernel-flat.rb tools/iso-bios.rb \
@@ -585,13 +663,13 @@ $(ISO): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(OUT)/kernel.elf $(EFI_IMG) $(BI
 	cp $(OUT)/OSLDRX64.efi $(ISO_ROOT)/EFI/BOOT/OSLDRX64.ELF
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/casper/kernel.elf
 	cp $(OUT)/initramfs.tar $(ISO_ROOT)/casper/initrd.img
-	mksquashfs $(BUILD)/initramfs $(ISO_ROOT)/casper/filesystem.squashfs \
+	$(MKSQUASHFS) $(BUILD)/initramfs $(ISO_ROOT)/casper/filesystem.squashfs \
 	  -noappend -comp gzip -no-progress >/dev/null
 	$(RUBY) tools/kernel-flat.rb $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.BIN
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.ELF
 	cp initramfs/data/wqy.ttc $(ISO_ROOT)/install/WQY.TTC
 	$(RUBY) tools/iso-manifest.rb $(ISO_ROOT) $(ZHAOXU_VERSION) Yuanshuo
-	xorriso -as mkisofs -o $@ -V ZHAOXU_OS -J -R \
+	$(XORRISO) -as mkisofs -o $@ -V ZHAOXU_OS -J -R \
 	  -b bios.img -no-emul-boot -eltorito-alt-boot \
 	  -e efi.img -no-emul-boot -isohybrid-gpt-basdat $(ISO_ROOT)
 	$(RUBY) tools/iso-bios.rb $@
@@ -608,8 +686,10 @@ QEMU_TARGET_DISK := \
 	-device ide-hd,drive=zdst,bus=ide.1
 
 run-iso: $(ISO)
+	@test -n "$(OVMF_CODE)" -a -n "$(OVMF_VARS)" || \
+	  { echo "OVMF not found; set OVMF_CODE/OVMF_VARS or run: ruby tools/build.rb --check"; exit 1; }
 	cp $(OVMF_VARS) $(OUT)/OVMF_VARS.fd
-	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
+	$(QEMU) -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
 	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
 	  -drive if=pflash,format=raw,unit=1,file=$(OUT)/OVMF_VARS.fd \
 	  $(QEMU_CD) -boot order=d \
@@ -617,8 +697,10 @@ run-iso: $(ISO)
 
 # Installer test: the same CD plus one blank target disk.
 run-install: $(ISO) $(TARGET_IMG)
+	@test -n "$(OVMF_CODE)" -a -n "$(OVMF_VARS)" || \
+	  { echo "OVMF not found; set OVMF_CODE/OVMF_VARS or run: ruby tools/build.rb --check"; exit 1; }
 	cp $(OVMF_VARS) $(OUT)/OVMF_VARS.fd
-	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
+	$(QEMU) -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
 	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
 	  -drive if=pflash,format=raw,unit=1,file=$(OUT)/OVMF_VARS.fd \
 	  $(QEMU_CD) $(QEMU_TARGET_DISK) -boot order=d \
@@ -626,12 +708,12 @@ run-install: $(ISO) $(TARGET_IMG)
 
 # Legacy BIOS: SeaBIOS boots the El Torito image (ZhaoxuBootloader stage 1).
 run-bios: $(ISO)
-	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
+	$(QEMU) -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
 	  $(QEMU_CD) -boot order=d \
 	  -net none -serial stdio -monitor $(QEMU_MONITOR) $(QEMU_DISPLAY) -no-reboot
 
 run-install-bios: $(ISO) $(TARGET_IMG)
-	qemu-system-x86_64 -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
+	$(QEMU) -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
 	  $(QEMU_CD) $(QEMU_TARGET_DISK) -boot order=d \
 	  -net none -serial stdio -monitor $(QEMU_MONITOR) $(QEMU_DISPLAY) -no-reboot
 

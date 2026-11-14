@@ -17,7 +17,7 @@
 13. README.md 里只允许编写近一次版本更新，而不能编写所有版本，所有版本应放入 CHANGELOG.md 文件中。
 14. README.md 里必须拥有 Emoji 和 HTML 以增加视觉效果。
 15. 系统必须同时支持 MBR 和 GPT。
-16. **AI** 写代码时优先追求快与效果和稳定性，不要为了“稳定性”而在那块儿编写三千天的代码，却看不着任何效果。
+16. **AI** 写代码时优先追求效果和稳定性，不要为了快而在那块儿编写1s的代码，却看不着任何效果。
 17. 字体：MiSans、MiSans Global、Inter。
 18. 必须使用此`stb_truetype.h`，`https://raw.githubusercontent.com/nothings/stb/master/stb_truetype.h`（必须得是**原文**，不允许自己写一份）。
 19. 写代码的时候先看 stb 里头有没有需要的，如果有需要就直接复用，别自己自研。
@@ -32,24 +32,73 @@
 28. ESP 分区必须得是 FAT32。
 29. 一个文件只能干一件事，一个文件不能干出超过一件事的事情，错误示例：`src/apps/cwsl/shell.cpp`。
 30. 禁止不使用 busybox。
-31. 引导流程：`BIOS 固件 → ZhaoxuBootMgr 引导管理器 → osloader.elf → kernel.elf → vga.ko 通用显卡驱动`。
+31. 引导流程：`BIOS 固件 → ZhaoxuBootMgr 引导管理器 → osloader.elf（BIOS） / OSLDRX64.ELF（UEFI） → kernel.elf → vga.ko 通用显卡驱动`。
 32. zhaoxuOS 的 GUI 采用经典 Aqua（Classic Aqua）视觉风格。计划构建独立的 Zhaoxu Aqua Framework（ZAF），以 Skia 为图形渲染基础，自研窗口管理器、桌面合成器、控件系统、动画引擎和主题引擎。要求具备深度自定义能力、可移植到自研操作系统，并尽量减少对其他操作系统 GUI 组件的依赖。Aqua 为默认主题，底层框架支持未来扩展其他视觉主题。
+33. 系统默认壁纸必须得是 [src\apps\ADE\web\wallpaper\3pty\img0.jpg](src\apps\ADE\web\wallpaper\3pty\img0.jpg)。
+
+## ISO（这是**ISO 介质本身**的目录，不是启动后内存里的根文件系统；live 系统本体在 `casper/filesystem.squashfs` 压缩包内，版本：v1.1.13）
+
+```iso
+iso-root/
+├── boot/
+│   └── zhaoxu/
+│       ├── zhaoxu.cfg        # ZhaoxuBootMgr 主配置
+│       ├── zhaoxuenv
+│       ├── osloader.elf      # OS 加载器（BIOS）
+│       ├── BOOTX16.BIN       # BIOS 引导管理程序
+│       └── fonts/
+│           └── unicode.pf2
+├── EFI\
+│   └── BOOT\
+│       ├── BOOTX64.EFI       # EFI 引导管理程序
+│       └── OSLDRX64.ELF      # OS 加载器（UEFI）
+├── casper/                   # Live 核心目录，最重要
+│   ├── filesystem.squashfs   # 主rootfs压缩镜像（live系统本体）
+│   ├── initrd.img            # 初始化内存盘
+│   ├── kernel.elf            # Yuanshuo 内核
+│   ├── manifest
+│   ├── vga.ko                # 通用显卡驱动
+│   ├── README.diskdefines
+│   └── uuid
+├── dists/
+│   └── jammy/ (noble/)
+│       ├── main/
+│       ├── restricted/
+│       ├── universe/
+│       └── multiverse/
+├── pool/
+│   ├── main/
+│   ├── restricted/
+│   ├── universe/
+│   └── multiverse/
+├── .disk/
+│   ├── casper-uuid-generic
+│   ├── info
+│   └── README
+├── preseed/                  # 自动化安装预置脚本
+│   └── os.seed
+├── README.html
+├── autorun.inf
+└── md5sum.txt
+```
 
 ## 构建与运行
 
-- 构建在 WSL2 中执行（脚本默认发行版 `Ubuntu-26.04`），工作目录必须是仓库内的 `src/`（Windows 路径先用 `wslpath` 换算，不要写死盘符）；Windows 脚本只做转发。
+- 构建必须支持四种宿主：原生 Linux、原生 macOS、原生 Windows（MSYS2/MinGW bash）与 WSL2。工作目录必须是仓库内的 `src/`；统一入口是 Ruby（规则 6），`ruby tools/build.rb` 自动识别宿主并调用 make，`ruby tools/build.rb --check` 打印当前宿主的工具矩阵与安装提示，`ruby tools/run.rb` 负责 QEMU/OVMF。具备完整工具链的 POSIX 环境也可以直接 `make`。
   ```bash
-  cd src                   # 仓库的 src 目录（WSL 内）
-  make -j4                 # HEADLESS=0（默认，带 GOP 图形）
-  make run                 # 等同 make run-iso
-  make run QEMU_DISPLAY="-display gtk"   # WSLg 图形窗口
-  make iso                 # 生成 UEFI + legacy BIOS 双启动 ISO：out/zhaoxu_{version}_installer.iso
-  make run-iso             # 仅从 ISO 启动（UEFI），不挂任何数据盘
-  make run-install         # ISO + 单个空白目标盘（UEFI 安装测试）
-  make run-bios            # 仅从 ISO 启动（SeaBIOS 走 MBR 引导链）
-  make run-install-bios    # ISO + 单个空白目标盘（BIOS 安装测试）
+  cd src
+  ruby tools/build.rb                  # 等同 make all
+  ruby tools/build.rb --check          # base/kernel/iso/run 工具检查
+  ruby tools/build.rb iso              # UEFI + legacy BIOS 双启动 ISO
+  ruby tools/run.rb                    # 等同 make run-iso（UEFI，仅光盘）
+  ruby tools/run.rb --display gtk      # 图形窗口
+  make -j4                             # Linux/macOS/WSL 直接构建
+  make host-test                       # 纯 Ruby 宿主检测单元测试
   ```
-  Windows 入口：`./src/build.ps1`、`./src/run.ps1`（PowerShell 7+），默认发行版 `Ubuntu-26.04`。
+  - **Linux / WSL**：`gcc`、`g++`、`gcc-14`+`gnat-14`、`ld.lld`、`objcopy`、`clang`、`lld-link`、`qemu-system-x86_64`、OVMF、`mkfs.vfat`、`mtools`、`tar`、`xorriso`、`squashfs-tools`。
+  - **macOS**：Homebrew `llvm`（clang、llvm-objcopy）、`lld`（ld.lld、lld-link）、`qemu`、`xorriso`、`mtools`、`dosfstools`、`squashfs`；Ada 驱动需要 x86_64-elf GNAT（用 `ADA=` 指向）。
+  - **原生 Windows**：Ruby + MSYS2 的 `make`、`mingw-w64-x86_64-clang`、`-lld`、`-llvm`、`dosfstools`、`mtools`、`xorriso`、`squashfs-tools`、`qemu`；FASM 用 `winget install fasm.fasm` 或 `tools/fasm.exe`；Ada 驱动需要 x86_64-elf GNAT。没有 MSYS2 时用 `--host wsl` 或自动回退 WSL。
+  - **Windows 入口**：`./src/build.ps1`、`./src/run.ps1`（PowerShell 7+）优先转发给 Ruby；Ruby 缺失时才退回旧的 WSL 转发路径。
 - 单个用户程序：`make out/hello.zxe`（内部先链接 `build/hello.uelf`，再由 `tools/zxe-pack.rb` 转成 `.zxe`）。模式规则会自动编译 `user/hello.c` 并链接 `user/userlib.c`，不需要改 Makefile。程序入口是 `int user_main(long *stack)`，不是 `main`；`userlib.c` 的 `_start` 会把返回值作为退出码。ELF→.zxe 转换需要 Ruby：WSL 内没有时通过 Makefile 的 `RUBY` 变量指向 Windows 侧 ruby.exe（按本机位置覆盖，不要写死盘符）。ZXE v1 结构自检：`ruby tools/zxe-check.rb out/*.zxe`；动态链接冒烟用 `ruby tools/zxe-fixture-lib.rb out/libztest.zxe` 生成共享库，配合 `user/ztestmain.c`（导入 `ztest_value`）。
 - `make`/`make all` 的最终产物是 `out/BOOTX64.EFI` 与 `esp/EFI/BOOT/BOOTX64.EFI`；`make out/data.img` 只是手动生成一个 FAT32 数据盘镜像，测试一律走 ISO。
 - `make run-iso` 默认 q35、512 MiB、smp=4、`-display none` + 串口 stdio，只把 ISO 挂为 `ide.0` 光驱，不挂数据盘/安装盘；`make run-install` 额外挂一个 256 MiB 空白 `out/target.img`（首次创建）作为 `ide.1`。`make run` 现在就是 `run-iso` 的别名。带 `-no-reboot`，所以来宾发起重启会直接退出 QEMU。单核回归用 `make run-iso QEMU_SMP=1`。
@@ -58,14 +107,14 @@
 - legacy BIOS 链：stage1 用 INT 13h CHS 读 stage2（ISO 上 stage2 已驻留，直接远跳 0x8000）→ stage2 做 VBE 32bpp LFB 选择、E820、RSDP 扫描 → 用 EDD LBA48 读内核 → 建页表与 `boot_info` → 进长模式，契约与 UEFI 层一致。
 - OVMF VARS 不能用只读的系统文件；`make run` 会先复制到可写的 `out/OVMF_VARS.fd`。OVMF 路径可用 `OVMF_CODE`/`OVMF_VARS` 覆盖。
 - `HEADLESS=1` 只影响 FASM 引导层（跳过 GOP 探测与 UEFI ConOut），不改变内核/用户态代码；此时显示只能走串口。`build.ps1 -Headless` 就是设这个值。
-- 依赖：`gcc`、`g++`、`gcc-14` + `gnat-14`（Ada 前端）、`ld.lld`、`objcopy`、`qemu-system-x86_64`、OVMF、`mkfs.vfat`、`mtools`、`tar`、`xorriso`。FASM 已随仓库放在 `src/tools/fasm`。
-- 现有 `build.ps1`/`run.ps1`/`tools/install-fasm.sh` 是当前入口；新增脚本按规则 6 用 Ruby，迁移现有入口前先与用户确认。
+- 依赖与 FASM：各宿主所需工具见 `ruby tools/build.rb --check`。仓库自带的 `src/tools/fasm` 是 Linux x86-64 ELF，只能用于 Linux/WSL；macOS 与原生 Windows 需要宿主的 FASM 可执行文件，用 `FASM=` 指定（Windows 也可把 `fasm.exe` 放在 `src/tools/`）。
+- 入口脚本：`build.ps1`/`run.ps1` 是 Windows 薄转发层，实际逻辑在 `tools/build.rb`、`tools/run.rb`、`tools/host.rb`（全部 Ruby，规则 6）；`tools/install-fasm.sh` 已不存在，Windows/macOS 的 FASM 由用户按上面的方式提供。
 
 ## 验证
 
 没有自动化测试；改动后至少做一次 QEMU 冒烟：
 
-1. `make clean && make -j4` 干净重建，`nm -u out/kernel.elf` 应无未定义符号；`nm out/kernel.elf` 不应出现 `ahci_*`/`acpi_init`/`serial_init`/`keyboard_*`/`mouse_*`/`pit_init`/`pci_*` 等驱动符号。
+1. `ruby tools/build.rb --check` 应列出当前宿主的工具与 OVMF；`ruby tests/tools/host_test.rb` 应输出 `PASS`。然后 `make clean && make -j4` 干净重建，`nm -u out/kernel.elf` 应无未定义符号；`nm out/kernel.elf` 不应出现 `ahci_*`/`acpi_init`/`serial_init`/`keyboard_*`/`mouse_*`/`pit_init`/`pci_*` 等驱动符号。
 2. `make run-iso` 后应直接进入 ADE 桌面：日志出现 `Kernel: /install/KERNEL.ELF from the ISO.`、`Font: /install/WQY.TTC from the ISO.`、`[ade ] font boot volume: ...`、`[ade ] Ring3 display server`，随后 `spawn /bin/apps/welcome.zxe` 与 `/bin/apps/calc.zxe` 并显示两个客户端窗口；点击欢迎窗口应回显 `已收到点击事件`，计算器按 `7 + 5 =` 应显示 `12`，关闭计算器后 Dock 回收对应图标。内核不再链接任何桌面或应用代码（规则 9）。无帧缓冲时内核启动 Ring3 `/bin/csh`，应能执行 `help`、`ls /mnt`、`cat /mnt/HELLO.TXT`、`run /data/HELLO.ZXE`（退出码 7）、`write /mnt/NEW.TXT hi`、`cat /mnt/NEW.TXT`、`rm /mnt/NEW.TXT`、`disks`、`install`、`uptime`、`cpus`、`exit`。
 3. 用户态异常只应终止进程并回到 Shell（退出码 `-向量号`，如 `#PF` 为 `-14`）；内核异常才 panic。
 4. ISO 改动：`make iso` 生成 `out/zhaoxu_{version}_installer.iso`（规则 11 命名），分别用 `make run-iso`（UEFI）与 `make run-bios`（SeaBIOS）从 ISO 启动；两者都应打印内核/字体来自 `/install` 的日志，中文正常显示，且不挂任何数据盘。
