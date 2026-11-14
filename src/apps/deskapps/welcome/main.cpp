@@ -23,8 +23,9 @@ void paint(const struct ade_view *view)
     y += line + ade_ui(14);
 
     char text[160];
-    ksnprintf(text, sizeof(text), "版本 %s \"%s\" · 内核 %s Kernel",
-              ZHAOXU_VERSION, ZHAOXU_CODENAME, ZHAOXU_KERNEL);
+    ksnprintf(text, sizeof(text), "版本 %s \"%s\" · 内核 %s Kernel %s",
+              ZHAOXU_VERSION, ZHAOXU_CODENAME, ZHAOXU_KERNEL,
+              ZHAOXU_KERNEL_VERSION);
     ade_text(text, x, y, 0x2A4258, 1);
     y += line + ade_ui(6);
     ade_text("窗口管理器 DWM · 系统渲染 API · 应用与桌面分离",

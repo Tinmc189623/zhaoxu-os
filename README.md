@@ -10,7 +10,7 @@
 
 [🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) · [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) · [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) · [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
-**当前版本：0.5.0 「Yuanshuo」** · 历史版本见 [CHANGELOG.md](CHANGELOG.md)
+**当前版本：0.5.0 「Yuanshuo」 · 内核 0.5.0** · 历史版本见 [CHANGELOG.md](CHANGELOG.md)
 
 </div>
 
@@ -241,30 +241,26 @@ Hello from zcc inside Zhaoxu OS!
 
 ## 📦 构建与运行
 
-构建在 **WSL2**（Ubuntu 26.04）中完成，Windows 脚本只做转发。
-
-```powershell
-# Windows（PowerShell 7+）
-./src/build.ps1                  # 构建 UEFI 引导
-./src/build.ps1 -Headless        # 仅串口输出
-./src/run.ps1                    # QEMU + OVMF
-./src/run.ps1 -Display gtk       # WSLg 图形窗口
-```
+构建必须支持四种宿主：**原生 Linux、原生 macOS、原生 Windows（MSYS2/MinGW）与 WSL2**。统一入口是 Ruby（规则 6），它会识别宿主并调用 make；具备完整工具链的 POSIX 环境也可以直接 `make`。
 
 ```bash
-# 或者直接在 WSL 中
 cd src
-make -j4                         # 构建 out/BOOTX64.EFI
-make run                         # 等同 make run-iso（仅光盘启动）
-make run QEMU_DISPLAY="-display gtk"
-make iso                         # 生成 out/zhaoxu_{version}_installer.iso（UEFI + BIOS）
-make run-iso                     # 仅从 ISO 启动（UEFI），不挂数据盘
-make run-install                 # ISO + 单个空白目标盘（UEFI 安装测试）
-make run-bios                    # 仅从 ISO 启动（SeaBIOS）
-make run-install-bios            # ISO + 单个空白目标盘（BIOS 安装测试）
+ruby tools/build.rb              # 等同 make all
+ruby tools/build.rb --check      # 当前宿主的工具矩阵与安装提示
+ruby tools/build.rb iso          # 生成 out/zhaoxu_{os_version}_installer.iso（UEFI + BIOS）
+ruby tools/run.rb                # 等同 make run-iso（仅光盘启动，不挂数据盘）
+ruby tools/run.rb --display gtk  # 图形窗口
+make -j4                         # Linux/macOS/WSL 具备工具链时直接构建
 ```
 
-**依赖**：`gcc`、`g++`、`gcc-14` + `gnat-14`、`ld.lld`、`objcopy`、`clang`、`qemu-system-x86_64`、OVMF、`mkfs.vfat`、`mtools`、`tar`、`xorriso`；FASM 已随仓库提供（`src/tools/fasm`）。
+```powershell
+# Windows（PowerShell 7+）：优先转发 Ruby，缺 Ruby 时才退回 WSL
+./src/build.ps1                  # 原生 MSYS2 或 WSL 自动选择
+./src/build.ps1 -Check           # 打印工具矩阵
+./src/run.ps1 -Display gtk       # QEMU 图形窗口
+```
+
+**依赖**：逐项检查用 `ruby tools/build.rb --check`。Linux/WSL 需要 `gcc`、`g++`、`gcc-14`+`gnat-14`、`ld.lld`、`objcopy`、`clang`、`lld-link`、`qemu-system-x86_64`、OVMF、`mkfs.vfat`、`mtools`、`tar`、`xorriso`、`squashfs-tools`；macOS 用 Homebrew 的 `llvm`、`lld`、`qemu`、`xorriso`、`mtools`、`dosfstools`、`squashfs`；原生 Windows 用 MSYS2 中对应包加 Ruby。Ada 驱动需要 x86_64-elf GNAT（`ADA=` 指定），FASM 需使用宿主版本（`FASM=`，Windows 也可放 `src/tools/fasm.exe`）。
 
 **验证工具**（Ruby）：
 
@@ -285,7 +281,7 @@ Zhaoxu OS/
 ├── CHANGELOG.md              全部版本记录
 ├── LICENSE                   Apache License 2.0
 ├── THIRD_PARTY_NOTICES.md    第三方代码与字体声明
-├── version.php               版本号唯一来源（make version 同步）
+├── version.cfg               版本号唯一来源（os_version + kernel_version，make version 同步）
 ├── docs/                     十张实机截图
 └── src/
     ├── Makefile              WSL2 构建规则

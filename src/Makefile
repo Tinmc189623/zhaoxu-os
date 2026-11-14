@@ -623,7 +623,13 @@ run: run-iso
 
 # ---- UEFI ISO --------------------------------------------------------
 # Rule 11: ISO files are named zhaoxu_{version}_installer.iso.
-ZHAOXU_VERSION := $(shell $(RUBY) -e 'v=File.read("kernel/include/version.h")[/ZHAOXU_VERSION\s+"([^"]+)"/,1]; print v')
+# version.cfg is the single source; version.h holds the synced macros.  Read
+# all four values with one Ruby call so the ISO metadata matches the build.
+VERSION_FIELDS := $(shell $(RUBY) -e 'h=File.read("kernel/include/version.h"); %w[VERSION CODENAME KERNEL KERNEL_VERSION].each { |k| print(h[/ZHAOXU_#{k}\s+"([^"]+)"/, 1], " ") }')
+ZHAOXU_VERSION := $(word 1,$(VERSION_FIELDS))
+ZHAOXU_CODENAME := $(word 2,$(VERSION_FIELDS))
+ZHAOXU_KERNEL := $(word 3,$(VERSION_FIELDS))
+ZHAOXU_KERNEL_VERSION := $(word 4,$(VERSION_FIELDS))
 ISO := $(OUT)/zhaoxu_$(ZHAOXU_VERSION)_installer.iso
 ISO_ROOT := $(BUILD)/iso
 ISO_ESP_MB ?= 64
@@ -668,7 +674,8 @@ $(ISO): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(OUT)/kernel.elf $(EFI_IMG) $(BI
 	$(RUBY) tools/kernel-flat.rb $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.BIN
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.ELF
 	cp initramfs/data/wqy.ttc $(ISO_ROOT)/install/WQY.TTC
-	$(RUBY) tools/iso-manifest.rb $(ISO_ROOT) $(ZHAOXU_VERSION) Yuanshuo
+	$(RUBY) tools/iso-manifest.rb $(ISO_ROOT) $(ZHAOXU_VERSION) \
+	  $(ZHAOXU_CODENAME) $(ZHAOXU_KERNEL) $(ZHAOXU_KERNEL_VERSION)
 	$(XORRISO) -as mkisofs -o $@ -V ZHAOXU_OS -J -R \
 	  -b bios.img -no-emul-boot -eltorito-alt-boot \
 	  -e efi.img -no-emul-boot -isohybrid-gpt-basdat $(ISO_ROOT)

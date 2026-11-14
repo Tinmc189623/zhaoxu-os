@@ -91,7 +91,8 @@ void kernel_main(struct boot_info *boot)
     console_init(&g_boot);
 
     console_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
-    kprintf("Zhaoxu OS %s \"%s\"\n", ZHAOXU_VERSION, ZHAOXU_CODENAME);
+    kprintf("Zhaoxu OS %s \"%s\" / %s kernel %s\n", ZHAOXU_VERSION,
+            ZHAOXU_CODENAME, ZHAOXU_KERNEL, ZHAOXU_KERNEL_VERSION);
     console_set_color(COLOR_DARK_GRAY, COLOR_BLACK);
     kprintf("Microkernel: drivers and applications run in ring 3\n");
     console_reset_color();

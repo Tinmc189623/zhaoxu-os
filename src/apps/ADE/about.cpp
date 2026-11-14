@@ -22,8 +22,8 @@ void about_paint(const struct ade_view *view)
     ade_text("Zhaoxu OS " ZHAOXU_VERSION " \"" ZHAOXU_CODENAME "\"",
              x + ade_ui(24), line, 0x16293C, 2);
     line += step;
-    ade_text("内核：Yuanshuo Kernel（微内核）", x + ade_ui(24), line,
-             0x36495C, 1);
+    ade_text("内核：" ZHAOXU_KERNEL " Kernel " ZHAOXU_KERNEL_VERSION "（微内核）",
+             x + ade_ui(24), line, 0x36495C, 1);
     line += step;
     ade_text("桌面：ADE · 窗口管理器：DWM", x + ade_ui(24), line,
              0x36495C, 1);
