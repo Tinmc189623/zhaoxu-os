@@ -129,9 +129,19 @@ static struct {
     u64 response_phys;
     u16 queue_size;
     u16 last_used;
+    int virgl;
 } g_gpu;
 
+struct gpu_ctx_create {
+    u32 nlen;
+    u32 context_init;
+    char debug_name[64];
+} __attribute__((packed));
+
 static u8 g_attach[REQ_BYTES];
+
+static int gpu_command(u32 type, const void *payload, u32 payload_size,
+                       void *response, u32 response_size);
 
 static void memzero(void *pointer, u32 length)
 {
@@ -263,11 +273,18 @@ static int virtio_modern_init(u32 bus, u32 slot)
     common8_write(0x14, 0);
     common8_write(0x14, 1);
     common8_write(0x14, 1 | 2);
-    /* Driver feature bit 32 (VIRTIO_F_VERSION_1) lives in page 1, bit 0. */
+    common32_write(0x00, 0);
+    u32 device_features0 = *(volatile u32 *)(g_gpu.common + 0x04);
+    common32_write(0x00, 1);
+    u32 device_features1 = *(volatile u32 *)(g_gpu.common + 0x04);
+    (void)device_features1;
+    /* Negotiate VIRGL when the host offers it, plus VIRTIO_F_VERSION_1
+     * (driver feature page 1, bit 0). */
+    g_gpu.virgl = (device_features0 & 1u) ? 1 : 0;
+    common32_write(0x08, 0);
+    common32_write(0x0C, g_gpu.virgl ? 1u : 0u);
     common32_write(0x08, 1);
     common32_write(0x0C, 1);
-    common32_write(0x08, 0);
-    common32_write(0x0C, 0);
     common8_write(0x14, 1 | 2 | 8);
     if (!(common8(0x14) & 8))
         return -1;
@@ -323,6 +340,21 @@ static int virtio_modern_init(u32 bus, u32 slot)
     u_puts(" notify_off=");
     u_putn((long)g_gpu.notify_off);
     u_puts("\n");
+
+    if (g_gpu.virgl) {
+        struct gpu_ctx_create context;
+        memzero(&context, sizeof(context));
+        context.nlen = 8;
+        const char *name = "zhaoxu";
+        for (u32 i = 0; i < 7; i++)
+            context.debug_name[i] = name[i];
+        if (gpu_command(0x0200, &context, sizeof(context), NULL, 0) == 0)
+            u_puts("[display] virgl context ready\n");
+        else
+            u_puts("[display] virgl context failed\n");
+    } else {
+        u_puts("[display] host has no virgl feature\n");
+    }
     return 0;
 }
 
@@ -357,6 +389,7 @@ static int gpu_command(u32 type, const void *payload, u32 payload_size,
     memzero(request, sizeof(struct gpu_hdr) + payload_size);
     struct gpu_hdr *header = (struct gpu_hdr *)request;
     header->type = type;
+    header->ctx_id = type >= 0x0200 ? 1u : 0u;
     if (payload && payload_size)
         memcopy(request + sizeof(*header), payload, payload_size);
     memzero((void *)(uintptr_t)g_gpu.response_phys, response_size);

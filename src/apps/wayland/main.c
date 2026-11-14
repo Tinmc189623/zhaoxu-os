@@ -74,6 +74,24 @@ static u32 g_out_stride;
 static u32 *g_out[2];
 static u32 g_out_active;
 
+static u32 g_surface_id;
+static u32 g_toplevel_id;
+static u32 g_pointer_id;
+static const u32 *g_client_pixels;
+static u32 g_client_width;
+static u32 g_client_height;
+static u32 g_client_stride;
+static int g_window_x = 120;
+static int g_window_y = 90;
+static int g_dragging;
+static int g_drag_dx;
+static int g_drag_dy;
+static int g_content_pressed;
+static int g_pointer_inside;
+static int g_last_buttons;
+static int g_last_mouse_x = -1;
+static int g_last_mouse_y = -1;
+
 static u32 str_len(const char *text);
 static int str_equal(const char *a, const char *b);
 static void copy_bytes(void *destination, const void *source, u32 length);
@@ -148,9 +166,9 @@ static int display_setup(void)
     return 0;
 }
 
-static void composite(const struct object *buffer, const u32 *source)
+static void composite(void)
 {
-    if (g_display_fd < 0 || !g_out[0] || !g_out[1] || !buffer)
+    if (g_display_fd < 0 || !g_out[0] || !g_out[1])
         return;
     u32 index = g_out_active ^ 1u;
     u32 *target = g_out[index];
@@ -159,20 +177,41 @@ static void composite(const struct object *buffer, const u32 *source)
         for (u32 x = 0; x < g_out_width; x++)
             target[(u64)y * out_stride + x] = 0xFF16283Au;
 
-    u32 copy_w = buffer->width;
-    u32 copy_h = buffer->height;
-    if (copy_w > g_out_width)
-        copy_w = g_out_width;
-    if (copy_h > g_out_height)
-        copy_h = g_out_height;
-    u32 left = (g_out_width - copy_w) / 2;
-    u32 top = (g_out_height - copy_h) / 2;
-    u32 source_stride = buffer->stride ? buffer->stride / 4u : copy_w;
-    const u32 *pixels = source + buffer->offset / 4u;
-    for (u32 y = 0; y < copy_h; y++)
-        for (u32 x = 0; x < copy_w; x++)
-            target[(u64)(top + y) * out_stride + left + x] =
-                pixels[(u64)y * source_stride + x];
+    u32 width = g_client_width;
+    u32 height = g_client_height;
+    u32 title = 24;
+    if (g_client_pixels && width && height) {
+        u32 source_stride = g_client_stride ? g_client_stride / 4u : width;
+        for (u32 y = 0; y < title && (u32)g_window_y + y < g_out_height; y++)
+            for (u32 x = 0; x < width &&
+                            (u32)g_window_x + x < g_out_width; x++)
+                target[(u64)(g_window_y + y) * out_stride +
+                       g_window_x + x] = 0xFF334E68u;
+        /* Close button: a small red disc in the title bar. */
+        for (int dy = -6; dy <= 6; dy++) {
+            for (int dx = -6; dx <= 6; dx++) {
+                if (dx * dx + dy * dy > 36)
+                    continue;
+                int px = g_window_x + 14 + dx;
+                int py = g_window_y + 12 + dy;
+                if (px >= 0 && py >= 0 && px < (int)g_out_width &&
+                    py < (int)g_out_height)
+                    target[(u64)py * out_stride + px] = 0xFFE9685Cu;
+            }
+        }
+        for (u32 y = 0; y < height; y++) {
+            int py = g_window_y + (int)title + (int)y;
+            if (py < 0 || py >= (int)g_out_height)
+                continue;
+            for (u32 x = 0; x < width; x++) {
+                int px = g_window_x + (int)x;
+                if (px < 0 || px >= (int)g_out_width)
+                    continue;
+                target[(u64)py * out_stride + px] =
+                    g_client_pixels[(u64)y * source_stride + x];
+            }
+        }
+    }
 
     struct display_commit commit;
     commit.magic = DISPLAY_COMMIT_MAGIC;
@@ -303,8 +342,8 @@ static void send_xdg_configure(u32 toplevel, u32 surface)
 {
     u8 message[32];
     u32 at = put_header(message, toplevel, 0);
-    at = put_u32(message, at, 400);
-    at = put_u32(message, at, 300);
+    at = put_u32(message, at, 320);
+    at = put_u32(message, at, 240);
     at = put_u32(message, at, 0); /* empty states array */
     finish_message(message, at);
     send_all(message, at);
@@ -324,34 +363,62 @@ static void send_seat_caps(u32 seat)
     send_all(message, at);
 }
 
-static void send_pointer_events(u32 pointer, u32 surface)
+static void pointer_enter(int x, int y)
+{
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    u8 message[32];
+    u32 at = put_header(message, g_pointer_id, 0);
+    at = put_u32(message, at, g_serial++);
+    at = put_u32(message, at, g_surface_id);
+    at = put_u32(message, at, (u32)x << 8);
+    at = put_u32(message, at, (u32)y << 8);
+    finish_message(message, at);
+    send_all(message, at);
+    g_pointer_inside = 1;
+}
+
+static void pointer_motion(int x, int y)
+{
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    u8 message[24];
+    u32 at = put_header(message, g_pointer_id, 2);
+    at = put_u32(message, at, (u32)sys_uptime());
+    at = put_u32(message, at, (u32)x << 8);
+    at = put_u32(message, at, (u32)y << 8);
+    finish_message(message, at);
+    send_all(message, at);
+}
+
+static void pointer_leave(void)
+{
+    u8 message[16];
+    u32 at = put_header(message, g_pointer_id, 1);
+    at = put_u32(message, at, g_serial++);
+    finish_message(message, at);
+    send_all(message, at);
+    g_pointer_inside = 0;
+}
+
+static void pointer_button(u32 state)
 {
     u8 message[32];
-    u32 time = (u32)sys_uptime();
-    u32 at = put_header(message, pointer, 0); /* enter */
+    u32 at = put_header(message, g_pointer_id, 3);
     at = put_u32(message, at, g_serial++);
-    at = put_u32(message, at, surface);
-    at = put_u32(message, at, 160u << 8);
-    at = put_u32(message, at, 120u << 8);
+    at = put_u32(message, at, (u32)sys_uptime());
+    at = put_u32(message, at, 0x110);
+    at = put_u32(message, at, state);
     finish_message(message, at);
     send_all(message, at);
+}
 
-    at = put_header(message, pointer, 2); /* motion */
-    at = put_u32(message, at, time);
-    at = put_u32(message, at, 160u << 8);
-    at = put_u32(message, at, 120u << 8);
-    finish_message(message, at);
-    send_all(message, at);
-
-    for (u32 state = 1; state <= 2; state++) {
-        at = put_header(message, pointer, 3); /* button */
-        at = put_u32(message, at, g_serial++);
-        at = put_u32(message, at, time);
-        at = put_u32(message, at, 0x110);
-        at = put_u32(message, at, state == 1 ? 1 : 0);
-        finish_message(message, at);
-        send_all(message, at);
-    }
+static void toplevel_close(void)
+{
+    u8 message[8];
+    put_header(message, g_toplevel_id, 1);
+    finish_message(message, 8);
+    send_all(message, 8);
 }
 
 static u32 get_u32(const u8 *message, u32 at)
@@ -371,6 +438,85 @@ static int get_string(const u8 *message, u32 size, u32 at, char *out,
     copy_bytes(out, message + at, length);
     out[length - 1] = 0;
     return 0;
+}
+
+static void handle_mouse(void)
+{
+    if (g_pointer_id == 0 || g_client < 0)
+        return;
+    unsigned long state[3];
+    if (sys_mouse(state) != 0)
+        return;
+    int x = (int)state[0];
+    int y = (int)state[1];
+    int buttons = (int)state[2];
+    if (x == g_last_mouse_x && y == g_last_mouse_y &&
+        buttons == g_last_buttons)
+        return;
+
+    int width = (int)g_client_width;
+    int height = (int)g_client_height;
+    int inside = width && height && x >= g_window_x &&
+                 x < g_window_x + width && y >= g_window_y &&
+                 y < g_window_y + 24 + height;
+    int content_x = x - g_window_x;
+    int content_y = y - g_window_y - 24;
+
+    if (inside) {
+        if (!g_pointer_inside)
+            pointer_enter(content_x, content_y);
+        else if (x != g_last_mouse_x || y != g_last_mouse_y)
+            pointer_motion(content_x, content_y);
+    } else if (g_pointer_inside) {
+        pointer_leave();
+    }
+
+    int pressed = (buttons & 1) && !(g_last_buttons & 1);
+    int released = !(buttons & 1) && (g_last_buttons & 1);
+    if (pressed) {
+        int dx = x - (g_window_x + 14);
+        int dy = y - (g_window_y + 12);
+        if (dx * dx + dy * dy <= 36) {
+            toplevel_close();
+        } else if (y < g_window_y + 24 && inside) {
+            g_dragging = 1;
+            g_drag_dx = x - g_window_x;
+            g_drag_dy = y - g_window_y;
+        } else if (inside) {
+            pointer_button(1);
+            g_content_pressed = 1;
+        }
+    }
+    if (released) {
+        if (g_content_pressed) {
+            pointer_button(0);
+            g_content_pressed = 0;
+        }
+        g_dragging = 0;
+    }
+
+    if (g_dragging && (buttons & 1)) {
+        int nx = x - g_drag_dx;
+        int ny = y - g_drag_dy;
+        if (nx < 0)
+            nx = 0;
+        if (ny < 0)
+            ny = 0;
+        if (nx + width > (int)g_out_width)
+            nx = (int)g_out_width - width;
+        if (ny + 24 + height > (int)g_out_height)
+            ny = (int)g_out_height - 24 - height;
+        if (ny < 0)
+            ny = 0;
+        if (nx != g_window_x || ny != g_window_y) {
+            g_window_x = nx;
+            g_window_y = ny;
+            composite();
+        }
+    }
+    g_last_buttons = buttons;
+    g_last_mouse_x = x;
+    g_last_mouse_y = y;
 }
 
 static int dispatch(u32 id, u16 opcode, const u8 *message, u32 size)
@@ -463,8 +609,11 @@ static int dispatch(u32 id, u16 opcode, const u8 *message, u32 size)
     case OBJ_XDG_SURFACE:
         if (opcode == 1 && size >= 12) {
             u32 new_id = get_u32(message, 8);
-            if (object_new(new_id, OBJ_XDG_TOPLEVEL))
+            if (object_new(new_id, OBJ_XDG_TOPLEVEL)) {
+                g_toplevel_id = new_id;
+                g_surface_id = object->buffer_id;
                 send_xdg_configure(new_id, object->id);
+            }
         } else if (opcode == 4 && size >= 12) {
             u_puts("[wayland] xdg ack_configure ");
             u_putn((long)get_u32(message, 8));
@@ -475,14 +624,13 @@ static int dispatch(u32 id, u16 opcode, const u8 *message, u32 size)
         if (opcode == 0 && size >= 12) {
             u32 new_id = get_u32(message, 8);
             if (object_new(new_id, OBJ_POINTER)) {
-                u32 surface = 0;
-                for (int i = 0; i < MAX_OBJECTS; i++)
-                    if (g_objects[i].used &&
-                        g_objects[i].type == OBJ_SURFACE) {
-                        surface = g_objects[i].id;
-                        break;
-                    }
-                send_pointer_events(new_id, surface);
+                g_pointer_id = new_id;
+                if (g_surface_id) {
+                    pointer_enter(160, 120);
+                    pointer_motion(160, 120);
+                    pointer_button(1);
+                    pointer_button(0);
+                }
             }
         } else if (opcode == 1 && size >= 12) {
             object_new(get_u32(message, 8), OBJ_KEYBOARD);
@@ -519,7 +667,11 @@ static int dispatch(u32 id, u16 opcode, const u8 *message, u32 size)
             u_puts(" first=0x");
             u_puthex(pixel);
             u_puts("\n");
-            composite(buffer, pixels);
+            g_client_pixels = pixels;
+            g_client_width = buffer->width;
+            g_client_height = buffer->height;
+            g_client_stride = buffer->stride;
+            composite();
         }
         break;
     default:
@@ -533,6 +685,14 @@ static void serve_client(void)
     u8 buffer[MAX_MESSAGE];
     u32 have = 0;
     for (;;) {
+        struct pollfd pfd;
+        pfd.fd = g_client;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        int ready = sys_poll(&pfd, 1, 10);
+        handle_mouse();
+        if (ready <= 0)
+            continue;
         struct iovec iov;
         struct msghdr message;
         u8 control[256];

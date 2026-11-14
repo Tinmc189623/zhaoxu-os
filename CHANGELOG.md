@@ -19,7 +19,8 @@ Zhaoxu OS 全部版本记录。当前版本的功能说明见 [README.md](README
 
 ### 显示
 - 新增 M2 Wayland 核心：`/bin/wayland` 的 wl_display/wl_registry/wl_compositor/wl_surface/wl_shm/wl_shm_pool/wl_buffer 对象与 wire 编码，`/bin/wldemo` 通过 AF_UNIX + SCM_RIGHTS 提交 memfd 帧；服务端把 320x240 帧合成到 `/bin/display` 的 1280x800 KMS 扫描缓冲并翻页
-- 新增 M3 核心：`xdg_wm_base`/`xdg_surface`/`xdg_toplevel` configure/ack，`wl_seat` 与 `wl_pointer` enter/motion/button；demo 客户端完成 xdg 提交
+- 新增 M3 核心：`xdg_wm_base`/`xdg_surface`/`xdg_toplevel` configure/ack，`wl_seat` 与 `wl_pointer` enter/motion/button；服务端标题栏、关闭按钮、拖动命中与 demo toplevel 合成
+- M4 起步：modern virtio 协商 VIRGL 并发 `CTX_CREATE`；QEMU `virtio-gpu-gl-pci` 仍报 `ctrl 0x103 error 0x1203`，GPU 合成与 dmabuf 未完成
 - 新增 Ring3 `/bin/display` KMS 服务：modern virtio-pci 控制队列、2D resource/backing、memfd 扫描缓冲、双缓冲 page flip；内核新增受限 `memfd_phys`/`map_phys`（仅 `display_cap`）用于扫描页和 PCI BAR
 - `apps/drivers` 不再初始化 virtio-gpu，控制队列归 `/bin/display` 独占；QEMU 1280x800 下验证两帧 scanout 不同
 

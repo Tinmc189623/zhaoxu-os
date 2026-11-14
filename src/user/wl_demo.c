@@ -222,6 +222,9 @@ int user_main(long *stack)
                 u_puts("[wldemo] pointer motion\n");
             } else if (id == 13 && opcode == 3) {
                 u_puts("[wldemo] pointer button\n");
+            } else if (id == 11 && opcode == 1) {
+                u_puts("[wldemo] close requested\n");
+                done = 1;
             } else if (id == 6 && opcode == 0) {
                 done = 1;
             }
