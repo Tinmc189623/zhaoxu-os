@@ -34,6 +34,7 @@
 #define ZF_SETFL 4
 
 #define ZO_NONBLOCK 0x800
+#define ZMSG_DONTWAIT 0x40
 
 #define ZEFD_SEMAPHORE 1
 #define ZTFD_TIMER_ABSTIME 1
@@ -267,7 +268,6 @@ long sys_ipc_accept(struct process *process, u64 fd, u64 address,
 long sys_ipc_sendmsg(struct process *process, u64 fd, u64 message,
                      u64 flags)
 {
-    (void)flags;
     struct zfd_entry *entry = zfd_get(process, (int)fd);
     if (!entry || entry->type != ZFD_TYPE_SOCKET)
         return -1;
@@ -341,7 +341,8 @@ long sys_ipc_sendmsg(struct process *process, u64 fd, u64 message,
         }
     }
 
-    int nonblock = (entry->flags & ZFD_O_NONBLOCK) != 0;
+    int nonblock = (entry->flags & ZFD_O_NONBLOCK) != 0 ||
+                   (flags & ZMSG_DONTWAIT) != 0;
     long result = unix_send_with_fds((struct unix_socket *)entry->object,
                                      data, total, fds, fd_count, nonblock);
     kfree(data);
@@ -351,7 +352,6 @@ long sys_ipc_sendmsg(struct process *process, u64 fd, u64 message,
 long sys_ipc_recvmsg(struct process *process, u64 fd, u64 message,
                      u64 flags)
 {
-    (void)flags;
     struct zfd_entry *entry = zfd_get(process, (int)fd);
     if (!entry || entry->type != ZFD_TYPE_SOCKET)
         return -1;
@@ -384,7 +384,8 @@ long sys_ipc_recvmsg(struct process *process, u64 fd, u64 message,
 
     int fds[UNIX_MAX_FDS];
     int fd_count = 0;
-    int nonblock = (entry->flags & ZFD_O_NONBLOCK) != 0;
+    int nonblock = (entry->flags & ZFD_O_NONBLOCK) != 0 ||
+                   (flags & ZMSG_DONTWAIT) != 0;
     long got = unix_recv_with_fds((struct unix_socket *)entry->object, data,
                                   capacity, fds, UNIX_MAX_FDS, &fd_count,
                                   nonblock);

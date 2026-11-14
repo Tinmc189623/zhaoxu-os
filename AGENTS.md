@@ -18,24 +18,24 @@
 14. README.md 里必须拥有 Emoji 和 HTML 以增加视觉效果。
 15. 系统必须同时支持 MBR 和 GPT。
 16. **AI** 写代码时优先追求效果和稳定性，不要为了快而在那块儿编写1s的代码，却看不着任何效果。
-17. 字体：MiSans、MiSans Global、Inter。
-18. 必须使用此`stb_truetype.h`，`https://raw.githubusercontent.com/nothings/stb/master/stb_truetype.h`（必须得是**原文**，不允许自己写一份）。
+17. 字体（必须 OpenType）：MiSans、MiSans Global、Inter。
+18. 字体渲染引擎必须移植使用 FreeType。
 19. 写代码的时候先看 stb 里头有没有需要的，如果有需要就直接复用，别自己自研。
 20. 项目必须遵循 KISS 原则。
 21. 必须支持的文件系统：FAT32、ext4，且为完整支持。
 22. 应用图标必须得是 SVG 图标。
 23. 一个文件只允许做一个功能，不允许把所有东西塞到一个文件中。
-24. 系统 API：`Zhaoxu Operating System Application Programming Interface™ Version 1.0`
+24. 系统 API：`Zhaoxu Operating System Application Programming Interface Version 1.0`
 25. 不得将内核写入 `BOOTX64.EFI`。
 26. 内核：`KERNEL.ELF`。
 27. 用户在安装系统时，只需要一个 ISO 即可安装，不需要让用户插入其他磁盘等需要外面软盘。
 28. ESP 分区必须得是 FAT32。
 29. 一个文件只能干一件事，一个文件不能干出超过一件事的事情，错误示例：`src/apps/cwsl/shell.cpp`。
-30. 禁止不使用 busybox。
+30. 禁止使用 busybox，使用 toybox。
 31. 引导流程：`BIOS 固件 → ZhaoxuBootMgr™ 引导管理器 → osloader.elf（BIOS） / OSLDRX64.ELF（UEFI） → kernel.elf → vga.ko 通用显卡驱动`。
 32. zhaoxuOS 的 GUI 采用经典 Aqua（Classic Aqua）视觉风格。计划构建独立的 Zhaoxu Aqua Framework（ZAF），以 Skia 为图形渲染基础，自研窗口管理器、桌面合成器、控件系统、动画引擎和主题引擎。要求具备深度自定义能力、可移植到自研操作系统，并尽量减少对其他操作系统 GUI 组件的依赖。Aqua 为默认主题，底层框架支持未来扩展其他视觉主题。
-33. 系统默认壁纸必须得是 [src\apps\ADE\web\wallpaper\3pty\img0.jpg](src\apps\ADE\web\wallpaper\3pty\img0.jpg)。
-34. 应用本身一般**不直接往屏幕上画**，它会分配一块显存缓冲区（帧缓冲 / 纹理 buffer），调用图形 API（ZOS_API/2D），在这块缓冲区里把这个图形渲染出来。
+33. 系统默认壁纸必须得是 `src\apps\ADE\web\wallpaper\3pty\img0.jpg`。
+34. 应用本身一般**不直接往屏幕上画**，它会分配一块显存缓冲区（帧缓冲 / 纹理 buffer），调用图形 API（Vulkan），在这块缓冲区里把这个图形渲染出来。
  - 应用里面发起绘图请求：我要画这个图形，设置位置、颜色、大小。
  - 渲染完成之后，这块显存里就存好了这个图形对应的像素点阵。
  - 应用发送消息给显示服务端：我的窗口新画面准备好了，这是纹理的句柄 / 缓冲区，还有窗口在桌面里的位置、层级信息。
@@ -48,6 +48,9 @@
  - English: `Copyright (C) <YEAR> <NAME>. All Rights Reserved.`
  - 中文：`©<年> <名> 版权所有`
 36. 必须支持所有unix自带的命令。 
+37. 必须完整移植并使用 Vulkan 作为默认图形渲染 API。
+38. OpenGL 仅作为兼容处理，但必须完整移植。
+39. 第三方必须按照“原样”/裁剪提供，不得进行自我更改，导致以后更新不了。
 
 ## ISO（这是**ISO 介质本身**的目录，不是启动后内存里的根文件系统；live 系统本体在 `casper/filesystem.squashfs` 压缩包内，版本：v1.1.13）
 
@@ -136,6 +139,7 @@ iso-root/
 8. 帧缓冲与桌面：`make run-iso QEMU_DISPLAY="-display gtk"` 人工查看；无头回归用 QEMU HMP `screendump /tmp/ade.ppm`（QEMU 输出 PPM，可用脚本转 PNG），检查菜单栏、窗口层叠、Dock 与 SVG 图标。`ruby src/tools/smoke.rb` 的 Shell 命令流程仅在无帧缓冲回退 8sh 时有效。
 9. M0 传输回归：`ruby tools/build.rb M0_BOOT_TEST=1 out/kernel.elf -o out/initramfs.tar` 构建自测内核（initramfs 需含 `/data/NET_TEST.ZXE`），用 OVMF 从 FAT ESP 引导后，串口应出现 `[m0] socket, poll, memfd, mmap, SCM_RIGHTS PASS` 和 `[m0 ] NET_TEST exit 0`。该测试覆盖 socketpair、poll、memfd、mmap、SCM_RIGHTS 与 O_NONBLOCK。
 10. M5 事件循环回归：ISO 启动后在 8sh 运行 `/data/M5_TEST.ZXE`，串口应出现 `[m5] eventfd PASS`、`[m5] epoll PASS`、`[m5] timerfd PASS` 与 `[m5] eventfd, timerfd, epoll PASS`。该测试覆盖系统调用 61–67：eventfd 计数/非阻塞读写、timerfd 一次性到期、epoll 注册/等待/超时。
+11. stock libwayland 回归：`make WLSTOCK_BOOT_TEST=1 iso` 启动后串口应出现 `[wlstock] ffi 42`、`[wlstock] globals bound`、`[wayland] commit 320x240 stride=1280 ...` 与 `[wlstock] WLSTOCK exit 0`。`out/wlstock.zxe` 由 `third_party/wayland`（1.23.1 客户端核心与生成的核心/xdg-shell 协议）、`third_party/libffi`（3.4.6 x86_64 SysV `ffi_call` 子集）和 `user/lib/wayland` 兼容层构建；编译 stock 源码时不要把 `kernel/include` 加进头文件路径，否则 `poll.h` 会遮蔽 libc 的同名头。
 
 ## 架构与不变量
 

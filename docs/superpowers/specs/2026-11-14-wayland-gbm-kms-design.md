@@ -109,7 +109,8 @@ desktop's main path.
 | M2 | Wayland core + wl_shm + wl_compositor | Validated through to KMS: `/bin/wayland` provides wl_display/registry/compositor/surface/wl_shm/wl_shm_pool/wl_buffer, and `/bin/wldemo` submits a 320x240 memfd over AF_UNIX + SCM_RIGHTS; the server composites the frame into `/bin/display`'s 1280x800 scanout buffer and flips it, with the centered blue block visible in `out/m2frame.png`. Stock `weston-simple-shm` still needs libwayland/epoll/eventfd |
 | M3 | xdg-shell + wl_seat | Validated: xdg configure/ack, wl_seat/wl_pointer, wl_keyboard keymap/enter, server-side title bar/close button/dragging, demo toplevel compositing; key events and the welcome/calc migration are pending |
 | M4 | virgl GPU compositing + linux-dmabuf | In progress: modern virtio control queues accept 256/64 per the device values, `CTX_CREATE`, 3D resource creation (72-byte command including padding) and `CTX_ATTACH_RESOURCE` succeed on `virtio-gpu-gl-pci`; virglrenderer under Windows QEMU registers neither 2D nor 3D resources, `SET_SCANOUT` returns `0x1203`, and GPU compositing plus dmabuf are unfinished |
-| M5 | Stock clients and consistency regression | Kernel prerequisites validated: `eventfd`, `timerfd`, and `epoll` (syscalls 61–67) with per-descriptor object types, and `/data/M5_TEST.ZXE` prints `[m5] eventfd, timerfd, epoll PASS` plus `[m5 ] M5_TEST exit 0` under OVMF. The stock libwayland client library port and the welcome/calc migration are still pending, so `weston-terminal` and the xdg-shell test suite are not green yet |
+| M5 | Stock clients and consistency regression | Kernel prerequisites validated: `eventfd`, `timerfd`, and `epoll` (syscalls 61–67) with per-descriptor object types, and `/data/M5_TEST.ZXE` prints `[m5] eventfd, timerfd, epoll PASS` plus `[m5 ] M5_TEST exit 0` under OVMF. The stock libwayland 1.23.1 client core is now ported (see M6); unmodified stock applications and the xdg-shell test suite are still pending |
+| M6 | Wayland client stack and migration | In progress: upstream `wayland-client.c`, `wayland-util.c`, `connection.c`, generated core/xdg-shell bindings and the libffi 3.4.6 SysV `ffi_call` path build for ZOS; `user/lib/wayland/compat.c` supplies libc/pthread/socket/errno; `/data/WLSTOCK.ZXE` binds `wl_compositor`/`wl_shm`, commits a 320x240 shm frame through SCM_RIGHTS and exits 0. Remaining: unmodified stock clients (`weston-simple-shm`, `weston-terminal`), `shm_open`/wider POSIX surface, welcome/calc migration and the xdg-shell conformance suite |
 
 Dependencies: M0 is a prerequisite for M2; M1 is a prerequisite for M2 presentation; M4 can run in parallel with M3.
 
@@ -149,6 +150,28 @@ The test covers the Linux-compatible event ABI: `eventfd` counter reads and writ
 descriptors. Descriptors are stored in the existing per-process zfd table above
 `ZFD_BASE`; `epoll` entries are fixed at 32 per object, and the wait path sleeps in
 1 ms slices like the existing `poll` syscall.
+
+### M6 stock libwayland verification record (2026-11-14)
+
+A kernel built with `WLSTOCK_BOOT_TEST=1` starts `/bin/wayland`, then spawns
+`/data/WLSTOCK.ZXE`. The client is linked from upstream libwayland 1.23.1 and
+prints:
+
+```
+[wlstock] ffi 42
+[wlstock] connected
+[wlstock] registry requested
+[wlstock] globals bound
+[wlstock] frame committed
+[wlstock] WLSTOCK exit 0
+```
+
+The server logs `[wayland] commit 320x240 stride=1280 first=0x0x00000000ff3366cc`.
+The verification uncovered two integration defects: the client's `recvmsg`
+carries `MSG_DONTWAIT` while the descriptor itself is blocking, so the kernel now
+derives nonblocking behavior from the flag per call; and the freestanding build
+must not put `kernel/include` on the include path for the stock sources because
+`kernel/include/poll.h` would shadow the libc poll definitions.
 
 ## 6. Risks and constraints
 

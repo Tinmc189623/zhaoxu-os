@@ -1,4 +1,4 @@
-Zhaoxu OS 0.7.1 "Yuanshuo" build 3
+Zhaoxu OS 0.7.1 "Yuanshuo" build 4
 Kernel: Yuanshuo 0.7.1
 Initramfs: ustar archive embedded in the kernel image
 Root filesystem: rootfs (initramfs ustar)

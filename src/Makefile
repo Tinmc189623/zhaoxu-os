@@ -94,6 +94,8 @@ M0_BOOT_TEST ?= 0
 CFLAGS += -DM0_BOOT_TEST=$(M0_BOOT_TEST)
 M5_BOOT_TEST ?= 0
 CFLAGS += -DM5_BOOT_TEST=$(M5_BOOT_TEST)
+WLSTOCK_BOOT_TEST ?= 0
+CFLAGS += -DWLSTOCK_BOOT_TEST=$(WLSTOCK_BOOT_TEST)
 # make does not track CFLAGS changes; stamps keyed by the test mode force
 # kernel/main.o to rebuild when a boot-time test toggles, so an ISO cannot
 # silently ship a self-test kernel.
@@ -107,7 +109,12 @@ $(BUILD)/m5-%.stamp:
 	@mkdir -p $(BUILD)
 	@rm -f $(BUILD)/m5-*.stamp
 	@touch $@
-$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP)
+WLSTOCK_STAMP := $(BUILD)/wlstock-$(WLSTOCK_BOOT_TEST).stamp
+$(BUILD)/wlstock-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/wlstock-*.stamp
+	@touch $@
+$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP)
 ADAFLAGS := -c -gnatp -gnat2022 -O2 -g -fno-pie \
             -fno-stack-protector -mno-red-zone -mcmodel=kernel \
             -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -mno-avx \
@@ -391,6 +398,100 @@ $(BUILD)/wldemo.uelf: $(WLDEMO_SRCS) user/userlib.h user/user.ld
 	$(CC) $(USER_CFLAGS) -Iuser -Ikernel/include \
 	  $(USER_LDFLAGS) -o $@ $(WLDEMO_SRCS)
 
+# ---- Stock libwayland client (M5/M6) --------------------------------
+# The upstream client core, the generated core/xdg-shell protocol code and
+# the libffi SysV backend are built freestanding.  compat.c supplies the libc,
+# errno, pthread and socket surface; wayland-os-zos.c replaces the Linux
+# descriptor-flag helpers.  --gc-sections drops libffi's Windows/closure code.
+WLSTOCK_BUILD := $(BUILD)/wlstock
+WLSTOCK_INCLUDES := -Ithird_party/wayland -Ithird_party/wayland/src \
+                    -Ithird_party/wayland/protocol -Ithird_party/libffi \
+                    -Iuser -Iuser/lib/wayland
+WLSTOCK_CFLAGS := $(USER_CFLAGS) -fvisibility=hidden -ffunction-sections \
+                  -fdata-sections -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 \
+                  -D_GNU_SOURCE $(WLSTOCK_INCLUDES)
+WLSTOCK_HDRS := third_party/wayland/src/wayland-client.h \
+                third_party/wayland/src/wayland-client-core.h \
+                third_party/wayland/src/wayland-util.h \
+                third_party/wayland/src/wayland-private.h \
+                third_party/wayland/src/wayland-os.h \
+                third_party/wayland/src/wayland-version.h \
+                third_party/wayland/protocol/wayland-client-protocol.h \
+                third_party/wayland/protocol/xdg-shell-client-protocol.h \
+                third_party/libffi/ffi.h third_party/libffi/ffitarget.h \
+                third_party/libffi/fficonfig.h third_party/libffi/ffi_common.h \
+                user/lib/wayland/compat.c user/lib/wayland/wayland-os-zos.c
+
+WLSTOCK_OBJS := $(WLSTOCK_BUILD)/wayland-client.o \
+                $(WLSTOCK_BUILD)/wayland-util.o \
+                $(WLSTOCK_BUILD)/connection.o \
+                $(WLSTOCK_BUILD)/wayland-protocol.o \
+                $(WLSTOCK_BUILD)/xdg-shell-protocol.o \
+                $(WLSTOCK_BUILD)/compat.o \
+                $(WLSTOCK_BUILD)/wayland-os-zos.o \
+                $(WLSTOCK_BUILD)/stock-demo.o \
+                $(WLSTOCK_BUILD)/userlib.o \
+                $(WLSTOCK_BUILD)/ffi-prep.o \
+                $(WLSTOCK_BUILD)/ffi-types.o \
+                $(WLSTOCK_BUILD)/ffi-64.o \
+                $(WLSTOCK_BUILD)/ffi-unix64.o
+
+$(WLSTOCK_BUILD)/wayland-client.o: third_party/wayland/src/wayland-client.c $(WLSTOCK_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(WLSTOCK_CFLAGS) -c $< -o $@
+
+$(WLSTOCK_BUILD)/wayland-util.o: third_party/wayland/src/wayland-util.c $(WLSTOCK_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(WLSTOCK_CFLAGS) -c $< -o $@
+
+$(WLSTOCK_BUILD)/connection.o: third_party/wayland/src/connection.c $(WLSTOCK_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(WLSTOCK_CFLAGS) -c $< -o $@
+
+$(WLSTOCK_BUILD)/wayland-protocol.o: third_party/wayland/protocol/wayland-protocol.c $(WLSTOCK_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(WLSTOCK_CFLAGS) -c $< -o $@
+
+$(WLSTOCK_BUILD)/xdg-shell-protocol.o: third_party/wayland/protocol/xdg-shell-protocol.c $(WLSTOCK_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(WLSTOCK_CFLAGS) -c $< -o $@
+
+$(WLSTOCK_BUILD)/compat.o: user/lib/wayland/compat.c $(WLSTOCK_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(WLSTOCK_CFLAGS) -c $< -o $@
+
+$(WLSTOCK_BUILD)/wayland-os-zos.o: user/lib/wayland/wayland-os-zos.c $(WLSTOCK_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(WLSTOCK_CFLAGS) -c $< -o $@
+
+$(WLSTOCK_BUILD)/stock-demo.o: user/lib/wayland/stock_demo.c $(WLSTOCK_HDRS) user/userlib.h
+	@mkdir -p $(dir $@)
+	$(CC) $(WLSTOCK_CFLAGS) -c $< -o $@
+
+$(WLSTOCK_BUILD)/userlib.o: user/userlib.c user/userlib.h
+	@mkdir -p $(dir $@)
+	$(CC) $(WLSTOCK_CFLAGS) -Ikernel/include -c $< -o $@
+
+$(WLSTOCK_BUILD)/ffi-prep.o: third_party/libffi/prep_cif.c $(WLSTOCK_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(WLSTOCK_CFLAGS) -c $< -o $@
+
+$(WLSTOCK_BUILD)/ffi-types.o: third_party/libffi/types.c $(WLSTOCK_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(WLSTOCK_CFLAGS) -c $< -o $@
+
+$(WLSTOCK_BUILD)/ffi-64.o: third_party/libffi/ffi64.c $(WLSTOCK_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(WLSTOCK_CFLAGS) -c $< -o $@
+
+$(WLSTOCK_BUILD)/ffi-unix64.o: third_party/libffi/unix64.S $(WLSTOCK_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -Ithird_party/libffi -c $< -o $@
+
+$(BUILD)/wlstock.uelf: $(WLSTOCK_OBJS) user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_LDFLAGS) -Wl,--gc-sections -o $@ $(WLSTOCK_OBJS)
+
 # ---- ZAF graphics (Z0) ----------------------------------------------
 ZAF_GFX_HDRS := user/lib/include/zaf_gfx.h user/userlib.h
 ZAF_GFX_SRCS := user/zaf_gfx_demo.c user/lib/zaf_gfx_soft.c user/userlib.c
@@ -485,7 +586,8 @@ RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/aqua $(RAMFS)/bin/8sh \
                $(RAMFS)/data/HELLO.ELF \
                $(RAMFS)/data/DOCS/INFO.TXT \
                $(RAMFS)/data/PING.ZXE $(RAMFS)/data/PONG.ZXE \
-               $(RAMFS)/data/NET_TEST.ZXE $(RAMFS)/data/M5_TEST.ZXE
+               $(RAMFS)/data/NET_TEST.ZXE $(RAMFS)/data/M5_TEST.ZXE \
+               $(RAMFS)/data/WLSTOCK.ZXE
 
 # PNG + text cursor theme.  The compositor loads this from
 # /usr/share/cursors/Aqua at startup and falls back to the built-in arrow
@@ -584,6 +686,11 @@ $(RAMFS)/data/NET_TEST.ZXE: $(OUT)/net_test.zxe
 
 # M5 event loop regression: eventfd, timerfd, epoll.
 $(RAMFS)/data/M5_TEST.ZXE: $(OUT)/m5_test.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+# M5/M6 stock libwayland client regression.
+$(RAMFS)/data/WLSTOCK.ZXE: $(OUT)/wlstock.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 

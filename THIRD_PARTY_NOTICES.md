@@ -40,6 +40,29 @@ Based on:
 The binary is bundled only as a build convenience. It is not linked into the
 Zhaoxu OS kernel image.
 
+## libwayland
+
+- Files: `src/third_party/wayland/`
+- Version: 1.23.1
+- Copyright © 2008-2012 Kristian Høgsberg, © 2010-2012 Intel Corporation,
+  © 2011 Benjamin Franzke, © 2012 Collabora, Ltd.
+- License: MIT (see `src/third_party/wayland/COPYING`)
+- The client core (`wayland-client.c`, `wayland-util.c`, `connection.c`) and the
+  generated core/xdg-shell protocol bindings are compiled into the Ring3
+  `/data/WLSTOCK.ZXE` regression client. The Wayland XML sources are included
+  under `protocol/`; the checked-in bindings were produced with the upstream
+  `wayland-scanner`.
+
+## libffi
+
+- Files: `src/third_party/libffi/`
+- Version: 3.4.6 (x86_64 SysV `ffi_call` subset)
+- Copyright © 1996-2024 Anthony Green, Red Hat, Inc and others
+- License: MIT (see `src/third_party/libffi/COPYING`)
+- libwayland uses libffi to invoke event listeners. The Windows/EFI closure
+  paths are not linked; the build keeps only the SysV call path used by the
+  client.
+
 ## WenQuanYi Micro Hei (文泉驿微米黑)
 
 - File: `src/initramfs/data/wqy.ttc` → shipped as `/mnt/WQY.TTC` on the FAT32

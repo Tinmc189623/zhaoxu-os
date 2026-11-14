@@ -207,6 +207,26 @@ void kernel_main(struct boot_info *boot)
         hlt();
 #endif
 
+#if WLSTOCK_BOOT_TEST == 1
+    kprintf("[wlstock] starting /bin/wayland\n");
+    u64 wlstock_server = process_spawn("/bin/wayland", 0, NULL);
+    if (wlstock_server) {
+        timer_sleep_ms(100);
+        u64 wlstock_client = process_spawn("/data/WLSTOCK.ZXE", 0, NULL);
+        if (wlstock_client) {
+            int wlstock_status = -1;
+            process_wait(wlstock_client, &wlstock_status);
+            kprintf("[wlstock] WLSTOCK exit %d\n", wlstock_status);
+        } else {
+            kprintf("[wlstock] WLSTOCK spawn failed\n");
+        }
+    } else {
+        kprintf("[wlstock] wayland spawn failed\n");
+    }
+    for (;;)
+        hlt();
+#endif
+
     /* M1: the KMS service owns virtio-gpu scanout and runs before the
      * desktop.  Without a virtio-gpu it exits immediately. */
     u64 display_pid = process_spawn("/bin/display", 0, NULL);

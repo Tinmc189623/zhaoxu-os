@@ -2,6 +2,17 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 · build 4
+
+### Wayland
+- Ported the stock libwayland 1.23.1 client core (`wayland-client.c`, `wayland-util.c`, `connection.c`) with generated core and xdg-shell bindings; libffi 3.4.6 supplies the x86_64 SysV `ffi_call` path used to invoke listeners
+- `user/lib/wayland/compat.c` implements malloc/free, string functions, errno, pthread mutex/condition variables, `socket`/`connect`/`fcntl`/`sendmsg`/`recvmsg`/`poll` and `clock_gettime` over ZOS syscalls; `wayland-os-zos.c` replaces the Linux descriptor-flag helpers
+- `make out/wlstock.zxe` builds `/data/WLSTOCK.ZXE`, which binds `wl_compositor`/`wl_shm`, submits a 320x240 shm frame through SCM_RIGHTS and exits 0; `WLSTOCK_BOOT_TEST=1` starts `/bin/wayland` before it
+- The kernel `sendmsg`/`recvmsg` paths honor `MSG_DONTWAIT` per call; stock libwayland drains the display socket this way even when the descriptor itself is blocking
+
+### Documentation
+- `THIRD_PARTY_NOTICES.md` records libwayland (MIT) and libffi (MIT), including the generated xdg-shell bindings
+
 ## 0.7.1 「Yuanshuo」 · build 3
 
 ### Kernel
