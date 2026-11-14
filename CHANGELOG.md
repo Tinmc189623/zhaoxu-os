@@ -1,6 +1,42 @@
 # Changelog
 
-Zhaoxu OS 全部版本记录。当前版本的功能说明见 [README.md](README.md)；版本号唯一来源是 `version.php`。
+Zhaoxu OS 全部版本记录。当前版本的功能说明见 [README.md](README.md)；版本号唯一来源是 `version.cfg`。
+
+## 0.6.0 「Yuanshuo」
+
+### 构建与版本
+- 构建支持原生 Linux、原生 macOS、原生 Windows（MSYS2/MinGW）与 WSL2；Ruby 入口 `tools/host.rb` / `build.rb` / `run.rb` 统一探测宿主、工具链、OVMF 与 QEMU
+- Makefile 跨平台：`ZOS_HOST` 检测、macOS/Windows 使用 clang `--target=x86_64-elf` + lld + llvm-objcopy、可移植的 dd/tar/stat、按宿主 OVMF 与镜像工具、`--check` 工具矩阵
+- `version.cfg` 成为唯一版本源，`os_version` 与 `kernel_version` 分离；`version.h` 新增 `ZHAOXU_KERNEL_VERSION`，ISO 元数据同时写入 OS 与内核版本
+- 新增构建宿主检测单元测试 `tests/tools/host_test.rb` 与 `make host-test`
+
+### 存储与文件系统
+- ext4 核心从内核剥离为 OS 无关的 `src/fs/ext4`，带 host 测试与 Ruby 格式化矩阵
+- 新增 Ring3 `/bin/ext4fs` 服务：块 RPC、读写/分配/格式化、超时与请求加固
+- `/mnt` 由 VFS 转发到 Ring3 ext4 服务；安装器现场构建 ext4 根，内核可从已安装 ext4 根启动
+- 安装目标盘支持 MBR 与 GPT，保留 FAT32 ESP 与 `ZHAOXUDATA` 数据卷
+
+### 引导与安装
+- UEFI 拆成两段：`ZhaoxuBootMgr`（BOOTX64.EFI）→ `OSLDRX64.ELF` → `kernel.elf`
+- legacy BIOS 改为 no-emulation El Torito ISO，stage2 参数块由 `tools/iso-bios.rb` 回填
+- ISO 介质按文档生成 casper/dists/pool/.disk/preseed 与 md5sum 元数据
+- 单 ISO 自包含安装（规则 27），不依赖额外介质
+
+### 图形与桌面
+- ZAF Z0：后端中立 `zaf_gfx` 光栅接口、软件后端与 Ring3 fps 演示；补齐 ZAF 架构与 Z1 设计文档
+- ADE 后缓冲合成，只提交损伤区域；菜单栏、About 面板与真实 SVG 图标
+- 默认壁纸（rule 33）在构建期转成原始帧，启动时从数据卷或 ISO 加载，无盘回退 Aqua 渐变
+- Ring3 ADE 显示服务器、计算器迁移为独立客户端；截图工具可通过 HMP 驱动点击
+
+### 运行时与可执行格式
+- ZXE v1 原生格式：加载器、打包器、W^X 段权限、ASLR 映像基址与 `/lib` 动态依赖
+- stb_truetype 在内核与 Ring3 共用同一份适配代码
+- SMP AP 启动同步与 LAPIC 延时修正；硬件驱动全部下沉 Ring3
+
+### 修复
+- ext4 损坏元数据、陈旧/伪造 RPC 与未对齐目录项校验
+- 安装失败清理、GPT LastUsable LBA、BIOS El Torito 目录校验
+- 安装器进度条启动前显示 0%
 
 ## 0.5.0 「Yuanshuo」
 
