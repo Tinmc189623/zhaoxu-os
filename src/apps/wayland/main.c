@@ -77,6 +77,7 @@ static u32 g_out_active;
 static u32 g_surface_id;
 static u32 g_toplevel_id;
 static u32 g_pointer_id;
+static u32 g_keyboard_id;
 static const u32 *g_client_pixels;
 static u32 g_client_width;
 static u32 g_client_height;
@@ -413,6 +414,94 @@ static void pointer_button(u32 state)
     send_all(message, at);
 }
 
+static int send_message_fd(u8 *buffer, u32 size, int fd)
+{
+    struct iovec iov;
+    iov.iov_base = buffer;
+    iov.iov_len = size;
+    u8 control[CMSG_SPACE(sizeof(int))];
+    zero_bytes(control, sizeof(control));
+    struct msghdr message;
+    zero_bytes(&message, sizeof(message));
+    message.msg_iov = &iov;
+    message.msg_iovlen = 1;
+    message.msg_control = control;
+    message.msg_controllen = sizeof(control);
+    struct cmsghdr *cmsg = (struct cmsghdr *)control;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    *(int *)CMSG_DATA(cmsg) = fd;
+    return sys_sendmsg(g_client, &message, 0) == (long)size ? 0 : -1;
+}
+
+static void send_keyboard_keymap(u32 keyboard)
+{
+    static const char keymap[] =
+        "xkb_keymap {\n"
+        " xkb_keycodes { include \"evdev+aliases(qwerty)\" };\n"
+        " xkb_types { include \"complete\" };\n"
+        " xkb_compat { include \"complete\" };\n"
+        " xkb_symbols { include \"pc+us+inet(evdev)\" };\n"
+        "};\n";
+    u32 length = str_len(keymap) + 1;
+    int fd = (int)sys_memfd_create("wl-keymap", 0);
+    if (fd < 0 || sys_ftruncate(fd, length) != 0)
+        return;
+    struct zos_mmap_args args;
+    args.address = 0;
+    args.length = length;
+    args.protection = 3;
+    args.flags = 1;
+    args.fd = fd;
+    args.offset = 0;
+    long mapped = sys_mmap(&args);
+    if (mapped < 0)
+        return;
+    copy_bytes((void *)(uintptr_t)mapped, keymap, length);
+
+    u8 message[24];
+    u32 at = put_header(message, keyboard, 0);
+    at = put_u32(message, at, 1); /* WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 */
+    at = put_u32(message, at, length);
+    finish_message(message, at);
+    send_message_fd(message, at, fd);
+}
+
+static void send_keyboard_enter(u32 keyboard)
+{
+    u8 message[24];
+    u32 at = put_header(message, keyboard, 1);
+    at = put_u32(message, at, g_serial++);
+    at = put_u32(message, at, g_surface_id);
+    at = put_u32(message, at, 0); /* empty pressed-keys array */
+    finish_message(message, at);
+    send_all(message, at);
+}
+
+static void send_keyboard_key(u32 key, u32 state)
+{
+    u8 message[32];
+    u32 at = put_header(message, g_keyboard_id, 3);
+    at = put_u32(message, at, g_serial++);
+    at = put_u32(message, at, (u32)sys_uptime());
+    at = put_u32(message, at, key);
+    at = put_u32(message, at, state);
+    finish_message(message, at);
+    send_all(message, at);
+}
+
+static void handle_keyboard(void)
+{
+    if (!g_keyboard_id || g_client < 0)
+        return;
+    int key = (int)sys_key();
+    if (key < 0)
+        return;
+    send_keyboard_key((u32)key, 1);
+    send_keyboard_key((u32)key, 0);
+}
+
 static void toplevel_close(void)
 {
     u8 message[8];
@@ -633,7 +722,13 @@ static int dispatch(u32 id, u16 opcode, const u8 *message, u32 size)
                 }
             }
         } else if (opcode == 1 && size >= 12) {
-            object_new(get_u32(message, 8), OBJ_KEYBOARD);
+            u32 new_id = get_u32(message, 8);
+            if (object_new(new_id, OBJ_KEYBOARD)) {
+                g_keyboard_id = new_id;
+                send_keyboard_keymap(new_id);
+                if (g_surface_id)
+                    send_keyboard_enter(new_id);
+            }
         }
         break;
     case OBJ_SURFACE:
@@ -691,6 +786,7 @@ static void serve_client(void)
         pfd.revents = 0;
         int ready = sys_poll(&pfd, 1, 10);
         handle_mouse();
+        handle_keyboard();
         if (ready <= 0)
             continue;
         struct iovec iov;

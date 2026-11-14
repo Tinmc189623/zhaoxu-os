@@ -169,9 +169,26 @@ int user_main(long *stack)
     u32 have = 0;
     int done = 0;
     while (!done) {
-        long length = sys_read(socket, input + have, sizeof(input) - have);
+        struct iovec iov;
+        iov.iov_base = input + have;
+        iov.iov_len = sizeof(input) - have;
+        u8 control[64];
+        zero_bytes(control, sizeof(control));
+        struct msghdr message;
+        zero_bytes(&message, sizeof(message));
+        message.msg_iov = &iov;
+        message.msg_iovlen = 1;
+        message.msg_control = control;
+        message.msg_controllen = sizeof(control);
+        long length = sys_recvmsg(socket, &message, 0);
         if (length <= 0)
             break;
+        if (message.msg_controllen >= sizeof(struct cmsghdr)) {
+            struct cmsghdr *cmsg = (struct cmsghdr *)control;
+            if (cmsg->cmsg_level == SOL_SOCKET &&
+                cmsg->cmsg_type == SCM_RIGHTS)
+                sys_close(*(int *)CMSG_DATA(cmsg));
+        }
         have += (u32)length;
         u32 offset = 0;
         while (have - offset >= 8) {
@@ -222,6 +239,12 @@ int user_main(long *stack)
                 u_puts("[wldemo] pointer motion\n");
             } else if (id == 13 && opcode == 3) {
                 u_puts("[wldemo] pointer button\n");
+            } else if (id == 14 && opcode == 0) {
+                u_puts("[wldemo] keyboard keymap\n");
+            } else if (id == 14 && opcode == 1) {
+                u_puts("[wldemo] keyboard enter\n");
+            } else if (id == 14 && opcode == 3) {
+                u_puts("[wldemo] keyboard key\n");
             } else if (id == 11 && opcode == 1) {
                 u_puts("[wldemo] close requested\n");
                 done = 1;
@@ -252,6 +275,10 @@ int user_main(long *stack)
 
             message_at = put_header(buffer, (u32)seat, 0);
             message_at = put_u32(buffer, message_at, 13);
+            send_plain(socket, buffer, message_at);
+
+            message_at = put_header(buffer, (u32)seat, 1);
+            message_at = put_u32(buffer, message_at, 14);
             send_plain(socket, buffer, message_at);
             setup_sent = 1;
         }
