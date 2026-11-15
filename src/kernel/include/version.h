@@ -6,6 +6,6 @@
 #define ZHAOXU_CODENAME        "Yuanshuo"
 #define ZHAOXU_KERNEL          "Yuanshuo"
 #define ZHAOXU_KERNEL_VERSION  "0.7.1"
-#define ZHAOXU_BUILD           "14"
+#define ZHAOXU_BUILD           "15"
 
 #endif

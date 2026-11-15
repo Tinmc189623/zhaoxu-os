@@ -2,6 +2,14 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 build 15
+
+### ncurses and terminfo
+- ncurses 6.5 is built for x86_64-elf against newlib with the same clang wrapper, `-fPIC`, `ARFLAGS=rv`, and a small set of config fixes (newlib already supplies ssize_t/pid_t/intptr_t). The ZOS overlay headers supply dirent, glob, termios, ioctl and rlimit surfaces that newlib lacks for x86_64-elf
+- `initramfs/usr/share/terminfo/z/zhaoxu` is a real compiled terminfo entry (80x25, ANSI cursor/color). `NLIBC_BOOT_TEST=1` now also runs a curses program: `ncurses hello 80x25` on screen and `ncurses hello: 80x25 ok`, exit 0
+- Kernel additions needed by the port: VFS `lseek` (same SYS_LSEEK 53 for fds below 64) and `SYS_STAT` (77) returning is-dir/size, so the terminfo tree is discoverable
+- nano 8.4 is downloaded and configured, but its gnulib portability headers still conflict with newlib's signal surface; it is not built yet
+
 ## 0.7.1 「Yuanshuo」 build 14
 
 ### newlib C library

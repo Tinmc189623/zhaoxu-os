@@ -46,6 +46,7 @@ int vfs_write_file(const char *path, const u8 *data, u64 size);
 int vfs_unlink(const char *path);
 int vfs_open(const char *path);
 long vfs_read(int fd, void *buffer, u64 count);
+long vfs_seek(int fd, long offset, int whence);
 int vfs_close(int fd);
 void vfs_close_all(void);
 

@@ -7,12 +7,19 @@
  * user/userlib.h: newlib owns struct termios, stat and errno, and including
  * both would collide on those names.
  */
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/types.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -23,11 +30,14 @@
 #define ZOS_READ     4
 #define ZOS_CLOSE    5
 #define ZOS_WAIT     8
+#define ZOS_LSEEK    53
 #define ZOS_FORK     72
 #define ZOS_EXEC     73
 #define ZOS_PIPE     74
 #define ZOS_DUP2     75
 #define ZOS_IOCTL    76
+#define ZOS_STAT     77
+#define ZOS_READDIR  29
 
 #define ZOS_TCGETS   0x5401
 
@@ -96,11 +106,12 @@ int _close(int fd)
 
 off_t _lseek(int fd, off_t offset, int whence)
 {
-    (void)fd;
-    (void)offset;
-    (void)whence;
-    errno = ESPIPE;
-    return (off_t)-1;
+    long result = zos_syscall3(ZOS_LSEEK, fd, (long)offset, whence);
+    if (result < 0) {
+        errno = ESPIPE;
+        return (off_t)-1;
+    }
+    return (off_t)result;
 }
 
 int _fstat(int fd, struct stat *status)
@@ -115,12 +126,20 @@ int _fstat(int fd, struct stat *status)
 
 int _stat(const char *path, struct stat *status)
 {
-    (void)path;
-    if (!status)
+    if (!path || !status)
         return -1;
+    int is_dir = 0;
+    unsigned long long size = 0;
+    if (zos_syscall3(ZOS_STAT, (long)(uintptr_t)path,
+                     (long)(uintptr_t)&is_dir,
+                     (long)(uintptr_t)&size) != 0) {
+        errno = ENOENT;
+        return -1;
+    }
     for (size_t i = 0; i < sizeof(*status); i++)
         ((unsigned char *)status)[i] = 0;
-    status->st_mode = S_IFREG;
+    status->st_mode = (is_dir ? S_IFDIR : S_IFREG) | 0755;
+    status->st_size = (off_t)size;
     return 0;
 }
 
@@ -301,4 +320,229 @@ int isatty(int fd)
 void *sbrk(intptr_t increment)
 {
     return _sbrk((ptrdiff_t)increment);
+}
+
+/* ncurses calls the varargs ioctl and the termios helpers directly. */
+int ioctl(int fd, unsigned long request, ...)
+{
+    va_list arguments;
+    va_start(arguments, request);
+    void *argument = va_arg(arguments, void *);
+    va_end(arguments);
+    return _ioctl(fd, request, argument);
+}
+
+int tcgetattr(int fd, struct termios *termios)
+{
+    return ioctl(fd, TCGETS, termios);
+}
+
+int tcsetattr(int fd, int action, const struct termios *termios)
+{
+    (void)action;
+    return ioctl(fd, TCSETS, (void *)termios);
+}
+
+speed_t cfgetospeed(const struct termios *termios)
+{
+    (void)termios;
+    return B38400;
+}
+
+speed_t cfgetispeed(const struct termios *termios)
+{
+    (void)termios;
+    return B38400;
+}
+
+int cfsetospeed(struct termios *termios, speed_t speed)
+{
+    (void)termios;
+    (void)speed;
+    return 0;
+}
+
+int cfsetispeed(struct termios *termios, speed_t speed)
+{
+    (void)termios;
+    (void)speed;
+    return 0;
+}
+
+int tcflush(int fd, int queue)
+{
+    (void)fd;
+    (void)queue;
+    return 0;
+}
+
+int tcdrain(int fd)
+{
+    (void)fd;
+    return 0;
+}
+
+int tcflow(int fd, int action)
+{
+    (void)fd;
+    (void)action;
+    return 0;
+}
+
+int open(const char *path, int flags, ...)
+{
+    return _open(path, flags);
+}
+
+int getpid(void)
+{
+    return _getpid();
+}
+
+int kill(int pid, int signal)
+{
+    return _kill(pid, signal);
+}
+
+int stat(const char *path, struct stat *status)
+{
+    return _stat(path, status);
+}
+
+int access(const char *path, int mode)
+{
+    (void)mode;
+    int fd = _open(path, 0);
+    if (fd < 0)
+        return -1;
+    _close(fd);
+    return 0;
+}
+
+int gettimeofday(struct timeval *time, void *timezone)
+{
+    (void)timezone;
+    if (time) {
+        time->tv_sec = 0;
+        time->tv_usec = 0;
+    }
+    return 0;
+}
+
+int dup(int fd)
+{
+    (void)fd;
+    errno = ENOSYS;
+    return -1;
+}
+
+int fcntl(int fd, int command, ...)
+{
+    (void)fd;
+    if (command == F_GETFL)
+        return 0;
+    errno = ENOSYS;
+    return -1;
+}
+
+char *getprogname(void)
+{
+    return (char *)"nano";
+}
+
+int getdtablesize(void)
+{
+    return 128;
+}
+
+int getrlimit(int resource, struct rlimit *limit)
+{
+    (void)resource;
+    if (!limit)
+        return -1;
+    limit->rlim_cur = 128;
+    limit->rlim_max = 128;
+    return 0;
+}
+
+int setrlimit(int resource, const struct rlimit *limit)
+{
+    (void)resource;
+    (void)limit;
+    return 0;
+}
+
+/* Directory streams over the kernel's readdir text:
+ *   "d name\n" and "f name size\n". */
+struct zos_dir_stream {
+    char *buffer;
+    size_t length;
+    size_t offset;
+    struct dirent entry;
+};
+
+DIR *opendir(const char *path)
+{
+    char *buffer = malloc(65536);
+    if (!buffer)
+        return NULL;
+    long length = zos_syscall3(ZOS_READDIR, (long)(uintptr_t)path,
+                               (long)(uintptr_t)buffer, 65536);
+    if (length <= 0) {
+        free(buffer);
+        errno = ENOENT;
+        return NULL;
+    }
+    struct zos_dir_stream *stream = malloc(sizeof(*stream));
+    if (!stream) {
+        free(buffer);
+        return NULL;
+    }
+    stream->buffer = buffer;
+    stream->length = (size_t)length;
+    stream->offset = 0;
+    return (DIR *)stream;
+}
+
+struct dirent *readdir(DIR *directory)
+{
+    struct zos_dir_stream *stream = (struct zos_dir_stream *)directory;
+    if (!stream || stream->offset >= stream->length)
+        return NULL;
+
+    size_t start = stream->offset;
+    size_t end = start;
+    while (end < stream->length && stream->buffer[end] != '\n')
+        end++;
+    size_t next = end < stream->length ? end + 1 : end;
+
+    char type = stream->buffer[start];
+    size_t name_start = start + 2;
+    if (name_start > end)
+        name_start = end;
+    size_t name_length = 0;
+    while (name_start + name_length < end &&
+           stream->buffer[name_start + name_length] != ' ')
+        name_length++;
+    if (name_length >= sizeof(stream->entry.d_name))
+        name_length = sizeof(stream->entry.d_name) - 1;
+
+    for (size_t i = 0; i < sizeof(stream->entry); i++)
+        ((unsigned char *)&stream->entry)[i] = 0;
+    for (size_t i = 0; i < name_length; i++)
+        stream->entry.d_name[i] = stream->buffer[name_start + i];
+    stream->entry.d_name[name_length] = '\0';
+    stream->entry.d_type = type == 'd' ? DT_DIR : DT_REG;
+    stream->offset = next;
+    return &stream->entry;
+}
+
+int closedir(DIR *directory)
+{
+    struct zos_dir_stream *stream = (struct zos_dir_stream *)directory;
+    if (!stream)
+        return -1;
+    free(stream->buffer);
+    free(stream);
+    return 0;
 }

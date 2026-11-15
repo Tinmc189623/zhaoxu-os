@@ -2,11 +2,11 @@
 
 ## 规则（必须遵守）
 
-1. 内核名称：`Yuanshuo™`，操作系统名称：`Zhaoxu OS™`，桌面合成器：`Desktop Window Compositor™`（Wayland），Shell：`8sh`，桌面：`Aqua Desktop Environment™`（风格：Aqua），窗口管理器：`Desktop Window Manager`，不得改动任何字符，严禁使用`Yuanshuo™ Shell`。
-2. Github 仓库（main）：https://github.com/Tinmc189623/zhaoxu-os
+1. 内核名称：`Yuanshuo™`，操作系统名称：`Zhaoxu OS™`，桌面合成器：`Desktop Window Compositor™`（Wayland），Shell：`bash`（严禁自研），桌面：`Aqua Desktop Environment™`（风格：Aqua），窗口管理器：`Desktop Window Manager`，不得改动任何字符，严禁使用`Yuanshuo™ Shell`。
+2. GitHub 仓库：https://github.com/Tinmc189623/zhaoxu-os
 3. 必须深度自定义启动菜单。
 4. Limine 必须使用原样，并完全使用它的功能。 
-5. 使用 WSL2，可用：C（内核）、C++（应用）、GAS（C/C++ 内的汇编）、FASM、SPARK（驱动）。
+5. 使用 WSL2，可用：C（内核）、C++（应用）、GAS（C/C++ 内的汇编）、SPARK（驱动）。
 6. 脚本必须完全使用 Ruby 来编写，必须完全使用 AI 来生成代码，**禁止人类编写代码**。
 7. 引导加载器必须支持 UEFI 和 Legacy BIOS 两种启动模式。 
 8. 引导管理器必须得是：`Limine`。
@@ -50,11 +50,13 @@
 36. 必须支持所有unix自带的命令。 
 37. 必须完整移植并使用 Vulkan 作为默认图形渲染 API。
 38. OpenGL 仅作为兼容处理，但必须完整移植。
-39. 第三方必须按照“原样”/裁剪提供，不得进行自我更改，导致以后更新不了。
+39. 第三方必须按照“原样”提供，不得进行自我更改。
 40. **色彩渲染支持规范：**
 - 10bit：面向支持HDR的民用显示器，进入Wayland桌面合成器后，硬件达标则启用该色深。
 - 8bit：面向常规SDR显示器，Limine开机菜单与它提供的帧缓冲默认使用此规格；**8bit SDR屏幕同样正常运行Wayland合成器，合成器只是不启用10bit色深能力**。
 41. AI **可**改动本文件。
+42. 严禁自研一个“第三方”，然后对外宣称：这是第三方而非自研。
+43. **禁止将操作系统名称内核名称内部技术栈等一大堆内容往各个地方上使劲地铺上水印以展示权威性**。
 
 
 ## ISO（这是**ISO 介质本身**的目录，不是启动后内存里的根文件系统；live 系统本体在 `casper/filesystem.squashfs` 压缩包内，版本：v1.14.1）
@@ -157,6 +159,7 @@ iso-root/
 16. fork/exec 回归：`make FE_BOOT_TEST=1 iso` 启动后串口应出现 `[fe ] running /data/FORKEXEC.ZXE`、`[forkexec] parent pid`、`[forkexec] child pid`、`[forkexec] wait returned 7, child status 7`，随后 `exec` 进入 `HELLO.ZXE`，打印 `[hello] ... argc=1, argv[0]=hello-from-exec`，最后 `[fe ] FORKEXEC exit 7`。子进程的 fork 返回值必须是 0，父进程拿到子 pid；exec 成功后同一 pid 运行新镜像。
 17. pipe/dup2 回归：`make POSIX_BOOT_TEST=1 iso` 启动后串口应出现 `[posix] pipe PASS`、`[posix] pipe eof PASS`、`[posix] dup2 PASS`、`[posix] stdio PASS`、`[posix] tty PASS`、`[posix] PIPE, EOF, DUP2, STDIO, TTY PASS` 与 `[posix] POSIX_TEST exit 0`。测试覆盖 fork 后跨进程管道、写端关闭后的 EOF、dup2 到 zfd 编号 90、dup2 把管道写端装到 fd 1 后 `u_puts` 的输出去向，以及 isatty/termios/窗口大小。
 18. newlib 回归：先运行 `ruby tools/newlib.rb`（在 `$HOME/newlib` 构建 -fPIC 的 x86_64-elf newlib，autoconf 不接受带空格的仓库路径），再 `make NLIBC_BOOT_TEST=1 iso`。串口应出现 `[nlibc] running /data/NLIB_HELLO.ZXE`、`newlib hello: argc=1 argv0=/data/NLIB_HELLO.ZXE heap=ok` 与 `[nlibc] NLIB_HELLO exit 3`。程序通过 `user/lib/posix/libgloss.c` 和 `crt0.S` 链接 newlib 的 printf/malloc；newlib 必须用 `-fPIC` 构建，否则 ZXE 的 PIE 重定位装不进随机基址。
+19. ncurses 回归：先构建 newlib（`ruby tools/newlib.rb`），ncurses 6.5 用同一 clang 包装按 -fPIC 交叉编译，并把 `initramfs/usr/share/terminfo/z/zhaoxu` 打包进 initramfs。`make NLIBC_BOOT_TEST=1 iso` 启动后串口应出现 `ncurses hello 80x25`（带 ANSI 控制序列）与 `ncurses hello: 80x25 ok`，最后 `[nlibc] NCURSES_HELLO exit 0`。ncurses 读取 terminfo 依赖 VFS lseek 与 stat，目录判断依赖 SYS_STAT（77）。
 
 ## 架构与不变量
 
@@ -169,7 +172,7 @@ iso-root/
 - 并发保护：`spinlock.h` 提供 `spin_lock_irqsave`；PMM、堆、控制台输出和调度器共享状态都必须在锁内操作，中断上下文只使用 irqsave 变体，避免同 CPU 抢占自锁。
 - 桌面分层（规则 22/23/24）：开机在图形模式直接 `spawn /bin/aqua`。`src/apps/ADE/main.cpp` 只做入口、应用注册与 `ade.h` API 转发，壁纸/菜单栏/Dock 分别在 `wallpaper.cpp`/`menubar.cpp`/`dock.cpp`，窗口协议在 `display/server.cpp`；`src/apps/ADE/winmgr/dwm.cpp` 独占窗口装饰、z 序、拖动/关闭、焦点、损伤合成与输入。应用在 `src/apps/deskapps/`（历史源码，不再进入内核）；8sh 在 `src/apps/csh/`，按命令拆分为 `main.c`/`io.c`/`commands.c`/`builtins.c`/`files.c`/`run.c`/`write.c`/`install.c`，独立客户端在 `src/user/` 与 `src/user/lib/`，只依赖 `ade_protocol.h` + `ade_client.h`；图标为内联 SVG，由 `kernel/gfx/svg.c` 光栅化。所有绘制经 `kernel/gfx/render.c`（ZOS API 1.0，见 `zos_api.h`），Ring3 复用同一份实现；Desktop Window Manager/Aqua Desktop Environment 不直接访问帧缓冲像素。Ring3 字体引擎是 FreeType 2.13.3（`third_party/freetype`，经 `user/lib/freetype/ttf_freetype.c` 适配 Aqua Desktop Environment），只加载 MiSans、MiSans Global、Inter 三种 OpenType 字体；WQY 及非 OpenType 回退已移除。内核启动字体暂沿用 `kernel/font/ttf.c`/`stbtt.c`。Limine 把字体与壁纸作为模块加载（ISO 上是 `/boot/limine/MiSans.ttf`、`/boot/limine/WALL.RGB`，安装后是 ESP 根的 `/MiSans.ttf`、`/WALL.RGB`），`boot_info.font_phys/font_size` 与 `wallpaper_phys/wallpaper_size` 再交给内核（`36=boot_font`、`58=boot_wallpaper` 供 Aqua Desktop Environment 取用），因此单 ISO/无数据盘启动也能显示中文和壁纸。
 - 迁移中：Aqua Desktop Environment 已作为 `/bin/aqua` 在 Ring3 运行，8sh 作为 `/bin/8sh` 在 Ring3 运行，内核不再保留内核态桌面回退；Welcome 与 Calculator 已迁移为独立 `.zxe` 客户端，Files/Monitor 的 Ring3 客户端迁移待续；全部硬件驱动已下沉到 `/bin/drivers`。显示协议在 `user/lib/include/ade_protocol.h`，服务端在 `src/apps/ADE/display/server.cpp`，客户端库在 `src/user/lib/ade_client.c`。
-- 系统调用 ABI：`int 0x80`，`rax`=调用号，`rdi/rsi/rdx/r10`=参数；0=exit、1=write、2=getpid、3=open、4=read、5=close、6=uptime、7=spawn、8=wait、9=port_listen、10=port_connect、11=port_accept、12=port_send、13=port_recv、14=port_close、15=shm_create、16=shm_map、17=shm_unmap、18=shm_close、19=fb_map、20=mouse、21=key、22=sleep、23=cpus、24=rtc、25=read_path、26=port_try_accept、27=port_try_recv、28=serial_write、29=readdir、30=disks、31=install、32=write_file、33=unlink、34=data_volume、35=dev_alloc_page、36=boot_font、37=spawn_arg、38=blk_count、39=blk_info、40=blk_read、41=blk_write、42=blk_flush、43=socket、44=bind、45=listen、46=accept、47=connect、48=sendmsg、49=recvmsg、50=poll、51=memfd_create、52=ftruncate、53=lseek、54=mmap、55=munmap、56=fcntl、57=socketpair、58=boot_wallpaper、59=memfd_phys、60=map_phys、61=eventfd、62=timerfd_create、63=timerfd_settime、64=timerfd_gettime、65=epoll_create1、66=epoll_ctl、67=epoll_wait、68=install_error、69=reboot、70=install_progress、71=install_config、72=fork、73=exec、74=pipe、75=dup2、76=ioctl。调用号在 `kernel/proc/syscall.c` 与 `user/userlib.h` 各一份，必须同步；`memfd_phys`/`map_phys` 只授予内核启动的 `/bin/display`（`display_cap`），用于把 memfd 扫描缓冲和 PCI MMIO BAR 交给 virtio-gpu。用户指针按当前进程地址空间逐页校验。socket/memfd 描述符从 64（`ZFD_BASE`）起，VFS 保留 3..18；`SCM_RIGHTS` 目前只传 memfd，`/data/NET_TEST.ZXE` 覆盖 M0 回归。
+- 系统调用 ABI：`int 0x80`，`rax`=调用号，`rdi/rsi/rdx/r10`=参数；0=exit、1=write、2=getpid、3=open、4=read、5=close、6=uptime、7=spawn、8=wait、9=port_listen、10=port_connect、11=port_accept、12=port_send、13=port_recv、14=port_close、15=shm_create、16=shm_map、17=shm_unmap、18=shm_close、19=fb_map、20=mouse、21=key、22=sleep、23=cpus、24=rtc、25=read_path、26=port_try_accept、27=port_try_recv、28=serial_write、29=readdir、30=disks、31=install、32=write_file、33=unlink、34=data_volume、35=dev_alloc_page、36=boot_font、37=spawn_arg、38=blk_count、39=blk_info、40=blk_read、41=blk_write、42=blk_flush、43=socket、44=bind、45=listen、46=accept、47=connect、48=sendmsg、49=recvmsg、50=poll、51=memfd_create、52=ftruncate、53=lseek、54=mmap、55=munmap、56=fcntl、57=socketpair、58=boot_wallpaper、59=memfd_phys、60=map_phys、61=eventfd、62=timerfd_create、63=timerfd_settime、64=timerfd_gettime、65=epoll_create1、66=epoll_ctl、67=epoll_wait、68=install_error、69=reboot、70=install_progress、71=install_config、72=fork、73=exec、74=pipe、75=dup2、76=ioctl、77=stat。调用号在 `kernel/proc/syscall.c` 与 `user/userlib.h` 各一份，必须同步；`memfd_phys`/`map_phys` 只授予内核启动的 `/bin/display`（`display_cap`），用于把 memfd 扫描缓冲和 PCI MMIO BAR 交给 virtio-gpu。用户指针按当前进程地址空间逐页校验。socket/memfd 描述符从 64（`ZFD_BASE`）起，VFS 保留 3..18；`SCM_RIGHTS` 目前只传 memfd，`/data/NET_TEST.ZXE` 覆盖 M0 回归。
 - 用户线程经 `user_enter` `iretq` 进 Ring3；退出或用户异常调用 `process_exit_current()` → `kthread_exit()`，不再通过 `user_resume()` 返回。只有 `process_handle_exception` 声明 `noreturn`。
 - 用户 ELF 是链接到 RVA 0 的 PIE（`-fpie`/`-fPIC` + `src/user/user.ld`，无 `-mcmodel=large`），由 `tools/zxe-pack.rb` 转成 ZXE v1；内核 `proc/zxe_loader.c` 按 64 KiB 对齐在 `[USER_LOAD_BASE, USER_LOAD_BASE + 1 GiB)` 内随机选择映像基址（最多 64 次，失败即拒绝启动），用户栈仍在 `0x10100000000`。ZXE 段权限强制 W^X（CODE=RX、RODATA=R、DATA/ZERO=RW，页 NX 由 `vmm_init`/AP trampoline 打开 EFER.NXE 支持）。`tools/zxe-check.rb` 校验 ZXE v1 结构，`tools/zxe-fixture-lib.rb` 生成动态链接测试用的最小共享库；依赖只从 `/lib` 按简单文件名加载。内核与用户代码一样禁用 SSE/red zone（Ring3 字体源码例外）。
 - 内核是 freestanding：无 libc，常规文件禁用浮点/SSE/MMX/AVX（`-mgeneral-regs-only`）；内核启动字体仍由 `kernel/font/ttf.c`、`kernel/font/stbtt.c` 通过 `FONT_CFLAGS` 提供。Ring3 桌面字体改用 `third_party/freetype`，由 `FREETYPE_CFLAGS` 启用 SSE2；`smooth.c` 因 GCC 在 -O1/-O2 下会错误编译而单独使用 `-O0`。C++ 关闭异常、RTTI、threadsafe statics，不要用 STL/iostream。字符串/打印用 `kernel/lib` 里的实现。

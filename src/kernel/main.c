@@ -289,6 +289,15 @@ void kernel_main(struct boot_info *boot)
     } else {
         kprintf("[nlibc] NLIB_HELLO spawn failed\n");
     }
+    kprintf("[nlibc] running /data/NCURSES_HELLO.ZXE\n");
+    u64 curses_pid = process_spawn("/data/NCURSES_HELLO.ZXE", 0, NULL);
+    if (curses_pid) {
+        int curses_status = -1;
+        process_wait(curses_pid, &curses_status);
+        kprintf("[nlibc] NCURSES_HELLO exit %d\n", curses_status);
+    } else {
+        kprintf("[nlibc] NCURSES_HELLO spawn failed\n");
+    }
     for (;;)
         hlt();
 #endif

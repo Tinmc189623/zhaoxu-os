@@ -506,6 +506,34 @@ int vfs_open(const char *path)
     return -1;
 }
 
+/* Reposition a VFS descriptor.  Only regular-file backends carry a size;
+ * seeking past the end is rejected so callers cannot create holes. */
+long vfs_seek(int fd, long offset, int whence)
+{
+    if (fd < VFS_FD_BASE)
+        return -1;
+    int index = fd - VFS_FD_BASE;
+    if (index < 0 || index >= VFS_MAX_FILES || !g_files[index].used)
+        return -1;
+
+    struct vfs_file *file = &g_files[index];
+    i64 base;
+    if (whence == 0)
+        base = 0;
+    else if (whence == 1)
+        base = (i64)file->offset;
+    else if (whence == 2)
+        base = (i64)file->size;
+    else
+        return -1;
+
+    i64 target = base + offset;
+    if (target < 0 || (u64)target > file->size)
+        return -1;
+    file->offset = (u64)target;
+    return (long)target;
+}
+
 long vfs_read(int fd, void *buffer, u64 count)
 {
     if (fd < VFS_FD_BASE || !buffer)

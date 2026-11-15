@@ -109,6 +109,7 @@
 #define SYS_PIPE            74
 #define SYS_DUP2            75
 #define SYS_IOCTL           76
+#define SYS_STAT            77
 
 #define BLK_SECTOR_BYTES 512u
 #define BLK_MAX_SECTORS  8u
@@ -247,6 +248,36 @@ static long syscall_dup2(struct process *process, int oldfd, int newfd)
             return -1;
     }
     return zfd_dup2(process, oldfd, newfd);
+}
+
+/* stat(path, &is_dir, &size): newlib needs to tell a directory from a file
+ * before it searches the terminfo tree. */
+static long syscall_stat(struct process *process, u64 path_pointer,
+                         u64 is_dir_pointer, u64 size_pointer)
+{
+    char path[256];
+    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
+        return -1;
+
+    int is_dir = 0;
+    u64 size = 0;
+    if (vfs_stat(path, &is_dir, &size) != 0)
+        return -1;
+    if (is_dir_pointer) {
+        if (user_range_ok(process, is_dir_pointer, sizeof(int)) != 1)
+            return -1;
+        if (process_user_write(process, is_dir_pointer, &is_dir,
+                               sizeof(int)) != 0)
+            return -1;
+    }
+    if (size_pointer) {
+        if (user_range_ok(process, size_pointer, sizeof(u64)) != 1)
+            return -1;
+        if (process_user_write(process, size_pointer, &size,
+                               sizeof(u64)) != 0)
+            return -1;
+    }
+    return 0;
 }
 
 static long syscall_ioctl(struct process *process, u64 descriptor, u64 request,
@@ -1056,6 +1087,9 @@ void syscall_dispatch(struct interrupt_frame *frame)
     case SYS_IOCTL:
         result = syscall_ioctl(process, frame->rdi, frame->rsi, frame->rdx);
         break;
+    case SYS_STAT:
+        result = syscall_stat(process, frame->rdi, frame->rsi, frame->rdx);
+        break;
     case SYS_PORT_LISTEN:
         result = syscall_port_listen(process, frame->rdi);
         break;
@@ -1200,7 +1234,12 @@ void syscall_dispatch(struct interrupt_frame *frame)
         result = sys_ipc_ftruncate(process, frame->rdi, frame->rsi);
         break;
     case SYS_LSEEK:
-        result = sys_ipc_lseek(process, frame->rdi, frame->rsi, frame->rdx);
+        if (frame->rdi < ZFD_BASE)
+            result = vfs_seek((int)frame->rdi, (long)frame->rsi,
+                              (int)frame->rdx);
+        else
+            result = sys_ipc_lseek(process, frame->rdi, frame->rsi,
+                                   frame->rdx);
         break;
     case SYS_MMAP:
         result = sys_ipc_mmap(process, frame->rdi);

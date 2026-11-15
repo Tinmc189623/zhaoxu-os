@@ -345,7 +345,8 @@ NEWLIB_ROOT ?= $(HOME)/newlib/install/x86_64-elf
 NEWLIB_CC ?= clang
 NEWLIB_CFLAGS := --target=x86_64-unknown-elf -m64 -O2 -fPIE -ffreestanding \
                  -fno-stack-protector -fno-asynchronous-unwind-tables \
-                 -mno-red-zone -Wall -Wextra -I$(NEWLIB_ROOT)/include
+                 -mno-red-zone -Wall -Wextra -Iuser/lib/posix/include \
+                 -I$(NEWLIB_ROOT)/include
 NL_BUILD := $(BUILD)/newlib
 
 $(NL_BUILD)/newlib_hello.o: user/newlib_hello.c
@@ -368,6 +369,25 @@ $(BUILD)/nlib_hello.uelf: $(NL_BUILD)/crt0.o $(NL_BUILD)/newlib_hello.o \
 	  -z max-page-size=0x1000 -T user/user.ld -o $@ \
 	  $(NL_BUILD)/crt0.o $(NL_BUILD)/newlib_hello.o $(NL_BUILD)/libgloss.o \
 	  $(NEWLIB_ROOT)/lib/libc.a $(NEWLIB_ROOT)/lib/libm.a
+
+# ncurses 6.5 built from source against newlib; the terminfo entry lives in
+# initramfs/usr/share/terminfo/z/zhaoxu.
+NCURSES_ROOT ?= /home/tindo/ncurses-build
+NCURSES_CFLAGS := -I$(NCURSES_ROOT)/include
+
+$(NL_BUILD)/ncurses_hello.o: user/ncurses_hello.c
+	@mkdir -p $(dir $@)
+	$(NEWLIB_CC) $(NEWLIB_CFLAGS) $(NCURSES_CFLAGS) -c $< -o $@
+
+$(BUILD)/ncurses_hello.uelf: $(NL_BUILD)/crt0.o $(NL_BUILD)/ncurses_hello.o \
+                             $(NL_BUILD)/libgloss.o user/user.ld
+	@test -f $(NCURSES_ROOT)/lib/libncurses.a || { \
+	  echo "ncurses is missing; build it against newlib first"; exit 1; }
+	$(LD) -m elf_x86_64 -shared -Bsymbolic --build-id=none \
+	  -z max-page-size=0x1000 -T user/user.ld -o $@ --start-group \
+	  $(NL_BUILD)/crt0.o $(NL_BUILD)/ncurses_hello.o $(NL_BUILD)/libgloss.o \
+	  $(NCURSES_ROOT)/lib/libncurses.a $(NCURSES_ROOT)/lib/libtinfo.a \
+	  $(NEWLIB_ROOT)/lib/libc.a $(NEWLIB_ROOT)/lib/libm.a --end-group
 
 # ---- ADE ring 3 display server --------------------------------------
 ADE_BUILD := $(BUILD)/ade
@@ -762,7 +782,7 @@ RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/aqua $(RAMFS)/bin/8sh \
                $(RAMFS)/data/PING.ZXE $(RAMFS)/data/PONG.ZXE \
                $(RAMFS)/data/NET_TEST.ZXE $(RAMFS)/data/M5_TEST.ZXE \
                $(RAMFS)/data/WLSTOCK.ZXE $(RAMFS)/data/FORKEXEC.ZXE \
-               $(RAMFS)/data/POSIX_TEST.ZXE $(RAMFS)/data/NLIB_HELLO.ZXE
+               $(RAMFS)/data/POSIX_TEST.ZXE
 
 # PNG + text cursor theme.  The compositor loads this from
 # /usr/share/cursors/Aqua at startup and falls back to the built-in arrow
@@ -770,7 +790,18 @@ RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/aqua $(RAMFS)/bin/8sh \
 CURSOR_THEME_FILES := $(wildcard initramfs/usr/share/cursors/Aqua/*)
 RAMFS_FILES += $(patsubst initramfs/%,$(RAMFS)/%,$(CURSOR_THEME_FILES))
 
+TERMINFO_FILES := $(wildcard initramfs/usr/share/terminfo/*/*)
+RAMFS_FILES += $(patsubst initramfs/%,$(RAMFS)/%,$(TERMINFO_FILES))
+
+ifeq ($(NLIBC_BOOT_TEST),1)
+RAMFS_FILES += $(RAMFS)/data/NLIB_HELLO.ZXE $(RAMFS)/data/NCURSES_HELLO.ZXE
+endif
+
 $(RAMFS)/usr/share/cursors/%: initramfs/usr/share/cursors/%
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/usr/share/terminfo/%: initramfs/usr/share/terminfo/%
 	@mkdir -p $(dir $@)
 	cp $< $@
 
@@ -889,6 +920,11 @@ $(RAMFS)/data/POSIX_TEST.ZXE: $(OUT)/positest.zxe
 
 # newlib smoke test (printf/malloc through libgloss + crt0).
 $(RAMFS)/data/NLIB_HELLO.ZXE: $(OUT)/nlib_hello.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+# ncurses smoke test.
+$(RAMFS)/data/NCURSES_HELLO.ZXE: $(OUT)/ncurses_hello.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
