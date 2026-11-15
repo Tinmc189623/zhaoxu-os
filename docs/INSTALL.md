@@ -138,7 +138,7 @@ ZhaoxuBootMgr (UEFI x86_64)
 BootMgr: zhaoxu.cfg loaded
 BootMgr: starting OSLDRX64.efi
 Kernel: /install/KERNEL.ELF from the ISO.
-Font: /install/WQY.TTC from the ISO.
+Font: /install/MiSans.ttf from the ISO.
 ```
 
 Legacy BIOS path:
@@ -155,7 +155,7 @@ Kernel image read.
 Kernel image loaded, entering long mode.
 ```
 
-After the kernel starts it launches the Aqua Desktop Environment desktop; the menu bar, Dock, welcome window, and calculator window all appear. Chinese text displays correctly, which means the font was read from `/install/WQY.TTC` on the ISO.
+After the kernel starts it launches the Aqua Desktop Environment desktop; the menu bar, Dock, welcome window, and calculator window all appear. Chinese text displays correctly, which means the font was read from `/install/MiSans.ttf` on the ISO.
 
 Whether the installer window opens by itself depends on two conditions:
 
@@ -202,7 +202,7 @@ Neither layout places the kernel in the ESP or in boot sectors. The kernel exist
 
 - `/KERNEL.BIN`: read directly by legacy BIOS stage2 through a contiguous block list.
 - `/KERNEL.ELF`: parsed by the UEFI loader.
-- `/WQY.TTC`: Chinese vector font.
+- `/MiSans.ttf`: OpenType Chinese/Latin font (MiSans, with MiSans Global and Inter as the other supported faces).
 - `/WALLPAPER.RAW`: raw frame of the default wallpaper.
 
 The ESP label is `ZHAOXUEFI`, its type is FAT32, and it holds only the UEFI boot files under `EFI/BOOT/`. The ext4 root label is `ZHAOXUROOT`.
@@ -230,7 +230,7 @@ The matching success log on serial is:
 [ext4] formatted ... label ZHAOXUROOT
 [ext4] write /KERNEL.ELF ...
 [ext4] write /KERNEL.BIN ...
-[ext4] write /WQY.TTC ...
+[ext4] write /MiSans.ttf ...
 [install] complete
 ```
 
@@ -253,7 +253,7 @@ After a successful UEFI boot, serial should show:
 ZhaoxuBootMgr (UEFI x86_64)
 BootMgr: starting OSLDRX64.efi
 Kernel: /KERNEL.ELF from ext4.
-Font: /WQY.TTC from ext4.
+Font: /MiSans.ttf from ext4.
 ...
 [fs  ] ext4 service ready
 [vfs ] /mnt mounted (ext4 "ZHAOXUROOT")
@@ -525,7 +525,7 @@ After installation the target disk should have two visible partitions. The GPT l
 | --- | --- | --- | --- |
 | BIOS boot (GPT only), from LBA34 | none | none | stage2 boot code |
 | ESP, from LBA 2048, 64 MiB max | FAT32 | `ZHAOXUEFI` | `EFI/BOOT/BOOTX64.EFI`, plus `EFI/BOOT/OSLDRX64.efi` added manually when needed |
-| ext4 root, after the ESP up to the backup GPT | ext4 | `ZHAOXUROOT` | `/KERNEL.ELF`, `/KERNEL.BIN`, `/WQY.TTC`, `/WALLPAPER.RAW` |
+| ext4 root, after the ESP up to the backup GPT | ext4 | `ZHAOXUROOT` | `/KERNEL.ELF`, `/KERNEL.BIN`, `/MiSans.ttf`, `/WALLPAPER.RAW` |
 
 On a Linux host you can inspect it like this:
 

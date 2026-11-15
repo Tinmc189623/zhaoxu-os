@@ -14,9 +14,10 @@ Constraints:
 - Runs in Ring3, reaching the framebuffer, input and IPC through ZOS API 1.0; it never enters the kernel (rule 9).
 - The default theme is Aqua; themes are driven by data and style tokens rather than hard-coding appearance into widgets.
 - Portable to a self-developed kernel: apart from ZOS API and the ZXE shared library ABI it depends on no Linux/macOS/Windows GUI component.
-- The repository currently holds only `third_party/stb` and no Skia source at all; adopting Skia is the first external dependency decision in this plan.
+- The repository now holds a FreeType 2.13.3 port and a stock libwayland client; Skia is not vendored yet.
+- Vulkan is the mandatory default rendering API (rule 37); OpenGL is a compatibility API and must also be fully ported (rule 38). Software rasterization is a bring-up path only, never the product default.
 
-Non-goals (first phase): GPU-accelerated composition, multi-monitor hotplug, accessibility trees, full internationalised text layout.
+Non-goals (first phase): multi-monitor hotplug, accessibility trees, full internationalised text layout.
 
 ## 2. Layering
 
@@ -37,12 +38,13 @@ Each directory carries exactly one class of responsibility (rule 23). `Aqua Desk
 
 ## 3. Skia Integration Strategy
 
-- Vendor `third_party/skia` at a pinned version, compiling only the necessary subset of `core` + `pathops` + `codec` plus the CPU-only Raster backend; Ganesh/Vulkan, X11, CoreText, DirectWrite, font managers and other platform backends stay disabled.
-- Fonts come from ZAF's `SkFontMgr`/`SkTypeface` adapters, reusing the repository's existing `stb_truetype` and system font loading paths (MiSans/MiSans Global/Inter, falling back to WQY.TTC), so FreeType is not pulled in as well.
-- The platform abstraction exposes only three kinds of callbacks: surface submission (copy into the framebuffer or a shared-memory surface), a monotonic clock, and an event source. Porting to another OS replaces just those three.
-- Risk: Skia depends on a subset of the C++ standard library, and adapting its build with exceptions/RTTI disabled is expensive. If a full port exceeds budget, the fallback is to keep ZAF's rendering interface unchanged and ship a self-developed Raster backend first, with Skia as an optional implementation — the interface is isolated inside `gfx/` and does not affect upper layers.
-- Already landed (Z0): following that fallback, `zaf_gfx.h` (backend-neutral rasterisation: rectangles/rounded corners/lines/polygons/alpha) and `zaf_gfx_soft.c` (software implementation) were delivered, and `user/zaf_gfx_demo.c` maps the framebuffer in Ring3 and prints FPS. The repository still has no Skia source.
-- Z1 decision (2026-11-14): Z1's composition and desktop drawing use the existing ZOS rendering API directly (`kernel/gfx/render.c`, shared by the kernel and Ring3), wrapped uniformly by `zaf/gfx/zaf_painter`; `zaf_gfx` stays a portable rasteriser and does not grow its responsibilities. The Skia port drops to a standalone spike (Z0.5) and is scheduled only after a user decision. Rationale: with a single rendering backend a multi-backend vtable is pure overhead (KISS), and Z1's acceptance surface is behavioural equivalence and separation of duties, not swapping the rendering technology.
+- Vendor `third_party/skia` at a pinned version, compiling `core` + `pathops` + `codec` with the **Vulkan Ganesh backend** enabled; X11, CoreText, DirectWrite and other platform backends stay disabled. The OpenGL Ganesh backend is the compatibility path required by rule 38. The CPU raster backend may stay for tests only and must not be the default.
+- Fonts come from ZAF's `SkFontMgr`/`SkTypeface` adapters backed by the repository's FreeType 2.13.3 port. Only MiSans, MiSans Global and Inter are accepted (rule 17); `stb_truetype` and WenQuanYi are not part of the font engine.
+- The platform abstraction exposes only three kinds of callbacks: surface submission (Vulkan swapchain/exported image or a shared-memory surface), a monotonic clock, and an event source. Porting to another OS replaces just those three.
+- Risk: Skia depends on a subset of the C++ standard library, and adapting its build with exceptions/RTTI disabled is expensive. The rendering interface stays isolated inside `gfx/`; a software backend may exist for bring-up, but shipping it as the default would violate rule 37 and is not an accepted fallback.
+- Already landed (Z0): `zaf_gfx.h` (backend-neutral rasterisation: rectangles/rounded corners/lines/polygons/alpha) and `zaf_gfx_soft.c` (software implementation) were delivered, and `user/zaf_gfx_demo.c` maps the framebuffer in Ring3 and prints FPS. These are bring-up tools, not the final backend.
+- Z1 decision (2026-11-14): Z1's composition and desktop drawing use the existing ZOS rendering API directly (`kernel/gfx/render.c`), wrapped by `zaf/gfx/zaf_painter`. This is a temporary transition path: the Vulkan/OpenGL backend replaces it once the GPU port lands.
+- Graphics API status (2026-11-15): no Vulkan loader/ICD and no OpenGL implementation exist in the tree yet; the current desktop is therefore **not rule 37/38 compliant**. The Vulkan port needs a working GPU backend (virtio-gpu virgl on the test host is blocked: Windows QEMU's virglrenderer does not register resources), and OpenGL is ported on top of the same backend for compatibility. Both remain release blockers for a fully compliant build.
 
 ## 4. Theme Engine
 

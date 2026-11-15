@@ -1,4 +1,4 @@
-Zhaoxu OS 0.7.1 "Yuanshuo" build 4
+Zhaoxu OS 0.7.1 "Yuanshuo" build 5
 Kernel: Yuanshuo 0.7.1
 Initramfs: ustar archive embedded in the kernel image
 Root filesystem: rootfs (initramfs ustar)
@@ -7,5 +7,5 @@ Extra mounts: tmpfs at /tmp and /run, procfs at /proc, sysfs at /sys,
               debugfs at /debug, efivarfs at /sys/firmware/efi/efivars,
               overlayfs at /merged
 Executable formats: .zxe (native) and ELF64, ring 3
-CJK rendering: TrueType glyf rasterizer, /mnt/WQY.TTC
+CJK rendering: OpenType fonts (MiSans, MiSans Global, Inter)
 Syscall ABI: int 0x80, ring 3

@@ -573,13 +573,21 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     const u8 *font = (const u8 *)(uintptr_t)info->font_phys;
     u64 font_size = info->font_size;
     if (!font || font_size < 13) {
-        u64 read = 0;
-        if (vfs_read_all("/mnt/WQY.TTC", &font_copy, &read) == 0) {
-            font = font_copy;
-            font_size = read;
-        } else {
-            font = NULL;
-            font_size = 0;
+        static const char *const font_candidates[] = {
+            "/mnt/MiSans-Regular.ttf", "/mnt/MiSansGlobal-Regular.ttf",
+            "/mnt/Inter-Regular.otf"
+        };
+        font = NULL;
+        font_size = 0;
+        for (u32 i = 0;
+             i < sizeof(font_candidates) / sizeof(font_candidates[0]); i++) {
+            u64 read = 0;
+            if (vfs_read_all(font_candidates[i], &font_copy, &read) == 0 &&
+                read >= 13) {
+                font = font_copy;
+                font_size = read;
+                break;
+            }
         }
     }
 
@@ -620,9 +628,9 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
         u32 chunk = (u32)(font_size - offset);
         if (chunk > FS_DATA_SIZE)
             chunk = FS_DATA_SIZE;
-        if (fs_call_write("/WQY.TTC", font_size, offset, font + offset, chunk,
-                          offset == 0) != 0) {
-            set_error("ext4 service could not write WQY.TTC");
+        if (fs_call_write("/MiSans.ttf", font_size, offset, font + offset,
+                          chunk, offset == 0) != 0) {
+            set_error("ext4 service could not write MiSans.ttf");
             goto fail;
         }
         offset += chunk;

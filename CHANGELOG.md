@@ -2,6 +2,18 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 · build 5
+
+### Fonts and rendering
+- Rule 17: removed the non-OpenType WenQuanYi fallback from the boot loader, Aqua Desktop Environment, installer, ISO and FAT data image. Only MiSans, MiSans Global and Inter (OpenType) are accepted. The ISO ships `install/MiSans.ttf` and `install/Inter.otf`; the installer writes `/MiSans.ttf` to the ext4 root and the boot loader reads it from there
+- Rule 18: vendored FreeType 2.13.3 (TrueType, CFF, sfnt, psnames, smooth rasterizer) with a freestanding `ftoption`/`ftmodule` configuration, an x86_64 setjmp/longjmp shim and the required libc helpers. The Ring3 Aqua Desktop Environment font adapter now uses FreeType; the kernel boot font path is unchanged for now
+- `make out/ft_test.zxe` builds a FreeType regression client that loads the boot volume font and rasterizes U+4E2D. `FT_BOOT_TEST=1` (with `out/data.img` attached) prints `[ft] face MiSans`, `[ft] glyph 26x31 covered 334`, `[ft] FreeType PASS` and exits 0
+- FreeType's smooth rasterizer is compiled at `-O0` because GCC miscompiles it at `-O1`/`-O2` with this configuration; the remaining modules use `-O2`. The optional autofit, pshinter and raster1 modules are omitted to keep the image small
+- The legacy BIOS stage 2 staging cap is raised from 448 KiB to 0x8F000 bytes (ends at 0x9F000, below the EBDA at 0x9FC00) so the FreeType-enabled initramfs still fits below 1 MiB
+
+### Known open items
+- Rules 37/38 are not implemented: there is no Vulkan loader/ICD and no OpenGL port. The desktop still renders through the ZOS raster path. A compliant build needs a working GPU backend and the Vulkan/OpenGL ports; this release does not claim those rules
+
 ## 0.7.1 「Yuanshuo」 · build 4
 
 ### Wayland

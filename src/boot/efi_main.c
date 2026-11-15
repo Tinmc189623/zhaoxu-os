@@ -1218,8 +1218,8 @@ static UINT64 load_kernel_from_ext4(EFI_HANDLE image_handle, UINT64 staging)
 static UINT64 load_font_from_ext4(EFI_HANDLE image_handle, UINT64 *physical)
 {
     static const char *const candidates[] = {
-        "/MiSans.ttf", "/MiSans-Regular.ttf", "/Inter-Regular.otf",
-        "/WQY.TTC"
+        "/MiSans.ttf", "/MiSansGlobal.ttf", "/MiSans-Regular.ttf",
+        "/Inter.otf", "/Inter-Regular.otf"
     };
 
     *physical = 0;
@@ -1267,7 +1267,7 @@ static void load_boot_font(EFI_HANDLE image_handle, UINT64 *physical,
     EFI_BLOCK_IO_PROTOCOL *bio = iso_device(image_handle);
     if (bio) {
         static const char *const candidates[] = {
-            "INSTALL/MISANS.TTF", "INSTALL/WQY.TTC"
+            "INSTALL/MISANS.TTF", "INSTALL/INTER.OTF"
         };
         for (UINTN i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
             UINT32 extent = 0;
@@ -1292,7 +1292,7 @@ static void load_boot_font(EFI_HANDLE image_handle, UINT64 *physical,
             if (i == 0)
                 boot_print("Font: /install/MiSans.ttf from the ISO.\r\n");
             else
-                boot_print("Font: /install/WQY.TTC from the ISO.\r\n");
+                boot_print("Font: /install/Inter.otf from the ISO.\r\n");
             return;
         }
     }
@@ -1302,7 +1302,7 @@ static void load_boot_font(EFI_HANDLE image_handle, UINT64 *physical,
     if (size && address) {
         *physical = address;
         *bytes = size;
-        boot_print("Font: /WQY.TTC from ext4.\r\n");
+        boot_print("Font: /MiSans.ttf from ext4.\r\n");
     }
 }
 

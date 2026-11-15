@@ -330,9 +330,10 @@ read_lba:
 ; Real mode cannot address memory above 1 MiB, so the whole kernel is read
 ; once into the low buffer at 0x10000 with EDD reads (ES advances) and copied
 ; to KERNEL_PHYS later from flat protected mode.  The buffer must stay below
-; the EBDA, hence the 448 KiB size cap.  The sector count is derived from the
-; byte size because it depends on the device sector size.
-MAX_KERNEL_BYTES = 0x70000
+; the EBDA at 0x9FC00, so the cap is 0x8F000 bytes: the staging area then
+; ends at 0x9F000, leaving 3 KiB below the EBDA.  The sector count is derived
+; from the byte size because it depends on the device sector size.
+MAX_KERNEL_BYTES = 0x8F000
 load_kernel:
         mov     si, msg_load
         call    print

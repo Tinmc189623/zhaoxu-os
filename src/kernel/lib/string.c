@@ -109,6 +109,44 @@ char *strchr(const char *s, int c)
     return target == '\0' ? (char *)s : NULL;
 }
 
+void *memchr(const void *s, int c, size_t n)
+{
+    const u8 *bytes = (const u8 *)s;
+    u8 target = (u8)c;
+    for (size_t i = 0; i < n; i++) {
+        if (bytes[i] == target)
+            return (void *)(bytes + i);
+    }
+    return NULL;
+}
+
+char *strstr(const char *haystack, const char *needle)
+{
+    if (!needle[0])
+        return (char *)haystack;
+    for (; *haystack; haystack++) {
+        const char *a = haystack;
+        const char *b = needle;
+        while (*a && *b && *a == *b) {
+            a++;
+            b++;
+        }
+        if (!*b)
+            return (char *)haystack;
+    }
+    return NULL;
+}
+
+char *strcat(char *dst, const char *src)
+{
+    char *result = dst;
+    while (*dst)
+        dst++;
+    while ((*dst++ = *src++))
+        ;
+    return result;
+}
+
 char *strrchr(const char *s, int c)
 {
     const char *last = NULL;

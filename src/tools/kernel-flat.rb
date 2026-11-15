@@ -13,7 +13,7 @@
 
 KERNEL_VMA = 0xffffffff80000000
 CD_SECTOR = 2048
-MAX_KERNEL_BYTES = 0x70000      # stage 2 low buffer, must stay below the EBDA
+MAX_KERNEL_BYTES = 0x8F000      # stage 2 low buffer, ends below the EBDA at 0x9FC00
 
 in_path, out_path = ARGV
 abort "usage: kernel-flat.rb <kernel.elf> <out.bin>" unless out_path

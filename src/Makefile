@@ -16,6 +16,15 @@ else
   endif
 endif
 
+# Some MSYS make environments do not export OS=Windows_NT.  Detect the
+# Windows host from the native process environment as a second signal so we
+# never select the Linux `cc`/no-cross-target branch on Windows.
+ifeq ($(ZOS_HOST),linux)
+  ifneq ($(findstring Windows,$(ComSpec)$(COMSPEC)),)
+    ZOS_HOST := windows
+  endif
+endif
+
 # Bare-metal ELF objects on macOS/Windows need clang's cross target; Linux
 # and WSL use their native ELF toolchain.  Ada is the one host-specific
 # compiler (drivers are Ada): install a x86_64-elf GNAT on macOS/Windows and
@@ -71,6 +80,11 @@ ifeq ($(ZOS_HOST),linux)
 else
   TAR_OWNER :=
 endif
+ifeq ($(ZOS_HOST),windows)
+  TAR_FORMAT :=
+else
+  TAR_FORMAT := --format=ustar
+endif
 
 BUILD   := build
 OUT     := out
@@ -96,6 +110,8 @@ M5_BOOT_TEST ?= 0
 CFLAGS += -DM5_BOOT_TEST=$(M5_BOOT_TEST)
 WLSTOCK_BOOT_TEST ?= 0
 CFLAGS += -DWLSTOCK_BOOT_TEST=$(WLSTOCK_BOOT_TEST)
+FT_BOOT_TEST ?= 0
+CFLAGS += -DFT_BOOT_TEST=$(FT_BOOT_TEST)
 # make does not track CFLAGS changes; stamps keyed by the test mode force
 # kernel/main.o to rebuild when a boot-time test toggles, so an ISO cannot
 # silently ship a self-test kernel.
@@ -114,7 +130,12 @@ $(BUILD)/wlstock-%.stamp:
 	@mkdir -p $(BUILD)
 	@rm -f $(BUILD)/wlstock-*.stamp
 	@touch $@
-$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP)
+FT_STAMP := $(BUILD)/ft-$(FT_BOOT_TEST).stamp
+$(BUILD)/ft-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/ft-*.stamp
+	@touch $@
+$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP)
 ADAFLAGS := -c -gnatp -gnat2022 -O2 -g -fno-pie \
             -fno-stack-protector -mno-red-zone -mcmodel=kernel \
             -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -mno-avx \
@@ -292,18 +313,18 @@ $(OUT)/%.zxe: $(BUILD)/%.uelf tools/zxe-pack.rb
 ADE_BUILD := $(BUILD)/ade
 ADE_INCLUDES := -Iuser -Iuser/lib/include -Ikernel/include -Ikernel \
                 -Ikernel/font
-ADE_CFLAGS := $(USER_CFLAGS) $(ADE_INCLUDES) -Iapps/ADE/compositor/stb \
+ADE_CFLAGS := $(USER_CFLAGS) $(ADE_INCLUDES) \
               -DZOS_USER -MMD -MP
 ADE_CXXFLAGS := $(filter-out -std=gnu11,$(ADE_CFLAGS)) -std=gnu++20 \
                 -fno-exceptions -fno-rtti -fno-threadsafe-statics \
                 -fno-use-cxa-atexit
 ADE_FONT_CFLAGS := $(filter-out -mno-sse -mno-sse2 -mno-mmx -mno-avx,\
                   $(ADE_CFLAGS)) -msse2 -mno-avx -fno-math-errno
-ADE_C_SRCS := user/lib/shim.c user/lib/string_extra.c user/userlib.c \
+ADE_C_SRCS := user/lib/shim.c user/lib/string_extra.c user/lib/heap.c user/userlib.c \
               kernel/gfx/render.c kernel/gfx/svg.c kernel/font/font.c \
               apps/ADE/compositor/cursor.c \
               apps/ADE/compositor/cursor_stb.c
-ADE_FONT_SRCS := kernel/font/ttf.c kernel/font/stbtt.c
+ADE_FONT_SRCS := user/lib/freetype/ttf_freetype.c
 ADE_CXX_SRCS := apps/ADE/main.cpp apps/ADE/wallpaper.cpp \
                 apps/ADE/menubar.cpp apps/ADE/dock.cpp apps/ADE/about.cpp \
                 apps/ADE/icons.cpp apps/ADE/display/server.cpp \
@@ -339,17 +360,13 @@ $(ADE_BUILD)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(ADE_CXXFLAGS) -c $< -o $@
 
-$(ADE_BUILD)/kernel/font/ttf.o: kernel/font/ttf.c
+$(ADE_BUILD)/user/lib/freetype/ttf_freetype.o: user/lib/freetype/ttf_freetype.c
 	@mkdir -p $(dir $@)
-	$(CC) $(ADE_FONT_CFLAGS) -c $< -o $@
+	$(CC) $(FREETYPE_CFLAGS) $(ADE_FONT_CFLAGS) -c $< -o $@
 
-$(ADE_BUILD)/kernel/font/stbtt.o: kernel/font/stbtt.c
+$(BUILD)/aqua.uelf: $(ADE_OBJS) $(FREETYPE_OBJS) user/user.ld
 	@mkdir -p $(dir $@)
-	$(CC) $(ADE_FONT_CFLAGS) -c $< -o $@
-
-$(BUILD)/aqua.uelf: $(ADE_OBJS) user/user.ld
-	@mkdir -p $(dir $@)
-	$(CC) $(USER_LDFLAGS) -o $@ $(ADE_OBJS)
+	$(CC) $(USER_LDFLAGS) -Wl,--gc-sections -o $@ $(ADE_OBJS) $(FREETYPE_OBJS)
 
 # ---- ADE client (welcome window) ------------------------------------
 WELCOME_SRCS := user/welcome_client.c user/lib/ade_client.c user/userlib.c
@@ -491,6 +508,67 @@ $(WLSTOCK_BUILD)/ffi-unix64.o: third_party/libffi/unix64.S $(WLSTOCK_HDRS)
 $(BUILD)/wlstock.uelf: $(WLSTOCK_OBJS) user/user.ld
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_LDFLAGS) -Wl,--gc-sections -o $@ $(WLSTOCK_OBJS)
+
+# ---- FreeType port (rule 18) ----------------------------------------
+FREETYPE_BUILD := $(BUILD)/freetype
+FREETYPE_INCLUDES := -Ithird_party/freetype/include -Iuser/lib/freetype \
+                     -Iuser -Iuser/lib/include -Ikernel/include
+FREETYPE_CFLAGS := $(filter-out -mno-sse -mno-sse2 -mno-mmx -mno-avx,$(USER_CFLAGS)) \
+                   -O2 -fno-strict-aliasing -msse2 -mno-avx -fvisibility=hidden -ffunction-sections \
+                   -fdata-sections -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 \
+                   -D_GNU_SOURCE $(FREETYPE_INCLUDES) -DFT2_BUILD_LIBRARY \
+                   -DFT_CONFIG_OPTIONS_H='"ftoption_zos.h"' \
+                   -DFT_CONFIG_MODULES_H='"ftmodule_zos.h"'
+FREETYPE_SRCS := third_party/freetype/src/base/ftbase.c \
+                 third_party/freetype/src/base/ftinit.c \
+                 third_party/freetype/src/base/ftsystem.c \
+                 third_party/freetype/src/base/ftdebug.c \
+                 third_party/freetype/src/base/ftbitmap.c \
+                 third_party/freetype/src/base/ftmm.c \
+                 third_party/freetype/src/sfnt/sfnt.c \
+                 third_party/freetype/src/truetype/truetype.c \
+                 third_party/freetype/src/cff/cff.c \
+                 third_party/freetype/src/psaux/psaux.c \
+                 third_party/freetype/src/psnames/psnames.c \
+                 third_party/freetype/src/smooth/smooth.c
+FREETYPE_OBJS := $(patsubst third_party/freetype/src/%.c,$(FREETYPE_BUILD)/%.o,$(FREETYPE_SRCS)) \
+                 $(FREETYPE_BUILD)/ft_compat.o \
+                 $(FREETYPE_BUILD)/setjmp_zos.o
+
+# FREETYPE_OBJS is declared after the Aqua rules, so add this dependency
+# after expansion as well; otherwise parallel make can link Aqua before the
+# FreeType objects have been built.
+$(BUILD)/aqua.uelf: $(FREETYPE_OBJS)
+
+$(FREETYPE_BUILD)/%.o: third_party/freetype/src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(FREETYPE_CFLAGS) -c $< -o $@
+
+# GCC miscompiles FreeType's gray rasterizer at -O1/-O2 with this
+# configuration (the host verification crashes in FT_Render_Glyph); keep this
+# one translation unit unoptimized until the upstream fix is identified.
+$(FREETYPE_BUILD)/smooth/smooth.o: third_party/freetype/src/smooth/smooth.c
+	@mkdir -p $(dir $@)
+	$(CC) $(FREETYPE_CFLAGS) -O0 -c $< -o $@
+
+$(FREETYPE_BUILD)/ft_compat.o: user/lib/freetype/ft_compat.c
+	@mkdir -p $(dir $@)
+	$(CC) $(FREETYPE_CFLAGS) -c $< -o $@
+
+$(FREETYPE_BUILD)/setjmp_zos.o: user/lib/freetype/setjmp_zos.S
+	@mkdir -p $(dir $@)
+	$(CC) -m64 -c $< -o $@
+
+$(FREETYPE_BUILD)/ft_test.o: user/lib/freetype/ft_test.c
+	@mkdir -p $(dir $@)
+	$(CC) $(FREETYPE_CFLAGS) -Iuser -c $< -o $@
+
+$(BUILD)/ft_test.uelf: $(FREETYPE_OBJS) $(FREETYPE_BUILD)/ft_test.o \
+                       $(WLSTOCK_BUILD)/compat.o $(WLSTOCK_BUILD)/userlib.o \
+                       user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_LDFLAGS) -Wl,--gc-sections -o $@ $(FREETYPE_BUILD)/ft_test.o \
+	  $(FREETYPE_OBJS) $(WLSTOCK_BUILD)/compat.o $(WLSTOCK_BUILD)/userlib.o
 
 # ---- ZAF graphics (Z0) ----------------------------------------------
 ZAF_GFX_HDRS := user/lib/include/zaf_gfx.h user/userlib.h
@@ -700,7 +778,7 @@ $(RAMFS)/data/DOCS/INFO.TXT: initramfs/data/info.txt
 
 $(OUT)/initramfs.tar: $(RAMFS_FILES)
 	@mkdir -p $(OUT)
-	$(TAR) --format=ustar $(TAR_OWNER) -cf $@ -C $(RAMFS) .
+	$(TAR) $(TAR_FORMAT) $(TAR_OWNER) -cf $@ -C $(RAMFS) .
 
 # The BIOS stage 2 stages the whole kernel below the EBDA (448 KiB), and the
 # uncompressed initramfs is the largest file-backed part of kernel.elf.
@@ -722,7 +800,7 @@ $(BUILD)/initramfs.o: $(INITRAMFS_Z)
 # ---- FAT32 data volume ----------------------------------------------
 DATA_IMG := $(OUT)/data.img
 
-$(DATA_IMG): $(OUT)/hello.zxe $(BUILD)/hello.uelf initramfs/data/hello.txt initramfs/data/info.txt initramfs/data/wqy.ttc $(FONT_FILES)
+$(DATA_IMG): $(OUT)/hello.zxe $(OUT)/ft_test.zxe $(BUILD)/hello.uelf initramfs/data/hello.txt initramfs/data/info.txt $(FONT_FILES)
 	@mkdir -p $(OUT)
 	dd if=/dev/zero of=$@ bs=1M count=64 2>/dev/null
 	$(MKFS_VFAT) -F 32 -n ZHAOXUDATA $@ >/dev/null
@@ -733,6 +811,7 @@ $(DATA_IMG): $(OUT)/hello.zxe $(BUILD)/hello.uelf initramfs/data/hello.txt initr
 	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ initramfs/data/MiSans-Regular.ttf ::/
 	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ initramfs/data/MiSansLatinVF.ttf ::/
 	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ initramfs/data/Inter-Regular.otf ::/
+	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ $(OUT)/ft_test.zxe ::/FT_TEST.ZXE
 	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ initramfs/data/info.txt ::/DOCS/INFO.TXT
 
 $(BUILD)/efi_main.o: boot/efi_main.c boot/uefi.h $(HEADLESS_HEADER)
@@ -913,7 +992,7 @@ $(EFI_IMG): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi boot/zhaoxu.cfg
 	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ boot/zhaoxu.cfg ::/EFI/BOOT/zhaoxu.cfg
 
 $(ISO): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG) \
-        initramfs/data/wqy.ttc $(FONT_FILES) boot/fonts/unicode.pf2 \
+        $(FONT_FILES) boot/fonts/unicode.pf2 \
         tools/kernel-flat.rb tools/iso-bios.rb \
         tools/iso-manifest.rb boot/zhaoxu.cfg boot/zhaoxuenv $(WALLPAPER_RAW)
 	@rm -rf $(ISO_ROOT)
@@ -944,7 +1023,6 @@ $(ISO): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(OUT)/kernel.elf $(EFI_IMG) $(BI
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.ELF
 	cp initramfs/data/MiSans-Regular.ttf $(ISO_ROOT)/install/MiSans.ttf
 	cp initramfs/data/Inter-Regular.otf $(ISO_ROOT)/install/Inter.otf
-	cp initramfs/data/wqy.ttc $(ISO_ROOT)/install/WQY.TTC
 	$(RUBY) tools/iso-manifest.rb $(ISO_ROOT) $(ZHAOXU_VERSION) \
 	  $(ZHAOXU_CODENAME) $(ZHAOXU_KERNEL) $(ZHAOXU_KERNEL_VERSION) \
 	  $(ZHAOXU_BUILD)

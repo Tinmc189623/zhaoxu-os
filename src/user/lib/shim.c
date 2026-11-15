@@ -237,9 +237,9 @@ u8 *zos_load_font(u64 *size_out)
 {
     static const char *const candidates[] = {
         "/mnt/MiSans.ttf", "/mnt/MiSans-Regular.ttf",
-        "/mnt/MiSansGlobal.ttf", "/mnt/MiSansLatinVF.ttf",
-        "/mnt/MiSansLatin-Regular.ttf", "/mnt/Inter.ttf",
-        "/mnt/Inter-Regular.ttf", "/mnt/WQY.TTC"
+        "/mnt/MiSansGlobal.ttf", "/mnt/MiSansGlobal-Regular.ttf",
+        "/mnt/MiSansLatinVF.ttf", "/mnt/MiSansLatin-Regular.ttf",
+        "/mnt/Inter.otf", "/mnt/Inter.ttf", "/mnt/Inter-Regular.otf"
     };
 
     if (size_out)

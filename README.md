@@ -10,7 +10,7 @@
 
 [🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) · [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) · [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) · [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
-**Current version: 0.7.1 「Yuanshuo」 · kernel 0.7.1 · build 4** · version history in [CHANGELOG.md](CHANGELOG.md)
+**Current version: 0.7.1 「Yuanshuo」 · kernel 0.7.1 · build 5** · version history in [CHANGELOG.md](CHANGELOG.md)
 
 </div>
 
@@ -36,6 +36,8 @@
 - M3: xdg-shell configure/ack, wl_seat/wl_pointer, wl_keyboard keymap/enter, and server-side title bar/close/drag are implemented; in M4, virgl contexts, 3D resource creation, and `CTX_ATTACH_RESOURCE` work, but virglrenderer in QEMU on Windows does not register scanout resources, so GPU composition and dmabuf remain pending
 - M5: kernel `eventfd`, `timerfd`, and `epoll` (syscalls 61–67) provide the event-loop primitives stock libwayland needs; `/data/M5_TEST.ZXE` verifies counters, expirations, readiness, and timeouts on real hardware emulation
 - M6: stock libwayland 1.23.1 client core ported into Ring3 with the upstream `wayland-client.c`, `wayland-util.c`, `connection.c` and generated core/xdg-shell bindings; libffi 3.4.6 supplies the x86_64 SysV `ffi_call` path, and `user/lib/wayland/compat.c` supplies libc, errno, pthread and socket entry points. `/data/WLSTOCK.ZXE` binds `wl_compositor`/`wl_shm`, submits a 320x240 shm frame through SCM_RIGHTS, and exits 0
+- Fonts: the non-OpenType WenQuanYi fallback is gone. Boot, Aqua Desktop Environment, the installer, the ISO and the FAT data image use only MiSans, MiSans Global and Inter (OpenType); the installer writes `/MiSans.ttf` and the boot loader prefers `install/MiSans.ttf`
+- FreeType 2.13.3 is vendored under `third_party/freetype` and backs the Ring3 desktop font adapter. `make out/ft_test.zxe` loads the boot font and rasterizes U+4E2D; `FT_BOOT_TEST=1` with `out/data.img` prints `[ft] FreeType PASS` and exits 0
 
 <table>
 <tr>
@@ -285,6 +287,7 @@ make -j4                         # build everything (Linux/macOS/WSL)
 make iso                         # produce out/zhaoxu_{os_version}_installer.iso (UEFI + BIOS)
 make run-iso                     # UEFI CD boot (no data disk attached)
 make out/wlstock.zxe             # stock libwayland client regression binary
+make out/ft_test.zxe             # FreeType regression binary
 make host-test                   # host-detection unit test
 ruby tools/build.rb --check      # auxiliary: tool matrix and install hints
 ```
@@ -347,8 +350,10 @@ Zhaoxu OS/
     ├── apps/                 8sh, Aqua Desktop Environment, display KMS, wayland core, ext4fs, Ring3 driver C glue
     ├── user/                 ring 3 programs, Wayland/ADE clients, wl_demo, user library
     │   └── lib/wayland/      stock libwayland compatibility layer and regression client
+    │   └── lib/freetype/    FreeType configuration, shims and regression client
     ├── third_party/wayland/  libwayland 1.23.1 client core and generated protocols
     ├── third_party/libffi/   libffi 3.4.6 x86_64 SysV ffi_call subset
+    ├── third_party/freetype/ FreeType 2.13.3 (TrueType, CFF, smooth rasterizer)
     ├── initramfs/            ramfs initial contents, data disk assets and cursor themes
     ├── tests/                host tests (ext4, build host detection)
     ├── tools/                Makefile build entry; Ruby helpers: zxe-pack, iso-*, smoke, screenshot, version
@@ -366,7 +371,7 @@ Zhaoxu OS/
 - 🧱 Compatibility: no general POSIX/libc layer, the syscall interface is ZOS API 1.0; ZXE v1 loads dependencies from `/lib` by filename and has no ELF dynamic linker. Wayland now includes the stock libwayland 1.23.1 client core plus a small libc/pthread/socket compatibility layer; unmodified stock applications such as `weston-terminal` still need the remaining libc and shm_open surface
 - 🌐 Networking: no TCP/IP stack; AF_UNIX stream sockets, poll, eventfd, timerfd, epoll, SCM_RIGHTS, and memfd exist for Wayland and the M0/M5 transport
 - 🔌 Peripherals: input is a PS/2 keyboard/mouse and COM1; storage covers AHCI/IDE/NVMe/SDHCI/USB MSC; HDA, e1000, I2C/SPI, and temperature sensors are present; no USB HID and no full network stack
-- 🖼️ Graphics: M1 virtio-gpu 2D KMS scanout and double-buffered flip; composition is still software rasterization; the M2/M3 Wayland core and xdg-shell/seat work; M6 ships the stock libwayland client core and a verified shm frame submission through SCM_RIGHTS; M4 virgl contexts and 3D resources can be created and attached, but virglrenderer in QEMU on Windows does not register 2D/3D scanout resources (`SET_SCANOUT` returns `0x1203`), so GPU composition and linux-dmabuf remain pending; no multi-monitor
+- 🖼️ Graphics: M1 virtio-gpu 2D KMS scanout and double-buffered flip; composition is still software rasterization; the M2/M3 Wayland core and xdg-shell/seat work; M6 ships the stock libwayland client core and a verified shm frame submission through SCM_RIGHTS; M4 virgl contexts and 3D resources can be created and attached, but virglrenderer in QEMU on Windows does not register 2D/3D scanout resources (`SET_SCANOUT` returns `0x1203`), so GPU composition and linux-dmabuf remain pending. There is no Vulkan loader/ICD and no OpenGL port yet; rules 37/38 are known release blockers; no multi-monitor
 - ⚡ Power: ACPI is used for shutdown/reboot only; no sleep or hibernate
 - 🛡️ Boot: the boot loader is unsigned, so machines with Secure Boot enabled must turn Secure Boot off first or sign the loader themselves
 - ⏱️ Time: RTC local time only; no NTP or time zone handling

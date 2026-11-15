@@ -81,7 +81,7 @@ root = entries(data, le32(pvd, 158), le32(pvd, 166))
 install = find(root, "INSTALL")
 abort "iso-bios: INSTALL is not a directory" if install[:size].zero?
 kernel = find(entries(data, install[:lba], install[:size]), "KERNEL.BIN")
-font = find(entries(data, install[:lba], install[:size]), "WQY.TTC")
+font = find(entries(data, install[:lba], install[:size]), "MISANS.TTF")
 boot = find(root, "BIOS.IMG")
 
 [kernel, font].each do |item|

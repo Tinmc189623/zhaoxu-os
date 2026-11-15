@@ -432,8 +432,8 @@ int ext4_make_root(int disk, u64 volume_base, u32 sectors, const char *label,
         return -1;
     }
     if (font && font_size > 12 &&
-        ext4_write_file("/WQY.TTC", font, font_size) != 0) {
-        ext4_logf("[ext4] WQY.TTC write failed \n");
+        ext4_write_file("/MiSans.ttf", font, font_size) != 0) {
+        ext4_logf("[ext4] MiSans.ttf write failed \n");
         return -1;
     }
 

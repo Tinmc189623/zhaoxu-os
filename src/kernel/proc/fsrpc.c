@@ -28,7 +28,7 @@
 
 /* Per-op timeouts.  Metadata and read requests are small and must never hang
  * the caller, but FORMAT zeroes megabytes of inode tables and WRITE /
- * WRITE_CONTIG commit the whole file (the WQY.TTC font is ~5 MiB) inside the
+ * WRITE_CONTIG commit the whole file (the MiSans font is ~8 MiB) inside the
  * last request, all of it through 4 KiB block syscalls to the driver service.
  * A fixed 5 s ceiling is below what a slow disk needs for those, and a timeout
  * retires the channel, so they get a much longer budget instead. */

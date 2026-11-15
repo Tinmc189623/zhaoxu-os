@@ -49,6 +49,14 @@ char *strcpy(char *destination, const char *source)
     return result;
 }
 
+char *strcat(char *destination, const char *source)
+{
+    char *result = destination;
+    while (*destination) destination++;
+    while ((*destination++ = *source++)) ;
+    return result;
+}
+
 char *strchr(const char *text, int character)
 {
     while (*text) {
@@ -57,6 +65,20 @@ char *strchr(const char *text, int character)
         text++;
     }
     return character == 0 ? (char *)text : 0;
+}
+
+char *strstr(const char *haystack, const char *needle)
+{
+    if (!*needle)
+        return (char *)haystack;
+    for (; *haystack; haystack++) {
+        const char *a = haystack;
+        const char *b = needle;
+        while (*a && *b && *a == *b) { a++; b++; }
+        if (!*b)
+            return (char *)haystack;
+    }
+    return 0;
 }
 
 int memcmp(const void *a, const void *b, size_t count)
@@ -69,5 +91,13 @@ int memcmp(const void *a, const void *b, size_t count)
         x++;
         y++;
     }
+    return 0;
+}
+
+void *memchr(const void *memory, int value, size_t length)
+{
+    const unsigned char *bytes = memory;
+    for (size_t i = 0; i < length; i++)
+        if (bytes[i] == (unsigned char)value) return (void *)(bytes + i);
     return 0;
 }
