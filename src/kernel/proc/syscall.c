@@ -19,6 +19,7 @@
 #include <kprintf.h>
 #include <mem.h>
 #include <memfd.h>
+#include <pipe.h>
 #include <rtc.h>
 #include <shm.h>
 #include <smp.h>
@@ -104,6 +105,8 @@
 #define SYS_INSTALL_CONFIG 71
 #define SYS_FORK            72
 #define SYS_EXEC            73
+#define SYS_PIPE            74
+#define SYS_DUP2            75
 
 #define BLK_SECTOR_BYTES 512u
 #define BLK_MAX_SECTORS  8u
@@ -246,6 +249,43 @@ static long syscall_exec(struct process *process, struct interrupt_frame *frame,
         argv[i] = arguments[i];
     }
     return process_exec(frame, path, count, argv);
+}
+
+/* pipe(): one ring object shared by a read end and a write end.  Both
+ * descriptors live in the zfd table, so read/write/poll/close reuse the
+ * existing descriptor paths. */
+static long syscall_pipe(struct process *process, u64 fds_pointer)
+{
+    if (user_range_ok(process, fds_pointer, 2 * sizeof(int)) != 1)
+        return -1;
+
+    struct pipe *pipe = pipe_create();
+    if (!pipe)
+        return -1;
+
+    int read_fd = zfd_alloc_end(process, ZFD_TYPE_PIPE, pipe, 0,
+                                PIPE_READ_END);
+    if (read_fd < 0) {
+        pipe_release(pipe);
+        return -1;
+    }
+
+    pipe_ref(pipe);
+    int write_fd = zfd_alloc_end(process, ZFD_TYPE_PIPE, pipe, 0,
+                                 PIPE_WRITE_END);
+    if (write_fd < 0) {
+        pipe_release(pipe);
+        zfd_close(process, read_fd);
+        return -1;
+    }
+
+    int fds[2] = {read_fd, write_fd};
+    if (process_user_write(process, fds_pointer, fds, sizeof(fds)) != 0) {
+        zfd_close(process, read_fd);
+        zfd_close(process, write_fd);
+        return -1;
+    }
+    return 0;
 }
 
 static long syscall_wait(struct process *process, u64 pid, u64 status_pointer)
@@ -936,6 +976,12 @@ void syscall_dispatch(struct interrupt_frame *frame)
     case SYS_EXEC:
         result = syscall_exec(process, frame, frame->rdi, frame->rsi,
                               frame->rdx);
+        break;
+    case SYS_PIPE:
+        result = syscall_pipe(process, frame->rdi);
+        break;
+    case SYS_DUP2:
+        result = zfd_dup2(process, (int)frame->rdi, (int)frame->rsi);
         break;
     case SYS_PORT_LISTEN:
         result = syscall_port_listen(process, frame->rdi);

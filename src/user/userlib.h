@@ -80,6 +80,8 @@ typedef unsigned long long u64;
 #define SYS_INSTALL_CONFIG  71
 #define SYS_FORK             72
 #define SYS_EXEC             73
+#define SYS_PIPE             74
+#define SYS_DUP2             75
 
 #define AF_UNIX      1
 #define SOCK_STREAM  1
@@ -273,6 +275,18 @@ static inline long sys_execv(const char *path, char *const argv[])
             argc++;
     }
     return syscall3(SYS_EXEC, (long)path, (long)argv, argc);
+}
+
+/* POSIX pipes and descriptor duplication.  Descriptor numbers are in the
+ * zfd range (64 and above), matching sockets and memfds. */
+static inline long sys_pipe(int fds[2])
+{
+    return syscall3(SYS_PIPE, (long)fds, 0, 0);
+}
+
+static inline long sys_dup2(int oldfd, int newfd)
+{
+    return syscall3(SYS_DUP2, oldfd, newfd, 0);
 }
 
 static inline long sys_port_listen(const char *name)

@@ -12,6 +12,7 @@
 #include <epoll.h>
 #include <eventfd.h>
 #include <memfd.h>
+#include <pipe.h>
 #include <spinlock.h>
 #include <string.h>
 #include <timerfd.h>
@@ -35,6 +36,8 @@ static void object_ref(int type, void *object)
         timerfd_ref((struct timerfd *)object);
     else if (type == ZFD_TYPE_EPOLL)
         epoll_ref((struct epoll *)object);
+    else if (type == ZFD_TYPE_PIPE)
+        pipe_ref((struct pipe *)object);
 }
 
 static void object_release(int type, void *object)
@@ -51,6 +54,16 @@ static void object_release(int type, void *object)
         timerfd_release((struct timerfd *)object);
     else if (type == ZFD_TYPE_EPOLL)
         epoll_release((struct epoll *)object);
+    else if (type == ZFD_TYPE_PIPE)
+        pipe_release((struct pipe *)object);
+}
+
+/* A pipe descriptor holds one reader or writer count; drop it before the
+ * object reference so a reader sees EOF and a writer sees EPIPE. */
+static void object_detach(int type, void *object, int end)
+{
+    if (type == ZFD_TYPE_PIPE && object)
+        pipe_detach((struct pipe *)object, end);
 }
 
 struct zfd_entry *zfd_get(struct process *process, int fd)
@@ -63,7 +76,8 @@ struct zfd_entry *zfd_get(struct process *process, int fd)
 
 /* Install `object` under a fresh descriptor and hand the caller's reference
  * to the table.  The caller must not release it afterwards. */
-int zfd_alloc(struct process *process, int type, void *object, u32 flags)
+int zfd_alloc_end(struct process *process, int type, void *object, u32 flags,
+                  int end)
 {
     if (!process || !object)
         return -1;
@@ -76,6 +90,7 @@ int zfd_alloc(struct process *process, int type, void *object, u32 flags)
         memset(entry, 0, sizeof(*entry));
         entry->used = 1;
         entry->type = type;
+        entry->end = end;
         entry->flags = flags;
         entry->object = object;
         spin_unlock_irqrestore(&g_zfd_lock, lock);
@@ -83,6 +98,11 @@ int zfd_alloc(struct process *process, int type, void *object, u32 flags)
     }
     spin_unlock_irqrestore(&g_zfd_lock, lock);
     return -1;
+}
+
+int zfd_alloc(struct process *process, int type, void *object, u32 flags)
+{
+    return zfd_alloc_end(process, type, object, flags, -1);
 }
 
 int zfd_close(struct process *process, int fd)
@@ -97,10 +117,12 @@ int zfd_close(struct process *process, int fd)
         return -1;
     }
     int type = entry->type;
+    int end = entry->end;
     void *object = entry->object;
     memset(entry, 0, sizeof(*entry));
     spin_unlock_irqrestore(&g_zfd_lock, lock);
 
+    object_detach(type, object, end);
     object_release(type, object);
     return 0;
 }
@@ -126,10 +148,47 @@ int zfd_dup(struct process *process, int fd, int minimum)
         entry->used = 1;
         spin_unlock_irqrestore(&g_zfd_lock, lock);
         object_ref(source->type, source->object);
+        if (source->type == ZFD_TYPE_PIPE)
+            pipe_attach((struct pipe *)source->object, source->end);
         return ZFD_BASE + i;
     }
     spin_unlock_irqrestore(&g_zfd_lock, lock);
     return -1;
+}
+
+/* dup2(): install oldfd at exactly newfd, closing whatever was there. */
+int zfd_dup2(struct process *process, int oldfd, int newfd)
+{
+    if (!process || newfd < ZFD_BASE || newfd >= ZFD_BASE + ZFD_MAX)
+        return -1;
+    struct zfd_entry *source = zfd_get(process, oldfd);
+    if (!source)
+        return -1;
+    if (oldfd == newfd)
+        return newfd;
+
+    u64 lock = spin_lock_irqsave(&g_zfd_lock);
+    struct zfd_entry *target = &process->fds[newfd - ZFD_BASE];
+    int old_type = 0;
+    int old_end = -1;
+    void *old_object = NULL;
+    if (target->used) {
+        old_type = target->type;
+        old_end = target->end;
+        old_object = target->object;
+    }
+    *target = *source;
+    target->used = 1;
+    spin_unlock_irqrestore(&g_zfd_lock, lock);
+
+    object_ref(source->type, source->object);
+    if (source->type == ZFD_TYPE_PIPE)
+        pipe_attach((struct pipe *)source->object, source->end);
+    if (old_object) {
+        object_detach(old_type, old_object, old_end);
+        object_release(old_type, old_object);
+    }
+    return newfd;
 }
 
 /* fork(): every open descriptor appears in the child at the same number and
@@ -149,8 +208,12 @@ int zfd_fork(struct process *parent, struct process *child)
     spin_unlock_irqrestore(&g_zfd_lock, lock);
 
     for (int i = 0; i < ZFD_MAX; i++) {
-        if (child->fds[i].used)
-            object_ref(child->fds[i].type, child->fds[i].object);
+        if (!child->fds[i].used)
+            continue;
+        object_ref(child->fds[i].type, child->fds[i].object);
+        if (child->fds[i].type == ZFD_TYPE_PIPE)
+            pipe_attach((struct pipe *)child->fds[i].object,
+                        child->fds[i].end);
     }
     return 0;
 }
@@ -222,6 +285,12 @@ int zfd_read(struct process *process, int fd, void *buffer, u64 length)
             memcpy(buffer, &value, sizeof(value));
         return result;
     }
+    if (entry->type == ZFD_TYPE_PIPE) {
+        if (entry->end != PIPE_READ_END)
+            return -1;
+        return pipe_read((struct pipe *)entry->object, buffer, length,
+                         nonblock);
+    }
     return -1;
 }
 
@@ -243,6 +312,12 @@ int zfd_write(struct process *process, int fd, const void *buffer, u64 length)
         u64 value = 0;
         memcpy(&value, buffer, sizeof(value));
         return eventfd_write((struct eventfd *)entry->object, value, nonblock);
+    }
+    if (entry->type == ZFD_TYPE_PIPE) {
+        if (entry->end != PIPE_WRITE_END)
+            return -1;
+        return pipe_write((struct pipe *)entry->object, buffer, length,
+                          nonblock);
     }
     return -1;
 }
@@ -277,6 +352,8 @@ short zfd_poll_events(struct process *process, int fd, short events)
         return eventfd_poll((struct eventfd *)entry->object, events);
     if (entry->type == ZFD_TYPE_TIMERFD)
         return timerfd_poll((struct timerfd *)entry->object, events);
+    if (entry->type == ZFD_TYPE_PIPE)
+        return pipe_poll((struct pipe *)entry->object, entry->end, events);
     /* epoll descriptors are waited on with epoll_wait, not polled. */
     if (entry->type == ZFD_TYPE_EPOLL)
         return 0;
@@ -306,6 +383,7 @@ void zfd_process_exit(struct process *process)
 
     for (int i = 0; i < ZFD_MAX; i++) {
         int type;
+        int end;
         void *object;
         u64 lock = spin_lock_irqsave(&g_zfd_lock);
         struct zfd_entry *entry = &process->fds[i];
@@ -314,9 +392,11 @@ void zfd_process_exit(struct process *process)
             continue;
         }
         type = entry->type;
+        end = entry->end;
         object = entry->object;
         memset(entry, 0, sizeof(*entry));
         spin_unlock_irqrestore(&g_zfd_lock, lock);
+        object_detach(type, object, end);
         object_release(type, object);
     }
 }

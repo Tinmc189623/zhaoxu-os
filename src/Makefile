@@ -109,6 +109,8 @@ VK_BOOT_TEST ?= 0
 CFLAGS += -DVK_BOOT_TEST=$(VK_BOOT_TEST)
 FE_BOOT_TEST ?= 0
 CFLAGS += -DFE_BOOT_TEST=$(FE_BOOT_TEST)
+POSIX_BOOT_TEST ?= 0
+CFLAGS += -DPOSIX_BOOT_TEST=$(POSIX_BOOT_TEST)
 # make does not track CFLAGS changes; stamps keyed by the test mode force
 # kernel/main.o to rebuild when a boot-time test toggles, so an ISO cannot
 # silently ship a self-test kernel.
@@ -147,7 +149,12 @@ $(BUILD)/fe-%.stamp:
 	@mkdir -p $(BUILD)
 	@rm -f $(BUILD)/fe-*.stamp
 	@touch $@
-$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP) $(GL_STAMP) $(VK_STAMP) $(FE_STAMP)
+POSIX_STAMP := $(BUILD)/posix-$(POSIX_BOOT_TEST).stamp
+$(BUILD)/posix-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/posix-*.stamp
+	@touch $@
+$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP) $(GL_STAMP) $(VK_STAMP) $(FE_STAMP) $(POSIX_STAMP)
 ADAFLAGS := -c -gnatp -gnat2022 -O2 -g -fno-pie \
             -fno-stack-protector -mno-red-zone -mcmodel=kernel \
             -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -mno-avx \
@@ -220,6 +227,7 @@ C_SRCS := kernel/main.c \
           kernel/ipc/zfd.c \
           kernel/ipc/unix_socket.c \
           kernel/ipc/memfd.c \
+          kernel/ipc/pipe.c \
           kernel/ipc/eventfd.c \
           kernel/ipc/timerfd.c \
           kernel/ipc/epoll.c \
@@ -714,7 +722,8 @@ RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/aqua $(RAMFS)/bin/8sh \
                $(RAMFS)/data/DOCS/INFO.TXT \
                $(RAMFS)/data/PING.ZXE $(RAMFS)/data/PONG.ZXE \
                $(RAMFS)/data/NET_TEST.ZXE $(RAMFS)/data/M5_TEST.ZXE \
-               $(RAMFS)/data/WLSTOCK.ZXE $(RAMFS)/data/FORKEXEC.ZXE
+               $(RAMFS)/data/WLSTOCK.ZXE $(RAMFS)/data/FORKEXEC.ZXE \
+               $(RAMFS)/data/POSIX_TEST.ZXE
 
 # PNG + text cursor theme.  The compositor loads this from
 # /usr/share/cursors/Aqua at startup and falls back to the built-in arrow
@@ -831,6 +840,11 @@ $(RAMFS)/data/WLSTOCK.ZXE: $(OUT)/wlstock.zxe
 
 # POSIX fork/exec regression: fork a child, reap it, then exec HELLO.ZXE.
 $(RAMFS)/data/FORKEXEC.ZXE: $(OUT)/forkexec.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+# POSIX pipe/dup2 regression.
+$(RAMFS)/data/POSIX_TEST.ZXE: $(OUT)/positest.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 

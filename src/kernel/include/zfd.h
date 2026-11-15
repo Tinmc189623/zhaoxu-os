@@ -18,6 +18,7 @@
 #define ZFD_TYPE_EVENTFD 3
 #define ZFD_TYPE_TIMERFD 4
 #define ZFD_TYPE_EPOLL   5
+#define ZFD_TYPE_PIPE    6
 
 #define ZFD_O_NONBLOCK 0x800u
 
@@ -26,15 +27,19 @@ struct process;
 struct zfd_entry {
     int used;
     int type;
+    int end;         /* pipe end (0 read, 1 write), -1 otherwise */
     u32 flags;
     u64 offset;      /* memfd file position */
     void *object;
 };
 
 int zfd_alloc(struct process *process, int type, void *object, u32 flags);
+int zfd_alloc_end(struct process *process, int type, void *object, u32 flags,
+                  int end);
 struct zfd_entry *zfd_get(struct process *process, int fd);
 int zfd_close(struct process *process, int fd);
 int zfd_dup(struct process *process, int fd, int minimum);
+int zfd_dup2(struct process *process, int oldfd, int newfd);
 int zfd_fork(struct process *parent, struct process *child);
 int zfd_transfer(struct process *receiver, int fd);
 int zfd_read(struct process *process, int fd, void *buffer, u64 length);

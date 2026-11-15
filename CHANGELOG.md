@@ -2,6 +2,15 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 build 12
+
+### POSIX pipes and descriptors
+- `SYS_PIPE` (74): a 64 KiB ring buffer object in `kernel/ipc/pipe.c`, shared by a read end and a write end in the zfd table. Reads block until data or EOF, writes block while the ring is full; nonblocking mode returns immediately. `poll` reports POLLIN/POLLOUT/POLLHUP
+- `SYS_DUP2` (75): installs a zfd descriptor at an exact number, closing the previous occupant and balancing pipe reader/writer counts. `fork` and `dup` copy pipe end counts and object references
+- `pipe()` and `dup2()` join `fork()`/`exec()` in `user/userlib.h`
+- `POSIX_BOOT_TEST=1` runs `/data/POSIX_TEST.ZXE`: a pipe written in the child and read in the parent, EOF after the writer closes, and dup2 to descriptor 90
+- Still needed before nasm/nano/vim: stdio dup2 onto 0/1/2, termios/ioctl, signals, and a libc; zfd numbers stay 64..95 and VFS descriptors remain a process-global table
+
 ## 0.7.1 「Yuanshuo」 build 11
 
 ### Boot code archive

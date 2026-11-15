@@ -263,6 +263,20 @@ void kernel_main(struct boot_info *boot)
         hlt();
 #endif
 
+#if POSIX_BOOT_TEST == 1
+    kprintf("[posix] running /data/POSIX_TEST.ZXE\n");
+    u64 posix_pid = process_spawn("/data/POSIX_TEST.ZXE", 0, NULL);
+    if (posix_pid) {
+        int posix_status = -1;
+        process_wait(posix_pid, &posix_status);
+        kprintf("[posix] POSIX_TEST exit %d\n", posix_status);
+    } else {
+        kprintf("[posix] POSIX_TEST spawn failed\n");
+    }
+    for (;;)
+        hlt();
+#endif
+
 #if WLSTOCK_BOOT_TEST == 1
     kprintf("[wlstock] starting /bin/wayland\n");
     u64 wlstock_server = process_spawn("/bin/wayland", 0, NULL);
