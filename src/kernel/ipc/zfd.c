@@ -132,6 +132,29 @@ int zfd_dup(struct process *process, int fd, int minimum)
     return -1;
 }
 
+/* fork(): every open descriptor appears in the child at the same number and
+ * shares the object, so both processes keep the socket/memfd alive. */
+int zfd_fork(struct process *parent, struct process *child)
+{
+    if (!parent || !child)
+        return -1;
+
+    u64 lock = spin_lock_irqsave(&g_zfd_lock);
+    for (int i = 0; i < ZFD_MAX; i++) {
+        if (!parent->fds[i].used)
+            continue;
+        child->fds[i] = parent->fds[i];
+        child->fds[i].used = 1;
+    }
+    spin_unlock_irqrestore(&g_zfd_lock, lock);
+
+    for (int i = 0; i < ZFD_MAX; i++) {
+        if (child->fds[i].used)
+            object_ref(child->fds[i].type, child->fds[i].object);
+    }
+    return 0;
+}
+
 /* Duplicate `fd` from the caller into `receiver`'s table.  SCM_RIGHTS uses
  * this; the object is shared, not copied.  A transferred socket changes its
  * owner so descriptors sent on it later reach the new holder. */

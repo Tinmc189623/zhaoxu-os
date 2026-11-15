@@ -88,7 +88,7 @@ static struct process *process_find(u64 pid)
     return NULL;
 }
 
-static struct process *process_alloc(void)
+struct process *process_alloc(void)
 {
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (!g_processes[i].used) {
@@ -187,10 +187,11 @@ u64 process_map_page(struct process *process, u64 virtual_address,
     int index = process->mapping_count++;
     process->mappings[index].virtual_address = virtual_address;
     process->mappings[index].physical_address = physical;
+    process->mappings[index].flags = page_flags;
     return physical;
 }
 
-static void release_user_pages(struct process *process)
+void process_release_pages(struct process *process)
 {
     if (!process)
         return;
@@ -338,9 +339,9 @@ static u64 build_user_stack(struct process *process, int argc,
     return stack;
 }
 
-static int prepare_image(struct process *process, const u8 *image,
-                         u64 image_size, const char *path, int argc,
-                         const char **argv)
+int process_prepare_image(struct process *process, const u8 *image,
+                          u64 image_size, const char *path, int argc,
+                          const char **argv)
 {
     u64 entry = 0;
     if (image_load(process, image, image_size, path, &entry) != 0)
@@ -371,7 +372,7 @@ static void process_entry(void *argument)
 
 static void process_fail(struct process *process)
 {
-    release_user_pages(process);
+    process_release_pages(process);
     if (process->space) {
         vmm_space_destroy(process->space);
         process->space = NULL;
@@ -415,7 +416,8 @@ static u64 spawn_image(const u8 *image, u64 image_size, const char *name,
     if (argc <= 0)
         argc = 1;
 
-    if (prepare_image(process, image, image_size, name, argc, stack_argv) != 0) {
+    if (process_prepare_image(process, image, image_size, name, argc,
+                              stack_argv) != 0) {
         kprintf("[proc] %s is not a valid ZXE/ELF64 executable\n",
                 name ? name : "<memory>");
         process_fail(process);
@@ -527,7 +529,7 @@ void process_exit_current(int status)
     ipc_process_exit(process->pid);
     shm_process_exit(process->pid);
     zfd_process_exit(process);
-    release_user_pages(process);
+    process_release_pages(process);
     g_last_pid = process->pid;
     kthread_exit();
 }

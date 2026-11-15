@@ -2,6 +2,21 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 build 11
+
+### Boot code archive
+- Moved the pre-Limine boot manager (`efi_main.c`, `efi_bootmgr.c`, `bios_stage1.asm`, `bios_stage2.asm`, `uefi.h`, `zhaoxu.cfg`, `zhaoxuenv`, the old menu font and `tools/bios-img.rb`/`tools/iso-bios.rb`) to `archive/boot-legacy/` with a README that records what each file did. Nothing in the archive is compiled, packed into the ISO or installed
+- Removed the dead Makefile targets for `BOOTX64.EFI`, `OSLDRX64.efi`, `bios.img` and the blob objects, and taught `tools/native.rb` to build only the Limine kernel/initramfs path
+
+### POSIX fork/exec
+- `SYS_FORK` (72): copies every user mapping with its page flags, duplicates the zfd descriptor table with object refcounts, and starts a child kernel thread that enters Ring3 through `user_enter_context` at the parent's post-syscall RIP/RSP with `rax=0`. The parent receives the child pid; `wait` reaps it normally
+- `SYS_EXEC` (73): copies the path and argv into kernel memory, loads the ZXE/ELF image into a brand-new address space, and only after a successful load switches CR3, releases the old pages and page tables, and rewrites the interrupt frame to the new entry/stack. A bad image leaves the caller running its old program
+- `user/userlib.h` gained `sys_fork()` and `sys_execv()`; `user/forkexec.c` exercises fork, wait and exec
+- `FE_BOOT_TEST=1` runs `/data/FORKEXEC.ZXE`: the child exits 7, the parent reaps it, then execs `/data/HELLO.ZXE`, which prints its argv and exits 7 from the same pid
+
+### Still open
+- Native ports of fasm, nasm, nano, vi/vim and neofetch are not included in this build. They need a POSIX runtime (libc, termios/termcap, pipes/job control for an editor, and a shell for upstream neofetch); fork/exec is the first layer of that work
+
 ## 0.7.1 「Yuanshuo」 build 10
 
 ### Limine boot manager

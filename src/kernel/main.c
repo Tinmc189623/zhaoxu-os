@@ -249,6 +249,20 @@ void kernel_main(struct boot_info *boot)
         hlt();
 #endif
 
+#if FE_BOOT_TEST == 1
+    kprintf("[fe ] running /data/FORKEXEC.ZXE\n");
+    u64 fe_pid = process_spawn("/data/FORKEXEC.ZXE", 0, NULL);
+    if (fe_pid) {
+        int fe_status = -1;
+        process_wait(fe_pid, &fe_status);
+        kprintf("[fe ] FORKEXEC exit %d\n", fe_status);
+    } else {
+        kprintf("[fe ] FORKEXEC spawn failed\n");
+    }
+    for (;;)
+        hlt();
+#endif
+
 #if WLSTOCK_BOOT_TEST == 1
     kprintf("[wlstock] starting /bin/wayland\n");
     u64 wlstock_server = process_spawn("/bin/wayland", 0, NULL);

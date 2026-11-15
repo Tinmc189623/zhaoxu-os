@@ -19,6 +19,21 @@ enum process_state {
 struct user_mapping {
     u64 virtual_address;
     u64 physical_address;
+    u64 flags;   /* page flags, so fork() can rebuild W^X exactly */
+};
+
+/* User register state a fork() child must resume with.  The layout is also
+ * consumed by user_enter_context in arch/x86_64/user.S. */
+struct user_context {
+    u64 rbx;
+    u64 rbp;
+    u64 r12;
+    u64 r13;
+    u64 r14;
+    u64 r15;
+    u64 rip;
+    u64 rflags;
+    u64 rsp;
 };
 
 struct process {
@@ -40,6 +55,12 @@ struct process {
 };
 
 int user_range_ok(struct process *process, u64 pointer, u64 length);
+
+struct process *process_alloc(void);
+void process_release_pages(struct process *process);
+int process_prepare_image(struct process *process, const u8 *image,
+                          u64 image_size, const char *path, int argc,
+                          const char **argv);
 
 u64 process_map_page(struct process *process, u64 virtual_address,
                      u64 page_flags);

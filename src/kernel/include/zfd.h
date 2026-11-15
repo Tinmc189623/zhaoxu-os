@@ -35,6 +35,7 @@ int zfd_alloc(struct process *process, int type, void *object, u32 flags);
 struct zfd_entry *zfd_get(struct process *process, int fd);
 int zfd_close(struct process *process, int fd);
 int zfd_dup(struct process *process, int fd, int minimum);
+int zfd_fork(struct process *parent, struct process *child);
 int zfd_transfer(struct process *receiver, int fd);
 int zfd_read(struct process *process, int fd, void *buffer, u64 length);
 int zfd_write(struct process *process, int fd, const void *buffer, u64 length);

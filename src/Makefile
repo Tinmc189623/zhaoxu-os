@@ -56,16 +56,6 @@ endif
 ifeq ($(origin LD),default)
   LD := ld.lld
 endif
-ifeq ($(ZOS_HOST),linux)
-  FASM ?= tools/fasm
-else ifeq ($(ZOS_HOST),macos)
-  FASM ?= fasm
-else
-  FASM ?= fasm.exe
-endif
-BOOT_CC ?= clang
-BOOT_LD ?= lld-link
-
 # Image/packaging tools: overridable so build.rb can point at the host copy
 # (MSYS2 prefixes, Homebrew, or a custom PATH).
 MKFS_VFAT  ?= mkfs.vfat
@@ -117,6 +107,8 @@ GL_BOOT_TEST ?= 0
 CFLAGS += -DGL_BOOT_TEST=$(GL_BOOT_TEST)
 VK_BOOT_TEST ?= 0
 CFLAGS += -DVK_BOOT_TEST=$(VK_BOOT_TEST)
+FE_BOOT_TEST ?= 0
+CFLAGS += -DFE_BOOT_TEST=$(FE_BOOT_TEST)
 # make does not track CFLAGS changes; stamps keyed by the test mode force
 # kernel/main.o to rebuild when a boot-time test toggles, so an ISO cannot
 # silently ship a self-test kernel.
@@ -150,7 +142,12 @@ $(BUILD)/vk-%.stamp:
 	@mkdir -p $(BUILD)
 	@rm -f $(BUILD)/vk-*.stamp
 	@touch $@
-$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP) $(GL_STAMP) $(VK_STAMP)
+FE_STAMP := $(BUILD)/fe-$(FE_BOOT_TEST).stamp
+$(BUILD)/fe-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/fe-*.stamp
+	@touch $@
+$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP) $(GL_STAMP) $(VK_STAMP) $(FE_STAMP)
 ADAFLAGS := -c -gnatp -gnat2022 -O2 -g -fno-pie \
             -fno-stack-protector -mno-red-zone -mcmodel=kernel \
             -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -mno-avx \
@@ -211,6 +208,7 @@ C_SRCS := kernel/main.c \
           kernel/crypto/sha256.c \
           kernel/crypto/aes.c \
           kernel/proc/process.c \
+          kernel/proc/process_fork.c \
           kernel/proc/zxe_loader.c \
           kernel/proc/syscall.c \
           kernel/proc/io_syscall.c \
@@ -256,8 +254,9 @@ FORCE:
 
 .PHONY: all clean run iso run-iso run-install run-bios run-install-bios version fonts host-test FORCE
 
-# The kernel is built for the ISO and the installer; rule 25 keeps it out of
-# BOOTX64.EFI and the ESP only carries the loader.
+# The kernel is built for the ISO and the installer; Limine stays the only
+# boot manager (rules 8/31), and the installed ESP carries the kernel and
+# modules as plain files.
 all: $(OUT)/kernel.elf $(BUILD)/limine-host
 
 # MiSans/MiSans Global are not redistributable, so they are fetched here.
@@ -715,7 +714,7 @@ RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/aqua $(RAMFS)/bin/8sh \
                $(RAMFS)/data/DOCS/INFO.TXT \
                $(RAMFS)/data/PING.ZXE $(RAMFS)/data/PONG.ZXE \
                $(RAMFS)/data/NET_TEST.ZXE $(RAMFS)/data/M5_TEST.ZXE \
-               $(RAMFS)/data/WLSTOCK.ZXE
+               $(RAMFS)/data/WLSTOCK.ZXE $(RAMFS)/data/FORKEXEC.ZXE
 
 # PNG + text cursor theme.  The compositor loads this from
 # /usr/share/cursors/Aqua at startup and falls back to the built-in arrow
@@ -830,6 +829,11 @@ $(RAMFS)/data/WLSTOCK.ZXE: $(OUT)/wlstock.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
+# POSIX fork/exec regression: fork a child, reap it, then exec HELLO.ZXE.
+$(RAMFS)/data/FORKEXEC.ZXE: $(OUT)/forkexec.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
 $(RAMFS)/data/DOCS/INFO.TXT: initramfs/data/info.txt
 	@mkdir -p $(dir $@)
 	cp $< $@
@@ -874,70 +878,12 @@ $(DATA_IMG): $(OUT)/hello.zxe $(OUT)/ft_test.zxe $(OUT)/gl_test.zxe $(OUT)/vk_te
 	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ $(OUT)/vk_test.zxe ::/VK_TEST.ZXE
 	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ initramfs/data/info.txt ::/DOCS/INFO.TXT
 
-$(BUILD)/efi_main.o: boot/efi_main.c boot/uefi.h $(HEADLESS_HEADER)
-	@mkdir -p $(BUILD)
-	$(BOOT_CC) $(BOOT_CFLAGS) -c $< -o $@
-
-# ZhaoxuBootMgr: first stage, only loads and starts the osloader.
-$(BUILD)/efi_bootmgr.o: boot/efi_bootmgr.c boot/uefi.h $(HEADLESS_HEADER)
-	@mkdir -p $(BUILD)
-	$(BOOT_CC) $(BOOT_CFLAGS) -c $< -o $@
-
-$(OUT)/BOOTX64.EFI: $(BUILD)/efi_bootmgr.o
-	@mkdir -p $(OUT)
-	$(BOOT_LD) $(BOOT_LDFLAGS) $(BUILD)/efi_bootmgr.o /out:$@
-
-# Second stage: owns the kernel hand-off (was the single BOOTX64.EFI loader).
-$(OUT)/OSLDRX64.efi: $(BUILD)/efi_main.o
-	@mkdir -p $(OUT)
-	$(BOOT_LD) $(BOOT_LDFLAGS) /entry:osloader_start $(BUILD)/efi_main.o /out:$@
-
-# The installer warns when the build is headless: the loader and stage 2 it
-# copies to the target would then boot straight to csh.  The flag only lives
-# in -DHEADLESS, so this object must follow $(HEADLESS_HEADER) too.
+# The installer warns when the build is headless: the kernel it copies to the
+# target would then boot straight to csh.  The flag only lives in -DHEADLESS,
+# so this object must follow $(HEADLESS_HEADER).
 $(BUILD)/kernel/fs/install.o: kernel/fs/install.c $(HEADLESS_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -DHEADLESS=$(HEADLESS) -c $< -o $@
-
-# ---- ZhaoxuBootloader legacy BIOS chain ------------------------------
-# bios.img is a no-emulation El Torito image holding only stage1 + stage2;
-# the kernel is an ordinary ISO9660 file (install/KERNEL.BIN) whose extent is
-# patched into stage2 by tools/iso-bios.rb after xorriso laid the ISO out.
-BIOS_S1 := $(OUT)/bios_stage1.bin
-BIOS_S2 := $(OUT)/bios_stage2.bin
-BIOS_IMG := $(OUT)/bios.img
-BIOS1_INC := $(BUILD)/bios_stage1.inc
-
-$(BIOS_S2): boot/bios_stage2.asm $(HEADLESS_HEADER)
-	@mkdir -p $(OUT)
-	$(FASM) -dHEADLESS=$(HEADLESS) $< $@
-
-$(BIOS1_INC): $(BIOS_S2)
-	@mkdir -p $(BUILD)
-	@$(RUBY) -e 'print "STAGE2_SECTORS = #{(File.size(ARGV[0]) + 511) / 512}\n"' $< > $@
-
-$(BIOS_S1): boot/bios_stage1.asm $(BIOS1_INC)
-	@mkdir -p $(OUT)
-	$(FASM) $< $@
-
-$(BIOS_IMG): $(BIOS_S1) $(BIOS_S2) tools/bios-img.rb
-	$(RUBY) tools/bios-img.rb $(BIOS_S1) $(BIOS_S2) $@
-
-$(BUILD)/bios_stage1.o: $(BIOS_S1)
-	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 \
-	  --rename-section .data=.biosblob,alloc,load,readonly,data,contents \
-	  --redefine-sym _binary_out_bios_stage1_bin_start=bios_stage1_start \
-	  --redefine-sym _binary_out_bios_stage1_bin_end=bios_stage1_end \
-	  --redefine-sym _binary_out_bios_stage1_bin_size=bios_stage1_size \
-	  $< $@
-
-$(BUILD)/bios_stage2.o: $(BIOS_S2)
-	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 \
-	  --rename-section .data=.biosblob,alloc,load,readonly,data,contents \
-	  --redefine-sym _binary_out_bios_stage2_bin_start=bios_stage2_start \
-	  --redefine-sym _binary_out_bios_stage2_bin_end=bios_stage2_end \
-	  --redefine-sym _binary_out_bios_stage2_bin_size=bios_stage2_size \
-	  $< $@
 
 # stb_truetype needs scalar float math (SSE2); the rest of the kernel is
 # built -mgeneral-regs-only. cpu_init() clears CR0.EM/TS and sets
@@ -987,21 +933,12 @@ $(BUILD)/limine-bios-hdd.bin: third_party/limine/limine-bios-hdd.h \
 	@mkdir -p $(BUILD)
 	$(RUBY) tools/limine-bios-hdd.rb $< $@
 
-$(ESP)/BOOTX64.EFI: $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi
-	@mkdir -p $(ESP)
-	cp $< $@
-	cp $(OUT)/OSLDRX64.efi $(ESP)/OSLDRX64.efi
-
 clean:
-	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin $(OUT)/BOOTX64.EFI \
-	       $(OUT)/OSLDRX64.efi \
+	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin \
 	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/aqua.zxe \
 	       $(OUT)/8sh.zxe $(OUT)/initramfs.tar $(OUT)/initramfs.z \
 	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu-os_x86-64_*_ld.iso \
-	       $(OUT)/*.patched \
-	       $(OUT)/bios_stage1.bin $(OUT)/bios_stage2.bin $(OUT)/bios.img \
-	       $(OUT)/target.img $(ESP)/BOOTX64.EFI $(ESP)/OSLDRX64.efi
-	rm -f $(ESP)/KERNEL.ELF
+	       $(OUT)/*.patched $(OUT)/target.img
 
 ifeq ($(ZOS_HOST),macos)
   OVMF_CODE ?= $(firstword $(wildcard /opt/homebrew/share/qemu/edk2-x86_64-code.fd /usr/local/share/qemu/edk2-x86_64-code.fd))

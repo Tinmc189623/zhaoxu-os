@@ -1,14 +1,15 @@
 # frozen_string_literal: true
 #
-# native.rb -- build Zhaoxu OS on a native Windows host without MSYS2/make.
+# native.rb -- build the Yuanshuo kernel on a native Windows host without
+# MSYS2/make.
 #
 # The regular build path is the GNU Makefile.  On Windows the toolchain may
-# exist without GNU make (LLVM + FASM + Ruby + Git's tar), so this driver runs
-# the same compile/link/package steps directly.  It is pure Ruby (rule 6).
+# exist without GNU make (LLVM + Ruby + Git's tar), so this driver runs the
+# same compile/link/package steps directly.  It is pure Ruby (rule 6).
 #
 # Supported targets:
-#   all     BOOTX64.EFI, OSLDRX64.efi, kernel.elf and esp/  (make all)
-#   clean   remove build/out/esp artifacts
+#   all     kernel.elf and initramfs.tar (Limine supplies the boot layer)
+#   clean   remove build/out artifacts
 # ISO targets need xorriso, mkfs.vfat, mtools and mksquashfs and are rejected
 # here; they remain the Makefile's job on hosts that have those tools.
 #
@@ -44,15 +45,8 @@ module ZosNative
         lld_link: File.join(bin, "lld-link.exe"),
         objcopy: File.join(bin, "llvm-objcopy.exe"),
         ruby: RbConfig.ruby,
-        fasm: fasm_path(env),
         tar: tar_path(env),
       }
-    end
-
-    def fasm_path(env = ENV)
-      candidates = [env["FASM"], File.join(SRC, "tools", "fasm.exe"),
-                    "D:/fasm/FASM.EXE", "C:/fasm/FASM.EXE"]
-      candidates.compact.find { |path| File.file?(path) }
     end
 
     def tar_path(env = ENV)
@@ -63,7 +57,7 @@ module ZosNative
 
     def available?(env = ENV)
       tools_list = tools(env)
-      %i[clang clangxx ld_lld lld_link objcopy ruby fasm tar].all? { |k| tools_list[k] }
+      %i[clang clangxx ld_lld lld_link objcopy ruby tar].all? { |k| tools_list[k] }
     rescue BuildError
       false
     end
@@ -104,45 +98,20 @@ module ZosNative
       @tools = tools
       prepare_directories
       write_headless_header
-      build_uefi
       build_userland
-      build_bios
       build_initramfs
       link_kernel
-      copy_esp
       report
     end
 
     def prepare_directories
-      %w[build out esp/EFI/BOOT build/iso].each do |dir|
+      %w[build out build/iso].each do |dir|
         FileUtils.mkdir_p(File.join(SRC, dir))
       end
     end
 
     def write_headless_header
       File.write(File.join(SRC, "build", "headless.h"), "#define BUILD_HEADLESS 0\n")
-    end
-
-    def build_uefi
-      cc = @tools[:clang]
-      ld = @tools[:lld_link]
-      boot_cflags = [
-        "-target", "x86_64-pc-win32", "-m64", "-O2", "-ffreestanding",
-        "-fno-builtin", "-fno-stack-protector", "-mno-stack-arg-probe",
-        "-mno-red-zone", "-fno-asynchronous-unwind-tables", "-Wall", "-Wextra",
-        "-Wno-unused-parameter", "-DHEADLESS=0",
-      ]
-      boot_ldflags = ["/subsystem:efi_application", "/nodefaultlib", "/debug:none"]
-      compile("boot/efi_bootmgr.c", "build/efi_bootmgr.o", boot_cflags, cc: cc)
-      compile("boot/efi_main.c", "build/efi_main.o", boot_cflags, cc: cc)
-      link_efi("build/efi_bootmgr.o", "out/BOOTX64.EFI", "efi_start", ld, boot_ldflags)
-      link_efi("build/efi_main.o", "out/OSLDRX64.efi", "osloader_start", ld, boot_ldflags)
-      FileUtils.cp(File.join(SRC, "out", "OSLDRX64.efi"),
-                   File.join(SRC, "out", "osloader.elf")) if false
-    end
-
-    def link_efi(object, output, entry, ld, flags)
-      run([ld, *flags, "/entry:#{entry}", object, "/out:#{output}"])
     end
 
     # ---- userland -------------------------------------------------------
@@ -257,24 +226,6 @@ module ZosNative
            "out/ext4fs.zxe"])
     end
 
-    # ---- BIOS chain -----------------------------------------------------
-
-    def build_bios
-      fasm = @tools[:fasm]
-      run([fasm, "-dHEADLESS=0", "boot/bios_stage2.asm", "out/bios_stage2.bin"])
-      size = File.size(File.join(SRC, "out", "bios_stage2.bin"))
-      sectors = (size + 511) / 512
-      File.write(File.join(SRC, "build", "bios_stage1.inc"),
-                 format("STAGE2_SECTORS = %u\n", sectors))
-      run([fasm, "boot/bios_stage1.asm", "out/bios_stage1.bin"])
-      run([@tools[:ruby], "tools/bios-img.rb", "out/bios_stage1.bin",
-           "out/bios_stage2.bin", "out/bios.img"])
-      blob_object("out/bios_stage1.bin", "build/bios_stage1.o", "bios_stage1",
-                  ".biosblob")
-      blob_object("out/bios_stage2.bin", "build/bios_stage2.o", "bios_stage2",
-                  ".biosblob")
-    end
-
     def blob_object(input, output, prefix, section)
       # objcopy's binary-input symbol is _binary_<path with every
       # non-alphanumeric character turned into '_'>_start.
@@ -296,6 +247,7 @@ module ZosNative
       directory(tree, "bin")
       directory(tree, "bin/apps")
       directory(tree, "boot")
+      directory(tree, "boot/limine")
       directory(tree, "etc")
       directory(tree, "mnt")
       directory(tree, "data")
@@ -307,7 +259,15 @@ module ZosNative
       copy("out/welcome_client.zxe", "#{tree}/bin/apps/welcome.zxe")
       copy("out/calc_client.zxe", "#{tree}/bin/apps/calc.zxe")
       copy("out/install_client.zxe", "#{tree}/bin/apps/install.zxe")
-      copy("out/BOOTX64.EFI", "#{tree}/boot/BOOTX64.EFI")
+      copy("third_party/limine/bin/BOOTX64.EFI",
+           "#{tree}/boot/limine/BOOTX64.EFI")
+      copy("third_party/limine/bin/limine-bios.sys",
+           "#{tree}/boot/limine/limine-bios.sys")
+      run([@tools[:ruby], "tools/limine-bios-hdd.rb",
+           "third_party/limine/limine-bios-hdd.h",
+           "build/limine-bios-hdd.bin"])
+      copy("build/limine-bios-hdd.bin",
+           "#{tree}/boot/limine/limine-bios-hdd.bin")
       copy("initramfs/etc/motd", "#{tree}/etc/motd")
       copy("initramfs/etc/version", "#{tree}/etc/version")
       copy("initramfs/data/hello.txt", "#{tree}/data/HELLO.TXT")
@@ -352,24 +312,14 @@ module ZosNative
         objects << object
       end
       objects << "build/initramfs.o"
-      objects << "build/bios_stage1.o"
-      objects << "build/bios_stage2.o"
       run([@tools[:ld_lld], "-m", "elf_x86_64", "-T", "kernel/linker.ld",
            "-nostdlib", "-static", "--build-id=none",
            "-z", "max-page-size=0x1000", "-o", "out/kernel.elf", *objects])
     end
 
-    def copy_esp
-      FileUtils.cp(File.join(SRC, "out", "BOOTX64.EFI"),
-                   File.join(SRC, "esp/EFI/BOOT/BOOTX64.EFI"))
-      FileUtils.cp(File.join(SRC, "out", "OSLDRX64.efi"),
-                   File.join(SRC, "esp/EFI/BOOT/OSLDRX64.efi"))
-    end
-
     def report
       puts "native build: all"
-      %w[out/BOOTX64.EFI out/OSLDRX64.efi out/kernel.elf
-         out/initramfs.tar esp/EFI/BOOT/BOOTX64.EFI].each do |path|
+      %w[out/kernel.elf out/initramfs.tar].each do |path|
         size = File.size(File.join(SRC, path))
         puts format("  %-28s %8d bytes", path, size)
       end
@@ -483,7 +433,7 @@ module ZosNative
     end
 
     def clean
-      %w[build out esp].each do |dir|
+      %w[build out].each do |dir|
         FileUtils.rm_rf(File.join(SRC, dir))
       end
       puts "native build: clean"

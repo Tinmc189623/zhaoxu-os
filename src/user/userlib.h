@@ -78,6 +78,8 @@ typedef unsigned long long u64;
 #define SYS_REBOOT          69
 #define SYS_INSTALL_PROGRESS 70
 #define SYS_INSTALL_CONFIG  71
+#define SYS_FORK             72
+#define SYS_EXEC             73
 
 #define AF_UNIX      1
 #define SOCK_STREAM  1
@@ -254,6 +256,23 @@ static inline long sys_spawn_arg(const char *path, const char *argument)
 static inline long sys_wait(long pid, int *status)
 {
     return syscall3(SYS_WAIT, pid, (long)status, 0);
+}
+
+/* POSIX process control.  fork() returns 0 in the child and the new pid in
+ * the parent; execv() replaces the image and only returns on failure. */
+static inline long sys_fork(void)
+{
+    return syscall3(SYS_FORK, 0, 0, 0);
+}
+
+static inline long sys_execv(const char *path, char *const argv[])
+{
+    int argc = 0;
+    if (argv) {
+        while (argv[argc] && argc < 16)
+            argc++;
+    }
+    return syscall3(SYS_EXEC, (long)path, (long)argv, argc);
 }
 
 static inline long sys_port_listen(const char *name)

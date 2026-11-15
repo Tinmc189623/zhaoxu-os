@@ -102,6 +102,8 @@
 #define SYS_REBOOT          69
 #define SYS_INSTALL_PROGRESS 70
 #define SYS_INSTALL_CONFIG 71
+#define SYS_FORK            72
+#define SYS_EXEC            73
 
 #define BLK_SECTOR_BYTES 512u
 #define BLK_MAX_SECTORS  8u
@@ -207,6 +209,43 @@ static long syscall_spawn_arg(struct process *process, u64 path_pointer,
         return -1;
     char *argv[1] = {argument};
     return (long)process_spawn(path, 1, argv);
+}
+
+/* exec(path, NULL-terminated argv, argc).  Strings are copied into kernel
+ * memory first: process_exec() releases the old address space, so user
+ * pointers must not be read after the new image starts loading. */
+static long syscall_exec(struct process *process, struct interrupt_frame *frame,
+                         u64 path_pointer, u64 argv_pointer, u64 argc)
+{
+    char path[256];
+    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
+        return -1;
+
+    int count = (int)argc;
+    if (count < 0)
+        count = 0;
+    if (count > 16)
+        count = 16;
+
+    char arguments[16][128];
+    char *argv[16];
+    for (int i = 0; i < count; i++) {
+        u64 string_pointer = 0;
+        if (!argv_pointer)
+            return -1;
+        if (user_range_ok(process, argv_pointer + (u64)i * 8,
+                          sizeof(u64)) != 1)
+            return -1;
+        memcpy(&string_pointer,
+               (const void *)(uintptr_t)(argv_pointer + (u64)i * 8),
+               sizeof(u64));
+        if (!string_pointer ||
+            copy_user_string(process, arguments[i], sizeof(arguments[i]),
+                             string_pointer) != 0)
+            return -1;
+        argv[i] = arguments[i];
+    }
+    return process_exec(frame, path, count, argv);
 }
 
 static long syscall_wait(struct process *process, u64 pid, u64 status_pointer)
@@ -890,6 +929,13 @@ void syscall_dispatch(struct interrupt_frame *frame)
         break;
     case SYS_WAIT:
         result = syscall_wait(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_FORK:
+        result = process_fork(frame);
+        break;
+    case SYS_EXEC:
+        result = syscall_exec(process, frame, frame->rdi, frame->rsi,
+                              frame->rdx);
         break;
     case SYS_PORT_LISTEN:
         result = syscall_port_listen(process, frame->rdi);

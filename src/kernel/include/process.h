@@ -23,6 +23,12 @@ int process_wait(u64 pid, int *status);
 int process_run(const char *path, int argc, char **argv);
 int process_run_image(const u8 *image, u64 size, const char *name,
                       int argc, char **argv);
+/* POSIX fork/exec: fork copies the caller and resumes the child after the
+ * syscall with rax=0; exec replaces the caller's image and rewrites the
+ * interrupt frame so the syscall returns at the new entry point. */
+long process_fork(struct interrupt_frame *frame);
+long process_exec(struct interrupt_frame *frame, const char *path,
+                  int argc, char **argv);
 u64 process_self_pid(void);
 struct address_space *process_current_space(void);
 int process_active(void);

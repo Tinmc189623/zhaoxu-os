@@ -10,7 +10,7 @@
 
 [🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
-**Current version: 0.7.1 「Yuanshuo」, kernel 0.7.1, build 10**. Version history in [CHANGELOG.md](CHANGELOG.md)
+**Current version: 0.7.1 「Yuanshuo」, kernel 0.7.1, build 11**. Version history in [CHANGELOG.md](CHANGELOG.md)
 
 </div>
 
@@ -23,6 +23,8 @@
 ## ✨ What's in 0.7.1
 
 ### 🚀 0.7.1 fixes and improvements
+- Process control: `SYS_FORK` (72) and `SYS_EXEC` (73) bring POSIX fork/exec to Ring3. `fork()` copies the caller's pages and zfd descriptors; the child resumes after `int 0x80` with `rax=0`. `exec()` loads a ZXE/ELF image into a fresh address space, switches CR3, releases the old pages and rewrites the interrupt frame. `FE_BOOT_TEST=1` forks, reaps the child (status 7), then execs `HELLO.ZXE`
+- The pre-Limine boot manager and its Ruby helpers are archived under `archive/boot-legacy/`; nothing there is built or installed, which keeps the tree free of two competing boot paths
 - The Makefile is the only build entry point and Ruby handles auxiliary scripts only; Windows runs `make` inside WSL2 by default
 - Window content is inset and the title bar avoids the rounded corners, fixing content that bled over the window radius; initial windows sit side by side
 - The live ISO uses the rule 33 wallpaper directly, and the menu bar is translucent
