@@ -1,0 +1,24 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# x86_64-elf-gcc -- Ruby compiler shim for the newlib/ncurses/nano ports.
+#
+# Rewrites the fixed precisions and sysroot paths, then execs clang.  Keeping
+# this as Ruby (instead of a shell script) is project rule 6.
+
+home = Dir.home
+repo = File.expand_path("..", __dir__)
+newlib = File.join(home, "newlib", "install", "x86_64-elf")
+support = File.join(home, "zosgloss", "libgloss.a")
+resource = "/usr/lib/llvm-21/lib/clang/21/include"
+
+exec "clang",
+     "--target=x86_64-unknown-elf", "-fPIC", "-ffreestanding",
+     "-fno-builtin", "-fno-stack-protector",
+     "-fno-asynchronous-unwind-tables", "-mno-red-zone",
+     "-nostdinc", "-isystem", resource,
+     "-isystem", File.join(repo, "user", "lib", "posix", "include"),
+     "-isystem", File.join(newlib, "include"),
+     "-L#{newlib}/lib",
+     "-Wl,-e,main", "-nostartfiles", *ARGV,
+     "-Wl,--start-group", support, "-lc", "-lm", "-Wl,--end-group"

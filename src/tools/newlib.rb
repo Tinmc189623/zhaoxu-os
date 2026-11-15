@@ -38,7 +38,9 @@ def check
 end
 
 def write_wrapper(path, body)
-  File.write(path, "#!/bin/sh\n#{body}\n")
+  # Repository scripts are Ruby (project rule 6), including the compiler
+  # shims autoconf insists on calling by name.
+  File.write(path, "#!/usr/bin/env ruby\n#{body}\n")
   File.chmod(0o755, path)
 end
 
@@ -65,15 +67,19 @@ def wrappers
   bin = File.join(WORK, "xbin")
   FileUtils.mkdir_p(bin)
   write_wrapper(File.join(bin, "x86_64-elf-gcc"),
-                "exec clang --target=x86_64-unknown-elf -ffreestanding " \
-                "-fno-builtin -fuse-ld=lld -Wl,-e,main \"$@\"")
+                'exec "clang", "--target=x86_64-unknown-elf", ' \
+                '"-ffreestanding", "-fno-builtin", "-fuse-ld=lld", ' \
+                '"-Wl,-e,main", *ARGV')
   FileUtils.cp(File.join(bin, "x86_64-elf-gcc"),
                File.join(bin, "x86_64-elf-cc"))
   write_wrapper(File.join(bin, "x86_64-elf-as"),
-                "exec clang --target=x86_64-unknown-elf -c -x assembler \"$@\"")
-  write_wrapper(File.join(bin, "x86_64-elf-ar"), "exec llvm-ar-21 \"$@\"")
-  write_wrapper(File.join(bin, "x86_64-elf-ranlib"), "exec llvm-ranlib-21 \"$@\"")
-  write_wrapper(File.join(bin, "x86_64-elf-objcopy"), "exec llvm-objcopy-21 \"$@\"")
+                'exec "clang", "--target=x86_64-unknown-elf", "-c", ' \
+                '"-x", "assembler", *ARGV')
+  write_wrapper(File.join(bin, "x86_64-elf-ar"), 'exec "llvm-ar-21", *ARGV')
+  write_wrapper(File.join(bin, "x86_64-elf-ranlib"),
+                'exec "llvm-ranlib-21", *ARGV')
+  write_wrapper(File.join(bin, "x86_64-elf-objcopy"),
+                'exec "llvm-objcopy-21", *ARGV')
 end
 
 def build
