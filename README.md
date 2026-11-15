@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/logo.svg" width="96" height="96" alt="Zhaoxu OS logo">
+
 # 🖥️ Zhaoxu OS
 
 ### Yuanshuo, Aqua Desktop Environment, x86_64
@@ -10,7 +12,7 @@
 
 [🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
-**Current version: 0.7.1 「Yuanshuo」, kernel 0.7.1, build 19**. Version history in [CHANGELOG.md](CHANGELOG.md)
+**Current version: 0.7.1 「Yuanshuo」, kernel 0.7.1, build 20**. Version history in [CHANGELOG.md](CHANGELOG.md)
 
 </div>
 

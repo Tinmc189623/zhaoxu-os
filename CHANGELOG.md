@@ -2,6 +2,12 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 build 20
+
+### Logo
+- Added the Zhaoxu OS logo as SVG at `src/apps/ADE/web/logo/zhaoxu-logo.svg`, with a 512x512 raster preview at `docs/logo.png`. It is a flat two-tone Aqua water drop with a single white highlight: solid fills only, no gradients, no circuitry or other decoration.
+- The same SVG is packaged in the initramfs at `/usr/share/logo/zhaoxu-logo.svg` and shown at the top of README.md.
+
 ## 0.7.1 「Yuanshuo」 build 19
 
 ### Color channel fix
