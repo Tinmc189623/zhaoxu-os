@@ -190,9 +190,15 @@ int dwc_cursor_animate(void)
     return current_frame() != g_last_frame;
 }
 
-/* Put the pixels under the previous cursor back into the back buffer. */
+/* Restore pixels only in direct mode (g_back == g_screen).  In buffered mode
+ * the cursor never touches the back buffer, so there is nothing to restore. */
 void dwc_cursor_restore(void)
 {
+    if (g_back && g_back != g_screen) {
+        g_cursor_saved = 0;
+        g_cursor_in_buffer = 0;
+        return;
+    }
     if (g_cursor_theme_ready && g_cursor) {
         if (g_cursor_saved) {
             render_image_copy(g_save_pixels, g_save_w, g_save_h,
@@ -208,6 +214,8 @@ void dwc_cursor_restore(void)
     }
 }
 
+/* Draw the cursor into the current render target, saving what it covers only
+ * in direct mode. */
 void dwc_cursor_draw(int x, int y)
 {
     if (!g_cursor_theme_ready || !g_cursor) {
@@ -215,25 +223,43 @@ void dwc_cursor_draw(int x, int y)
         g_cursor_in_buffer = 1;
         return;
     }
-    if (g_cursor_saved)
-        dwc_cursor_restore();
     int index = current_frame();
     const struct cursor_frame *frame = &g_cursor->frames[index];
     int left = x - g_cursor->hotspot_x;
     int top = y - g_cursor->hotspot_y;
-    save_background(left, top, frame->width, frame->height);
+    if (!g_back || g_back == g_screen)
+        save_background(left, top, frame->width, frame->height);
     render_image_blend(frame->pixels, frame->width, frame->height,
                        left, top);
     g_last_frame = index;
     g_cursor_in_buffer = 1;
 }
 
+/* Composite the pointer directly onto the framebuffer.  The system-RAM back
+ * buffer stays cursor-free, so erasing the old pointer is one clean blit of
+ * the previous rectangle from that buffer.  This removes the cursor from the
+ * paint/damage path and stops window repaints from flashing the pointer. */
 void dwc_present_cursor(int x, int y)
 {
     struct render_rect current = cursor_rect(x, y);
-    if (g_cursor_presented)
-        dwc_present(g_present_rect);
-    dwc_present(current);
+    if (g_cursor_presented) {
+        if (g_back && g_back != g_screen)
+            dwc_present(g_present_rect);
+        else
+            dwc_cursor_restore();
+    }
+
+    if (g_back && g_back != g_screen) {
+        struct render_surface *previous = render_target();
+        render_set_target(g_screen);
+        render_set_clip(render_rect_make(0, 0, g_screen->width,
+                                         g_screen->height));
+        dwc_cursor_draw(x, y);
+        render_set_target(previous);
+    } else {
+        dwc_cursor_draw(x, y);
+    }
+
     g_present_rect = current;
     g_cursor_presented = 1;
     g_cursor_x = x;
@@ -242,11 +268,15 @@ void dwc_present_cursor(int x, int y)
 
 void dwc_hide_cursor(void)
 {
-    dwc_cursor_restore();
-    if (g_cursor_presented) {
-        dwc_present(g_present_rect);
-        g_cursor_presented = 0;
+    if (!g_cursor_presented) {
+        dwc_cursor_restore();
+        return;
     }
+    if (g_back && g_back != g_screen)
+        dwc_present(g_present_rect);
+    else
+        dwc_cursor_restore();
+    g_cursor_presented = 0;
 }
 
 int dwc_cursor_presented(void)

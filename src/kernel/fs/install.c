@@ -29,9 +29,11 @@
 #define CHUNK_SECTORS 8
 #define CHUNK_BYTES (CHUNK_SECTORS * SECTOR_SIZE)
 
-#define ESP_MAX_SECTORS 131072u        /* 64 MiB */
+#define ESP_DEFAULT_SECTORS 131072u    /* 64 MiB, the automatic layout */
+#define ESP_MAX_SECTORS 524288u        /* 256 MiB, custom layout */
 #define ESP_MIN_SECTORS 70000u         /* FAT32 needs >= 65525 clusters */
-#define EXT4_MIN_SECTORS 32768u        /* room for kernel + CJK font */
+#define EXT4_MIN_SECTORS 65536u        /* 32 MiB: kernel + font + wallpaper */
+#define DATA_MIN_SECTORS 131072u       /* 64 MiB FAT32 data volume */
 /* The legacy BIOS stage 2 stages the flat kernel into the low buffer below
  * the EBDA; keep this in sync with MAX_KERNEL_BYTES in bios_stage2.asm and
  * tools/kernel-flat.rb. */
@@ -73,6 +75,11 @@ static const u8 g_guid_part[16] = {
 static const u8 g_guid_root[16] = {
     0xAF, 0x3D, 0xC6, 0x0F, 0x84, 0x83, 0x72, 0x47,
     0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4
+};
+/* Microsoft basic data, used for the optional FAT32 ZHAOXUDATA partition. */
+static const u8 g_guid_data[16] = {
+    0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x43, 0x33,
+    0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7
 };
 
 extern const u8 bios_stage1_start[];
@@ -379,7 +386,7 @@ static void mbr_entry(u8 *entry, u8 type, u64 start, u32 sectors)
 }
 
 static int write_mbr(int target, u64 total, u32 esp_sectors,
-                     u32 root_sectors, int gpt)
+                     u32 root_sectors, u64 data_sectors, int gpt)
 {
     memset(g_sector, 0, SECTOR_SIZE);
     memcpy(g_sector, g_stage1, 446);
@@ -401,8 +408,12 @@ static int write_mbr(int target, u64 total, u32 esp_sectors,
     } else {
         mbr_entry(entry, 0xEF, INSTALL_PARTITION_LBA, esp_sectors);
         entry[0] = 0x80;
-        mbr_entry(entry + 16, 0x83,
-                  (u64)INSTALL_PARTITION_LBA + esp_sectors, root_sectors);
+        u64 root_start = (u64)INSTALL_PARTITION_LBA + esp_sectors;
+        mbr_entry(entry + 16, 0x83, root_start, root_sectors);
+        if (data_sectors) {
+            mbr_entry(entry + 32, 0x0C, root_start + root_sectors,
+                      data_sectors);
+        }
     }
     g_sector[510] = 0x55;
     g_sector[511] = 0xAA;
@@ -440,11 +451,13 @@ static int write_gpt_header(int disk, u64 lba, u64 current, u64 backup,
     return block_disk_write(disk, lba, 1, g_sector);
 }
 
-static int write_gpt(int disk, u64 total, u32 esp_sectors, u32 root_sectors)
+static int write_gpt(int disk, u64 total, u32 esp_sectors, u32 root_sectors,
+                     u64 data_sectors)
 {
     u64 esp_start = INSTALL_PARTITION_LBA;
     u64 esp_end = esp_start + esp_sectors - 1;
-    u64 data_start = esp_end + 1;
+    u64 root_start = esp_end + 1;
+    u64 root_end = root_start + root_sectors - 1;
 
     memset(g_gpt_entries, 0, sizeof(g_gpt_entries));
     gpt_entry(g_gpt_entries, g_guid_bios, g_guid_part, GPT_BIOS_START,
@@ -452,7 +465,11 @@ static int write_gpt(int disk, u64 total, u32 esp_sectors, u32 root_sectors)
     gpt_entry(g_gpt_entries + GPT_ENTRY_SIZE, g_guid_esp, g_guid_part,
               esp_start, esp_end);
     gpt_entry(g_gpt_entries + 2 * GPT_ENTRY_SIZE, g_guid_root, g_guid_part,
-              data_start, data_start + root_sectors - 1);
+              root_start, root_end);
+    if (data_sectors) {
+        gpt_entry(g_gpt_entries + 3 * GPT_ENTRY_SIZE, g_guid_data,
+                  g_guid_part, root_end + 1, root_end + data_sectors);
+    }
 
     u32 entries_crc = crc32(g_gpt_entries, sizeof(g_gpt_entries));
     u64 backup_entries = total - GPT_BACKUP_SECTORS;
@@ -488,7 +505,7 @@ static int read_stage1_verify(int disk)
  * state: one SYNC commits the chunks already sent and restores the volume
  * that was mounted before the install (ext4fs does the restore on SYNC).
  * The three heap buffers are freed in exactly one place each. */
-int install_run(int target_disk, int gpt,
+int install_run(int target_disk, int gpt, const struct install_layout *layout,
                 void (*progress)(void *context, u32 done, u32 total),
                 void *context)
 {
@@ -524,24 +541,43 @@ int install_run(int target_disk, int gpt,
     }
     u64 usable = total - INSTALL_PARTITION_LBA -
                  (gpt ? GPT_BACKUP_SECTORS : 0);
-    if (usable < ESP_MIN_SECTORS + EXT4_MIN_SECTORS) {
-        set_error("target disk is too small");
+    u64 data_sectors = layout ? layout->data_sectors : 0;
+    u32 esp_sectors = layout ? layout->esp_sectors : ESP_DEFAULT_SECTORS;
+
+    if (layout) {
+        if (esp_sectors < ESP_MIN_SECTORS || esp_sectors > ESP_MAX_SECTORS) {
+            set_error("ESP size is outside 34..256 MiB");
+            return -1;
+        }
+        if (data_sectors && data_sectors < DATA_MIN_SECTORS) {
+            set_error("data partition must be at least 64 MiB");
+            return -1;
+        }
+        if (data_sectors > 0xFFFFFFFFULL) {
+            set_error("data partition exceeds the FAT32 sector range");
+            return -1;
+        }
+    }
+    if (usable < ESP_MIN_SECTORS + EXT4_MIN_SECTORS + data_sectors) {
+        set_error("target disk is too small for this layout");
         return -1;
     }
-    u32 esp_sectors = ESP_MAX_SECTORS;
-    if ((u64)esp_sectors > usable - EXT4_MIN_SECTORS)
+    if (!layout && (u64)esp_sectors > usable - EXT4_MIN_SECTORS)
         esp_sectors = (u32)(usable - EXT4_MIN_SECTORS);
-    u64 root_sectors_wide = usable - esp_sectors;
+    u64 root_sectors_wide = usable - esp_sectors - data_sectors;
     if (root_sectors_wide > 0xFFFFFFFFULL) {
         set_error("root partition exceeds the ext4 sector range");
         return -1;
     }
     u32 root_sectors = (u32)root_sectors_wide;
     u64 root_lba = INSTALL_PARTITION_LBA + esp_sectors;
-    kprintf("[install] esp %u sectors, ext4 root %u sectors @ %llu "
-            "(target %llu sectors, %s)\n",
+    u64 data_lba = root_lba + root_sectors;
+    kprintf("[install] esp %u sectors, ext4 root %u sectors @ %llu, "
+            "data %llu sectors @ %llu (target %llu sectors, %s)\n",
             esp_sectors, root_sectors, (unsigned long long)root_lba,
-            (unsigned long long)total, gpt ? "GPT" : "MBR");
+            (unsigned long long)data_sectors,
+            (unsigned long long)data_lba, (unsigned long long)total,
+            gpt ? "GPT" : "MBR");
 
     const struct boot_info *bi = boot_get_info();
     const u8 *kernel = (const u8 *)(uintptr_t)bi->kernel_phys_base;
@@ -627,10 +663,10 @@ int install_run(int target_disk, int gpt,
         }
     }
 
-    /* Nine coarse stages: format, kernel, assets, MBR, stage2, gap, ESP,
-     * verify and flush.  Report before the long format so the UI can show a
-     * real denominator instead of an indeterminate 0/1. */
-    u32 steps = 9;
+    /* Coarse stages: format, kernel, assets, MBR, stage2, gap, ESP,
+     * optional data format, verify and flush.  Report before the long format
+     * so the UI can show a real denominator instead of an indeterminate 0/1. */
+    u32 steps = data_sectors ? 10 : 9;
     u32 step = 0;
     if (progress)
         progress(context, step, steps);
@@ -729,7 +765,8 @@ int install_run(int target_disk, int gpt,
         goto fail;
     }
 
-    if (write_mbr(target_disk, total, esp_sectors, root_sectors, gpt) != 0) {
+    if (write_mbr(target_disk, total, esp_sectors, root_sectors,
+                  data_sectors, gpt) != 0) {
         set_error("failed to write the MBR");
         goto fail;
     }
@@ -743,8 +780,8 @@ int install_run(int target_disk, int gpt,
     if (progress)
         progress(context, step, steps);
 
-    if (gpt && write_gpt(target_disk, total, esp_sectors,
-                         root_sectors) != 0) {
+    if (gpt && write_gpt(target_disk, total, esp_sectors, root_sectors,
+                         data_sectors) != 0) {
         set_error("failed to write the GPT");
         goto fail;
     }
@@ -775,6 +812,17 @@ int install_run(int target_disk, int gpt,
     if (progress)
         progress(context, step, steps);
 
+    if (data_sectors) {
+        if (fat32_format_volume(target_disk, data_lba, (u32)data_sectors,
+                                "ZHAOXUDATA") != 0) {
+            set_error("failed to format the FAT32 data partition");
+            goto fail;
+        }
+        step++;
+        if (progress)
+            progress(context, step, steps);
+    }
+
     if (read_stage1_verify(target_disk) != 0) {
         set_error("verification failed: bootloader MBR differs");
         goto fail;
@@ -790,6 +838,14 @@ int install_run(int target_disk, int gpt,
         super[0x38] != 0x53 || super[0x39] != 0xEF) {
         set_error("verification failed: root partition is not ext4");
         goto fail;
+    }
+    if (data_sectors) {
+        if (block_disk_read(target_disk, data_lba, 1, g_sector) != 0 ||
+            memcmp(g_sector + 82, "FAT32   ", 8) != 0 ||
+            memcmp(g_sector + 71, "ZHAOXUDATA", 10) != 0) {
+            set_error("verification failed: data partition is not FAT32");
+            goto fail;
+        }
     }
     step++;
     if (progress)

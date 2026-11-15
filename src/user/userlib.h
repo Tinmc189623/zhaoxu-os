@@ -77,6 +77,7 @@ typedef unsigned long long u64;
 #define SYS_INSTALL_ERROR   68
 #define SYS_REBOOT          69
 #define SYS_INSTALL_PROGRESS 70
+#define SYS_INSTALL_CONFIG  71
 
 #define AF_UNIX      1
 #define SOCK_STREAM  1
@@ -598,6 +599,21 @@ static inline long sys_install_progress(long target, long gpt,
 {
     return syscall4(SYS_INSTALL_PROGRESS, target, gpt, (long)progress,
                     sizeof(*progress));
+}
+
+/* Custom partition layout for SYS_INSTALL_CONFIG; sizes are in MiB. */
+struct zos_install_config {
+    unsigned long target;
+    unsigned long gpt;
+    struct zos_install_progress *progress;
+    unsigned long progress_capacity;
+    unsigned long esp_mib;
+    unsigned long data_mib;
+};
+
+static inline long sys_install_config(struct zos_install_config *config)
+{
+    return syscall3(SYS_INSTALL_CONFIG, (long)config, 0, 0);
 }
 
 /* Reboot the machine (keyboard-controller reset with a triple-fault fallback). */

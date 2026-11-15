@@ -10,7 +10,7 @@
 
 [🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) · [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) · [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) · [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
-**Current version: 0.7.1 「Yuanshuo」 · kernel 0.7.1 · build 8** · version history in [CHANGELOG.md](CHANGELOG.md)
+**Current version: 0.7.1 「Yuanshuo」 · kernel 0.7.1 · build 9** · version history in [CHANGELOG.md](CHANGELOG.md)
 
 </div>
 
@@ -40,6 +40,9 @@
 - FreeType 2.13.3 is vendored under `third_party/freetype` and backs the Ring3 desktop font adapter. `make out/ft_test.zxe` loads the boot font and rasterizes U+4E2D; `FT_BOOT_TEST=1` with `out/data.img` prints `[ft] FreeType PASS` and exits 0
 - Installer: the graphical flow is Windows-like. It finds blank or previous Zhaoxu disks, auto-selects a single target, asks for one confirmation, defaults to GPT and keeps MBR behind an advanced toggle. The write runs in a worker child; the UI paints real **written stage N / 9** progress from a shared page. A refresh button rescans disks, failures show the kernel's actual reason through `SYS_INSTALL_ERROR` (68), and the done screen offers "立即重启" through `SYS_REBOOT` (69). The UEFI install writes both `BOOTX64.EFI` and `OSLDRX64.EFI` into the ESP; a blank 256 MiB disk was installed through real mouse clicks and then booted to Aqua Desktop Environment
 - Installer hardening: targets over 2 TiB, root partitions outside the ext4 32-bit range, oversized kernel/loader/font/wallpaper blobs and a flat kernel above `0x8F000` bytes are rejected. An MBR install also clears the stale backup GPT at the end of the disk
+- Custom partitioning: the installer's "自定义分区" screen cycles the FAT32 ESP through 64/128/256 MiB and adds an optional 64/128/256 MiB FAT32 `ZHAOXUDATA` data partition; the ext4 system partition takes the rest. `SYS_INSTALL_CONFIG` (71) carries the layout to the kernel, which writes the third MBR/GPT entry, formats the data volume and verifies its label. The installed system mounts the data partition at `/media/<n>`
+- Cursor and flicker: the pointer is no longer drawn into the system-RAM back buffer. The compositor keeps the back buffer cursor-free, erases the old pointer with one blit and composites the new pointer directly onto the framebuffer; the DWM loop runs at 250 Hz instead of 1 kHz. Button text is centred with server-side UTF-8 measurement rather than byte counts
+- Fixed the GPT/partition scanner rejecting any volume whose start sector exceeded its own length, which hid late data partitions from `/media` probing
 - OpenGL: a software **OpenGL 1.1 immediate-mode implementation** lives in `src/user/lib/opengl`. Matrix stacks, ortho/frustum projections, all `glBegin/glEnd` primitives, near-plane clipping, perspective divide, flat and Gouraud colours, a 16-bit depth test, CCW culling, `glReadPixels`, RGBA textures with nearest/bilinear filtering, `GL_LIGHT0..7` per-vertex lighting and materials, alpha blending, alpha test and scissor clipping all work. `GL_BOOT_TEST=1` prints `[gl ] OpenGL PASS`. Display lists, evaluators, fog, selection/feedback, extensions and shaders are still absent
 - Vulkan: a **software Vulkan 1.0 ICD** lives in `src/user/lib/vulkan`, with the Khronos headers under `third_party/vulkan-headers`. It implements instance/device/queue creation, host-visible memory, buffers, RGBA8 images, render passes, framebuffers, graphics pipelines, command buffers, fences, a real SPIR-V 1.0 interpreter and a CPU triangle rasterizer. `VK_BOOT_TEST=1` creates a real pipeline, renders a triangle into a 64x64 image, maps it back and prints `[vk ] Vulkan PASS`. There is no WSI/swapchain, descriptor sets/UBOs, compute, depth/stencil, MSAA, semaphores or GPU path yet, and the desktop still uses the ZOS raster renderer, so rules 37/38 remain open
 - Desktop protocol: `ADE_TEXT_MAX` grows to 160 bytes with UTF-8-safe truncation and `IPC_MSG_MAX` to 256, so long Chinese warnings are no longer cut mid-codepoint
@@ -91,7 +94,7 @@
 
 ## 📸 Screenshots
 
-> The ten images below were captured from the framebuffer by `tools/screenshot.rb` after a real boot under QEMU + OVMF at **1920×1080**; they are not drawn mock-ups. Some screens come from 0.5.0 and earlier (kept to show hardware, font, and desktop behavior), and command names follow 8sh in the current release.
+> The ten images below were captured from the framebuffer by `tools/screenshot.rb` after a real boot under QEMU + OVMF at **1920×1080**; the newest four are stored at 1600×900 to keep the repository small. They are not drawn mock-ups. The shell, editor, disk-list and font-test screens come from 0.5.0 and earlier (kept to show hardware and font behavior); the desktop, application and installer screenshots are from the current build.
 
 <table>
 <tr>
@@ -122,31 +125,31 @@
 <td width="50%" align="center">
 <img src="docs/shot-disks.png" width="100%" alt="Disk roles">
 <br><b>🗄️ Disks and roles</b><br>
-<sub><code>disks</code>: ZHAOXUDATA data partition / ZHAOXUEFI ESP / blank target disk</sub>
+<sub><code>disks</code> from an earlier release: ZHAOXUDATA data partition / ZHAOXUEFI ESP / blank target disk</sub>
 </td>
 <td width="50%" align="center">
 <img src="docs/shot-install.png" width="100%" alt="Installer">
 <br><b>📥 Installer</b><br>
-<sub><code>install</code>: writes MBR/GPT + FAT32 ESP + ZHAOXUDATA to the target disk and verifies it</sub>
+<sub>Target disk list, automatic or custom layout, one confirmation, real stage progress, reboot action</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" align="center">
-<img src="docs/shot-desktop.png" width="100%" alt="Aqua desktop and terminal">
+<img src="docs/shot-desktop.png" width="100%" alt="Aqua desktop">
 <br><b>🎨 Aqua Desktop Environment · Aqua</b><br>
-<sub>Menu bar, windows, Dock, software cursor; a real neofetch running in the terminal</sub>
+<sub>Menu bar, welcome window, calculator, Dock and the compositor cursor on a real 1920×1080 boot</sub>
 </td>
 <td width="50%" align="center">
 <img src="docs/shot-desktop-apps.png" width="100%" alt="Desktop applications">
 <br><b>🧮 Native desktop applications</b><br>
-<sub>Welcome, notes, monitor, calculator; TrueType Chinese typesetting</sub>
+<sub>Welcome and calculator ADE clients next to the completed graphical installer; TrueType Chinese typesetting</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" align="center">
 <img src="docs/shot-desktop-install.png" width="100%" alt="Graphical installer">
-<br><b>💿 Graphical installer</b><br>
-<sub>Detects the install source and target disk, writes after confirmation, boots under UEFI/BIOS</sub>
+<br><b>💿 Graphical installer · custom partitions</b><br>
+<sub>Adjustable EFI and optional FAT32 ZHAOXUDATA data partition; the ext4 system partition follows automatically</sub>
 </td>
 <td width="50%" align="center">
 <img src="docs/shot-fonttest.png" width="100%" alt="TrueType glyphs">

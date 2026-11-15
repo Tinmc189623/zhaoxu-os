@@ -34,6 +34,7 @@ struct target_disk {
 
 enum install_state {
     STATE_SELECT = 0,
+    STATE_LAYOUT,
     STATE_CONFIRM,
     STATE_INSTALLING,
     STATE_DONE,
@@ -46,11 +47,16 @@ static int g_target_count;
 static int g_selected;
 static int g_gpt = 1;
 static int g_advanced;
+static int g_custom;
+static unsigned long g_esp_mib = 64;
+static unsigned long g_data_mib;
 static enum install_state g_state;
 static char g_error[160];
 static struct zos_install_progress *g_progress;
 static long g_progress_id;
 static long g_worker_pid;
+
+static void layout_clamp(void);
 
 static unsigned long parse_uint(const char *text, const char **end_out)
 {
@@ -145,6 +151,7 @@ static int refresh_disks(void)
         count = (long)sizeof(g_disks) - 1;
     g_disks[count] = 0;
     parse_targets(g_disks);
+    layout_clamp();
     return g_target_count;
 }
 
@@ -196,13 +203,135 @@ static void draw_button(long channel, int x, int y, int w, int h, u32 color,
                         const char *text)
 {
     ade_round(channel, x, y, w, h, 10, color);
-    int width = text_length(text) * 7;
-    ade_text(channel, x + (w - width) / 2, y + 16, 0xFFFFFF, text);
+    /* Let the server measure UTF-8 text; counting bytes mis-centres CJK. */
+    ade_text_flags(channel, x + w / 2, y + 16, 0xFFFFFF, ADE_TEXT_CENTER,
+                   text);
 }
 
 static int target_row_y(int index)
 {
     return 124 + index * 44;
+}
+
+/* Estimated ext4 root size after the 64 MiB boot overhead. */
+static unsigned long layout_root_mib(void)
+{
+    unsigned long disk = g_targets[g_selected].mib;
+    unsigned long used = 4 + g_esp_mib + g_data_mib;
+    return disk > used ? disk - used : 0;
+}
+
+/* Clamp custom sizes to the selected disk (64 MiB minimum root). */
+static void layout_clamp(void)
+{
+    if (g_target_count <= 0)
+        return;
+    unsigned long disk = g_targets[g_selected].mib;
+    if (g_data_mib && disk < g_esp_mib + g_data_mib + 68)
+        g_data_mib = 0;
+    if (disk > 68)
+        g_esp_mib = 64;
+}
+
+/* Cycle the ESP size through 64/128/256 MiB when the disk can hold it. */
+static void cycle_esp(void)
+{
+    unsigned long options[3] = {64, 128, 256};
+    unsigned long disk = g_targets[g_selected].mib;
+    int current = 0;
+    for (int i = 0; i < 3; i++)
+        if (options[i] == g_esp_mib)
+            current = i;
+    for (int step = 1; step <= 3; step++) {
+        unsigned long value = options[(current + step) % 3];
+        if (disk >= value + g_data_mib + 68) {
+            g_esp_mib = value;
+            return;
+        }
+    }
+}
+
+/* Cycle the optional FAT32 data partition through 0/64/128/256 MiB. */
+static void cycle_data(void)
+{
+    unsigned long options[4] = {0, 64, 128, 256};
+    unsigned long disk = g_targets[g_selected].mib;
+    int current = 0;
+    for (int i = 0; i < 4; i++)
+        if (options[i] == g_data_mib)
+            current = i;
+    for (int step = 1; step <= 4; step++) {
+        unsigned long value = options[(current + step) % 4];
+        if (value == 0 || disk >= g_esp_mib + value + 68) {
+            g_data_mib = value;
+            return;
+        }
+    }
+}
+
+/* One partition row: name on the left, filesystem and size on the right. */
+static void draw_layout_row(long channel, int y, const char *name,
+                            const char *detail, int clickable)
+{
+    ade_round(channel, 24, y, 572, 40, 8, COLOR_ROW);
+    ade_text(channel, 38, y + 11, COLOR_DARK, name);
+    ade_text_flags(channel, 570, y + 11, clickable ? COLOR_BLUE : COLOR_GRAY,
+                   ADE_TEXT_RIGHT, detail);
+    if (clickable)
+        ade_cursor(channel, 24, y, 572, 40, "hand");
+}
+
+static void draw_layout(long channel)
+{
+    ade_clear(channel, COLOR_PANEL);
+    ade_fill(channel, 0, 0, WINDOW_W, 72, COLOR_BLUE);
+    ade_text(channel, 24, 16, 0xFFFFFF, "自定义磁盘分区");
+    ade_text(channel, 24, 44, 0xD9ECFF,
+             "系统 ext4，引导/数据区 FAT32。点击行调整。");
+
+    char disk[128];
+    target_label(disk, sizeof(disk), g_selected);
+    ade_text(channel, 24, 88, COLOR_DARK, disk);
+
+    char detail[64];
+    int at = 0;
+    detail[0] = 0;
+    append_text(detail, sizeof(detail), &at, "FAT32 · ");
+    append_uint(detail, sizeof(detail), &at, g_esp_mib);
+    append_text(detail, sizeof(detail), &at, " MB · 点击切换");
+    draw_layout_row(channel, 120, "EFI 系统分区", detail, 1);
+
+    unsigned long root = layout_root_mib();
+    at = 0;
+    detail[0] = 0;
+    append_text(detail, sizeof(detail), &at, "ext4 · ");
+    append_uint(detail, sizeof(detail), &at, root);
+    append_text(detail, sizeof(detail), &at, " MB · 自动");
+    draw_layout_row(channel, 168, "系统分区", detail, 0);
+
+    at = 0;
+    detail[0] = 0;
+    if (g_data_mib) {
+        append_text(detail, sizeof(detail), &at, "FAT32 · ");
+        append_uint(detail, sizeof(detail), &at, g_data_mib);
+        append_text(detail, sizeof(detail), &at, " MB · 点击切换");
+    } else {
+        append_text(detail, sizeof(detail), &at, "无 · 点击添加");
+    }
+    draw_layout_row(channel, 216, "数据分区", detail, 1);
+
+    ade_text(channel, 24, 270, COLOR_GRAY,
+             g_gpt ? "分区表：GPT" : "分区表：MBR（兼容）");
+    if (root < 64)
+        ade_text(channel, 24, 294, COLOR_RED,
+                 "空间不足：系统分区至少保留 64 MB，请减小数据分区。");
+
+    draw_button(channel, 24, 330, 240, 52, COLOR_BLUE, "应用布局");
+    ade_cursor(channel, 24, 330, 240, 52, "hand");
+    ade_round(channel, 284, 330, 180, 52, 10, 0xDCE6EF);
+    ade_text(channel, 330, 346, COLOR_DARK, "取消");
+    ade_cursor(channel, 284, 330, 180, 52, "hand");
+    ade_commit(channel);
 }
 
 static void draw_select(long channel)
@@ -234,6 +363,24 @@ static void draw_select(long channel)
                      "还有更多磁盘，请断开多余磁盘后重试。");
     }
 
+    if (g_target_count > 0) {
+        char summary[96];
+        int at = 0;
+        summary[0] = 0;
+        append_text(summary, sizeof(summary), &at, "布局：ESP ");
+        append_uint(summary, sizeof(summary), &at, g_esp_mib);
+        append_text(summary, sizeof(summary), &at, " MB · 系统 ");
+        append_uint(summary, sizeof(summary), &at, layout_root_mib());
+        append_text(summary, sizeof(summary), &at, " MB · 数据 ");
+        if (g_data_mib)
+            append_uint(summary, sizeof(summary), &at, g_data_mib);
+        else
+            append_text(summary, sizeof(summary), &at, "无");
+        if (g_data_mib)
+            append_text(summary, sizeof(summary), &at, " MB");
+        ade_text(channel, 24, 286, COLOR_GRAY, summary);
+    }
+
     ade_text(channel, 24, 318, COLOR_DARK, "分区方案");
     ade_text(channel, 130, 318, COLOR_GRAY,
              g_gpt ? "自动 · GPT（推荐）" : "自动 · MBR（兼容）");
@@ -248,12 +395,15 @@ static void draw_select(long channel)
     }
 
     if (g_target_count > 0) {
-        draw_button(channel, 24, 350, 260, 52, COLOR_BLUE, "安装 Zhaoxu OS");
-        ade_cursor(channel, 24, 350, 260, 52, "hand");
+        draw_button(channel, 24, 350, 240, 52, COLOR_BLUE, "安装 Zhaoxu OS");
+        ade_cursor(channel, 24, 350, 240, 52, "hand");
+        ade_round(channel, 276, 350, 150, 52, 10, 0xDCE6EF);
+        ade_text(channel, 296, 366, COLOR_DARK, "自定义分区");
+        ade_cursor(channel, 276, 350, 150, 52, "hand");
     }
-    ade_round(channel, 300, 350, 150, 52, 10, 0xDCE6EF);
-    ade_text(channel, 332, 366, COLOR_DARK, "刷新磁盘");
-    ade_cursor(channel, 300, 350, 150, 52, "hand");
+    ade_round(channel, 438, 350, 158, 52, 10, 0xDCE6EF);
+    ade_text(channel, 470, 366, COLOR_DARK, "刷新磁盘");
+    ade_cursor(channel, 438, 350, 158, 52, "hand");
     ade_commit(channel);
 }
 
@@ -269,9 +419,24 @@ static void draw_confirm(long channel)
     ade_text(channel, 32, 132, COLOR_BLUE, label);
     ade_text(channel, 24, 178, COLOR_RED,
              "该磁盘上的所有数据将被清空，此操作不可撤销。");
-    ade_text(channel, 24, 206, COLOR_GRAY,
-             g_gpt ? "分区方案：GPT" : "分区方案：MBR");
+    char layout_text[128];
+    int at = 0;
+    layout_text[0] = 0;
+    append_text(layout_text, sizeof(layout_text), &at, "ESP ");
+    append_uint(layout_text, sizeof(layout_text), &at, g_esp_mib);
+    append_text(layout_text, sizeof(layout_text), &at, "MB · 系统 ");
+    append_uint(layout_text, sizeof(layout_text), &at, layout_root_mib());
+    append_text(layout_text, sizeof(layout_text), &at, "MB · 数据 ");
+    if (g_data_mib) {
+        append_uint(layout_text, sizeof(layout_text), &at, g_data_mib);
+        append_text(layout_text, sizeof(layout_text), &at, "MB");
+    } else {
+        append_text(layout_text, sizeof(layout_text), &at, "无");
+    }
+    ade_text(channel, 24, 206, COLOR_GRAY, layout_text);
     ade_text(channel, 24, 234, COLOR_GRAY,
+             g_gpt ? "分区方案：GPT" : "分区方案：MBR");
+    ade_text(channel, 24, 262, COLOR_GRAY,
              "安装过程中请勿关闭电源或拔出安装介质。");
 
     ade_round(channel, 24, 300, 180, 52, 10, 0xDCE6EF);
@@ -363,18 +528,27 @@ static int worker_main(const char *command)
     unsigned long id = parse_uint(cursor, &cursor);
     unsigned long disk = parse_uint(cursor, &cursor);
     unsigned long gpt = parse_uint(cursor, &cursor);
+    unsigned long esp_mib = parse_uint(cursor, &cursor);
+    unsigned long data_mib = parse_uint(cursor, &cursor);
     struct zos_install_progress *progress =
         (struct zos_install_progress *)sys_shm_map((long)id);
     if (!progress)
         return 1;
 
     progress->done = 0;
-    progress->total = 9;
+    progress->total = 10;
     progress->finished = 0;
     progress->result = -1;
     progress->error[0] = 0;
 
-    long result = sys_install_progress((long)disk, (long)gpt, progress);
+    struct zos_install_config config;
+    config.target = disk;
+    config.gpt = gpt;
+    config.progress = progress;
+    config.progress_capacity = sizeof(*progress);
+    config.esp_mib = esp_mib;
+    config.data_mib = data_mib;
+    long result = sys_install_config(&config);
     if (result != 0) {
         sys_install_error(progress->error, sizeof(progress->error) - 1);
         if (!progress->error[0]) {
@@ -401,12 +575,12 @@ static int start_worker(int disk, int gpt)
     if (!g_progress)
         return -1;
     g_progress->done = 0;
-    g_progress->total = 9;
+    g_progress->total = 10;
     g_progress->finished = 0;
     g_progress->result = -1;
     g_progress->error[0] = 0;
 
-    char argument[64];
+    char argument[96];
     int at = 0;
     argument[0] = 0;
     append_text(argument, sizeof(argument), &at, "worker ");
@@ -415,6 +589,10 @@ static int start_worker(int disk, int gpt)
     append_uint(argument, sizeof(argument), &at, (unsigned long)disk);
     append_text(argument, sizeof(argument), &at, " ");
     append_uint(argument, sizeof(argument), &at, (unsigned long)(gpt ? 1 : 0));
+    append_text(argument, sizeof(argument), &at, " ");
+    append_uint(argument, sizeof(argument), &at, g_esp_mib);
+    append_text(argument, sizeof(argument), &at, " ");
+    append_uint(argument, sizeof(argument), &at, g_data_mib);
 
     g_worker_pid = sys_spawn_arg("/bin/apps/install.zxe", argument);
     return g_worker_pid > 0 ? 0 : -1;
@@ -433,7 +611,7 @@ static void start_install(long channel)
 
     unsigned int last_done = 0xFFFFFFFFu;
     unsigned int last_total = 0xFFFFFFFFu;
-    draw_installing(channel, 0, 9);
+    draw_installing(channel, 0, 10);
     for (;;) {
         unsigned int done = g_progress->done;
         unsigned int total = g_progress->total;
@@ -528,20 +706,52 @@ int user_main(long *stack)
                 if (message.x >= 24 && message.x < 596 &&
                     message.y >= y && message.y < y + 38) {
                     g_selected = i;
+                    layout_clamp();
                     draw_select(channel);
                     break;
                 }
             }
-            if (message.x >= 300 && message.x < 450 && message.y >= 350 &&
+            if (message.x >= 438 && message.x < 596 && message.y >= 350 &&
                 message.y < 402) {
                 refresh_disks();
                 draw_select(channel);
                 continue;
             }
+            if (g_target_count > 0 && message.x >= 276 &&
+                message.x < 426 && message.y >= 350 && message.y < 402) {
+                g_state = STATE_LAYOUT;
+                draw_layout(channel);
+                continue;
+            }
             if (g_target_count > 0 && message.x >= 24 &&
-                message.x < 284 && message.y >= 350 && message.y < 402) {
+                message.x < 264 && message.y >= 350 && message.y < 402) {
                 g_state = STATE_CONFIRM;
                 draw_confirm(channel);
+            }
+        } else if (g_state == STATE_LAYOUT) {
+            if (message.x >= 24 && message.x < 596 && message.y >= 120 &&
+                message.y < 160) {
+                cycle_esp();
+                draw_layout(channel);
+                continue;
+            }
+            if (message.x >= 24 && message.x < 596 && message.y >= 216 &&
+                message.y < 256) {
+                cycle_data();
+                draw_layout(channel);
+                continue;
+            }
+            if (message.x >= 24 && message.x < 264 && message.y >= 330 &&
+                message.y < 382) {
+                g_custom = 1;
+                g_state = STATE_SELECT;
+                draw_select(channel);
+                continue;
+            }
+            if (message.x >= 284 && message.x < 464 && message.y >= 330 &&
+                message.y < 382) {
+                g_state = STATE_SELECT;
+                draw_select(channel);
             }
         } else if (g_state == STATE_CONFIRM) {
             if (message.x >= 24 && message.x < 204 && message.y >= 300 &&

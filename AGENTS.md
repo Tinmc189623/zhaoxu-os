@@ -4,8 +4,8 @@
 
 1. 内核名称：`Yuanshuo™`，操作系统名称：`Zhaoxu OS™`，桌面合成器：`Desktop Window Compositor™`（Wayland），Shell：`8sh`，桌面：`Aqua Desktop Environment™`（风格：Aqua），窗口管理器：`Desktop Window Manager`，不得改动任何字符，严禁使用`Yuanshuo™ Shell`。
 2. Github 仓库（main）：https://github.com/Tinmc189623/zhaoxu-os
-3. Gitee 仓库（master）：https://gitee.com/Tinmc189623/zhaoxu-os
-4. GitCode 仓库（main）：https://gitcode.com/2503_94276351/zhaoxu-os
+3. 
+4. Limine 必须使用原样，并完全使用它的功能。 
 5. 使用 WSL2，可用：C（内核+UEFI引导）、C++（上层应用）、GAS（底层）、FASM（BIOS引导）、SPARK（驱动）。
 6. 脚本必须完全使用 Ruby 来编写，必须完全使用 AI 来生成代码，**禁止人类编写代码**。
 7. 引导加载器必须支持 UEFI 和 Legacy BIOS 两种启动模式。 
@@ -133,7 +133,7 @@ iso-root/
 2. `make run-iso` 后应直接进入 Aqua Desktop Environment：日志出现 `Kernel: /install/KERNEL.ELF from the ISO.`、`Font: /install/MiSans.ttf from the ISO.`、`[aqua] font boot volume: ...`、`[aqua] Ring3 display server`，随后 `spawn /bin/apps/welcome.zxe` 与 `/bin/apps/calc.zxe` 并显示两个客户端窗口；点击欢迎窗口应回显 `已收到点击事件`，计算器按 `7 + 5 =` 应显示 `12`，关闭计算器后 Dock 回收对应图标。内核不再链接任何桌面或应用代码（规则 9）。无帧缓冲时内核启动 Ring3 `/bin/8sh`，应能执行 `help`、`ls /mnt`、`cat /mnt/HELLO.TXT`、`run /data/HELLO.ZXE`（退出码 7）、`write /mnt/NEW.TXT hi`、`cat /mnt/NEW.TXT`、`rm /mnt/NEW.TXT`、`disks`、`install`、`uptime`、`cpus`、`exit`。
 3. 用户态异常只应终止进程并回到 Shell（退出码 `-向量号`，如 `#PF` 为 `-14`）；内核异常才 panic。
 4. ISO 改动：`make iso` 生成 `out/zhaoxu-os_x86-64_{version}_{build}_ld.iso`（规则 11 命名），分别用 `make run-iso`（UEFI）与 `make run-bios`（SeaBIOS）从 ISO 启动；两者都应打印内核/字体来自 `/install` 的日志，中文正常显示，且不挂任何数据盘。
-5. 安装回归：`make run-install`（GPT）与 `make run-install-bios`（MBR）各挂一个空白 `out/target.img`，在安装窗口点选对应按钮，日志应有 `[install] complete`；随后只用该目标盘启动（UEFI 或 SeaBIOS），UEFI 应打印 `mounted "ZHAOXUROOT" on /mnt` 且 `[ade ] font boot volume` 来自 ext4 的 `/MiSans.ttf`，桌面中文正常。UEFI 的 ESP 必须同时含 `EFI/BOOT/BOOTX64.EFI` 与 `EFI/BOOT/OSLDRX64.EFI`，缺后者时 ZhaoxuBootMgr 会停在 `cannot read OSLDRX64.efi`。安装失败时 `SYS_INSTALL_ERROR`（68）返回内核给出的具体原因。安装 UI 把磁盘写入交给 `worker` 子进程，父进程通过共享内存读取 `SYS_INSTALL_PROGRESS`（70）的 done/total 并重绘进度条；完成后可点“立即重启”，走 `SYS_REBOOT`（69）的键盘控制器复位（失败再三重故障）。
+5. 安装回归：`make run-install`（GPT）与 `make run-install-bios`（MBR）各挂一个空白 `out/target.img`，在安装窗口点选对应按钮，日志应有 `[install] complete`；随后只用该目标盘启动（UEFI 或 SeaBIOS），UEFI 应打印 `mounted "ZHAOXUROOT" on /mnt` 且 `[ade ] font boot volume` 来自 ext4 的 `/MiSans.ttf`，桌面中文正常。UEFI 的 ESP 必须同时含 `EFI/BOOT/BOOTX64.EFI` 与 `EFI/BOOT/OSLDRX64.EFI`，缺后者时 ZhaoxuBootMgr 会停在 `cannot read OSLDRX64.efi`。安装失败时 `SYS_INSTALL_ERROR`（68）返回内核给出的具体原因。安装 UI 把磁盘写入交给 `worker` 子进程，父进程通过共享内存读取 `SYS_INSTALL_PROGRESS`（70）的 done/total 并重绘进度条；完成后可点“立即重启”，走 `SYS_REBOOT`（69）的键盘控制器复位（失败再三重故障）。自定义分区走 `SYS_INSTALL_CONFIG`（71）：ESP 64/128/256 MiB，可选 FAT32 `ZHAOXUDATA` 数据分区 64/128/256 MiB，ext4 系统分区取剩余空间且不得小于 64 MiB；数据分区写入 MBR/GPT 第三项并格式化、校验标签。`blockfs.c` 扫描分区时必须用磁盘总扇区校验起点，不能拿分区自身长度比较，否则靠后的 GPT 分区永远不会被 `/media` 探测到。
 6. SMP/调度器回归：`make run-iso QEMU_SMP=4 SCHED_STATS=1` 应打印（默认 `SCHED_STATS=0`，不输出周期统计，避免刷屏） `4/4 CPU(s) online` 与三行 `[sched] ... churn=12/12`；各 AP 的 worker 计数并行增长，`threads` 为 9、`heap` 三次采样一致（证明线程栈已回收）。再用 `QEMU_SMP=1` 验证单核回退，Aqua Desktop Environment 与 Dock 应用仍正常。BIOS 路径应打印 `ACPI RSDP located.`；UEFI 与 BIOS 的 LAPIC timer 校准值在数千万 Hz 量级。
 7. legacy BIOS 的 RSDP 由 stage2 在低端 1 MiB 按字节扫描（QEMU q35/SeaBIOS 会放在非规范位置）；内核 `apic_locate_rsdp` 再做一次兜底扫描，二者都找不到时退回单 CPU，仍用 LAPIC 计时。
 8. 帧缓冲与桌面：`make run-iso QEMU_DISPLAY="-display gtk"` 人工查看；无头回归用 QEMU HMP `screendump /tmp/ade.ppm`（QEMU 输出 PPM，可用脚本转 PNG），检查菜单栏、窗口层叠、Dock 与 SVG 图标。`ruby src/tools/smoke.rb` 的 Shell 命令流程仅在无帧缓冲回退 8sh 时有效。

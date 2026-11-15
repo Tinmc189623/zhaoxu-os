@@ -2,6 +2,25 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 · build 9
+
+### Custom partitioning and formatting
+- The installer gained a "自定义分区" screen. ESP size cycles through 64/128/256 MiB; an optional FAT32 `ZHAOXUDATA` data partition cycles through none/64/128/256 MiB; the ext4 system partition takes the remaining space and the screen rejects layouts that leave it under 64 MiB
+- `SYS_INSTALL_CONFIG` (71) carries the chosen sizes to the kernel. `install_run()` builds MBR/GPT entries for a third data partition, formats it as FAT32 with the `ZHAOXUDATA` label, verifies the boot sector, and reports it as an extra progress stage
+- Custom layouts were installed end to end in QEMU: a 256 MiB GPT target produced a 64 MiB ESP, a 127 MiB ext4 root and a 64 MiB FAT32 data partition; the installed system mounted the root on `/mnt` and the data partition on `/media/1`
+- Fixed `blockfs.c` dropping every partition whose start sector was larger than its own length. GPT volumes beyond the first partition (including a late data partition) were never probed; all scanned partitions now validate against the disk size instead
+- The confirmation screen shows the exact ESP/root/data sizes; the select screen shows the current layout summary and has a separate refresh button
+
+### Cursor, flicker and input latency
+- The compositor no longer draws the pointer into the system-RAM back buffer. The back buffer stays cursor-free; erasing the old pointer is one clean blit of the previous rectangle, and the new pointer is composited directly onto the framebuffer. Window repaints can no longer flash or ghost the pointer
+- Idle pointer movement now costs one small copy instead of restore+redraw in the shared back buffer. The DWM loop sleeps 4 ms (250 wakeups/s) instead of 1 ms, cutting idle CPU load while keeping the pointer responsive
+- Button labels use server-side UTF-8 text measurement (`ADE_TEXT_CENTER`) instead of counting bytes, so CJK labels stay centred and no longer spill out of their buttons
+- The custom-partition screen sizes its header, rows and buttons for the real ADE client rectangle; the data row no longer overlaps its label
+
+### Screenshots and docs
+- Regenerated the desktop, application, installer and custom-partition screenshots from this build and updated their README captions; the older shell/editor/disk/font screens are explicitly marked as earlier-release captures
+- INSTALL.md documents the layout editor, the FAT32/ext4 formatting of each partition, the data partition's `/media/<n>` mount and the confirmation/progress/reboot flow
+
 ## 0.7.1 「Yuanshuo」 · build 8
 
 ### Installer progress and post-install actions

@@ -101,6 +101,7 @@
 #define SYS_INSTALL_ERROR   68
 #define SYS_REBOOT          69
 #define SYS_INSTALL_PROGRESS 70
+#define SYS_INSTALL_CONFIG 71
 
 #define BLK_SECTOR_BYTES 512u
 #define BLK_MAX_SECTORS  8u
@@ -429,7 +430,7 @@ static long syscall_install(u64 target, u64 gpt)
         destination = install_pick_target();
     if (destination < 0)
         return -3;
-    if (install_run(destination, gpt != 0, NULL, NULL) != 0) {
+    if (install_run(destination, gpt != 0, NULL, NULL, NULL) != 0) {
         kprintf("[install] %s\n", install_last_error());
         return -4;
     }
@@ -477,7 +478,61 @@ static long syscall_install_progress(struct process *process, u64 target,
     struct install_progress_context context;
     context.process = process;
     context.pointer = progress_pointer;
-    int status = install_run(destination, gpt != 0, install_progress_report,
+    int status = install_run(destination, gpt != 0, NULL,
+                             install_progress_report, &context);
+    if (status != 0) {
+        kprintf("[install] %s\n", install_last_error());
+        return -4;
+    }
+    return 0;
+}
+
+/* One user request carrying the custom partition sizes and progress page. */
+struct install_config_request {
+    u64 target;
+    u64 gpt;
+    u64 progress;
+    u64 progress_capacity;
+    u64 esp_mib;
+    u64 data_mib;
+};
+
+/* SYS_INSTALL_CONFIG: install with user-selected ESP/data partition sizes. */
+static long syscall_install_config(struct process *process, u64 config_pointer)
+{
+    if (!process ||
+        user_range_ok(process, config_pointer,
+                      sizeof(struct install_config_request)) != 1)
+        return -1;
+    struct install_config_request request;
+    memcpy(&request, (const void *)(uintptr_t)config_pointer,
+           sizeof(request));
+
+    if (request.esp_mib < 34 || request.esp_mib > 256)
+        return -2;
+    if (request.data_mib > 1048576)
+        return -2;
+    if (request.progress &&
+        (request.progress_capacity < sizeof(struct install_progress) ||
+         user_range_ok(process, request.progress,
+                       sizeof(struct install_progress)) != 1))
+        return -1;
+
+    int destination = (int)request.target;
+    if (destination < 0)
+        destination = install_pick_target();
+    if (destination < 0)
+        return -3;
+
+    struct install_layout layout;
+    layout.esp_sectors = (u32)(request.esp_mib * 2048u);
+    layout.data_sectors = request.data_mib * 2048u;
+
+    struct install_progress_context context;
+    context.process = process;
+    context.pointer = request.progress;
+    int status = install_run(destination, request.gpt != 0, &layout,
+                             request.progress ? install_progress_report : NULL,
                              &context);
     if (status != 0) {
         kprintf("[install] %s\n", install_last_error());
@@ -1038,6 +1093,9 @@ void syscall_dispatch(struct interrupt_frame *frame)
     case SYS_INSTALL_PROGRESS:
         result = syscall_install_progress(process, frame->rdi, frame->rsi,
                                           frame->rdx, frame->r10);
+        break;
+    case SYS_INSTALL_CONFIG:
+        result = syscall_install_config(process, frame->rdi);
         break;
     default:
         result = -1;

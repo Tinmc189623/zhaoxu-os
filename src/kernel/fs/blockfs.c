@@ -231,11 +231,13 @@ int bf_name_equal(const char *a, const char *b)
 static int add_volume(struct blockfs_volume *out, int max, int count,
                       int disk, u64 base, u64 sectors)
 {
-    if (count >= max || !sectors || base >= sectors)
+    if (count >= max || !sectors)
         return count;
     u64 disk_sectors = block_disk_sectors(disk);
+    if (base >= disk_sectors)
+        return count;
     if (base + sectors > disk_sectors)
-        sectors = disk_sectors > base ? disk_sectors - base : 0;
+        sectors = disk_sectors - base;
     if (!sectors)
         return count;
     out[count].disk = disk;

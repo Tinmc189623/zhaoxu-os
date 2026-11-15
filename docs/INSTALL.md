@@ -199,8 +199,18 @@ GPT is the default and the row reads "自动 · GPT（推荐）". Click "高级�
 
 | Layout | Use case | What is written |
 | --- | --- | --- |
-| MBR | Legacy BIOS boot | stage1 at LBA0, stage2 at LBA1, FAT32 ESP from LBA2048 (64 MiB max), ext4 root after it |
-| GPT | UEFI boot (also boots under Legacy BIOS) | protective MBR, GPT header and partition table at LBA1/2, stage2 from LBA34 (occupying the GPT BIOS boot area), FAT32 ESP from LBA2048 (64 MiB max), ext4 root after it, backup GPT at the end of the disk |
+| MBR | Legacy BIOS boot | stage1 at LBA0, stage2 at LBA1, FAT32 ESP from LBA2048 (64 MiB default, up to 256 MiB custom), ext4 root, optional FAT32 data partition |
+| GPT | UEFI boot (also boots under Legacy BIOS) | protective MBR, GPT header and partition table at LBA1/2, stage2 from LBA34 (occupying the GPT BIOS boot area), FAT32 ESP from LBA2048 (64 MiB default, up to 256 MiB custom), ext4 root, optional FAT32 data partition, backup GPT at the end of the disk |
+
+### Custom partitions and formatting
+
+Click "自定义分区" on the select screen. The layout editor shows three rows:
+
+- **EFI 系统分区**: FAT32, 64/128/256 MiB. Click the row to cycle; the disk must have room for the system partition.
+- **系统分区**: ext4, fills the remaining space after the ESP and the optional data partition (at least 64 MiB).
+- **数据分区**: none, or FAT32 `ZHAOXUDATA` at 64/128/256 MiB. Click the row to cycle; this is the partition that becomes `/media/<n>` after installation.
+
+"应用布局" returns to the select screen with the chosen sizes. The confirmation screen repeats the exact ESP/root/data sizes before anything is written. During installation the kernel formats every partition it creates: FAT32 for the ESP, ext4 for the root, and FAT32 labeled `ZHAOXUDATA` for the data partition. Custom sizes travel through `SYS_INSTALL_CONFIG` (71); the automatic 64 MiB ESP layout is still the default.
 
 ### Confirm, then install
 

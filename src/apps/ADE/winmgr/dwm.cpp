@@ -231,8 +231,6 @@ void paint(void)
     int mx = mouse_x();
     int my = mouse_y();
     int ready = mouse_ready() || g_pointer_seen;
-    if (ready)
-        dwc_cursor_draw(mx, my);
 
     for (int i = 0; i < count; i++)
         dwc_present(items[i]);
@@ -682,12 +680,11 @@ void dwm_run(void)
         } else if (g_pointer_seen &&
                    (dwc_cursor_animate() || !dwc_cursor_presented() ||
                     mx != dwc_cursor_x() || my != dwc_cursor_y())) {
-            render_set_target(g_back);
-            dwc_cursor_restore();
-            dwc_cursor_draw(mx, my);
             dwc_present_cursor(mx, my);
         }
 
-        timer_sleep_ms(1);
+        /* 250 wakeups per second keep the pointer responsive without burning
+         * a full core on an idle desktop. */
+        timer_sleep_ms(4);
     }
 }
