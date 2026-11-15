@@ -284,7 +284,7 @@ The build must support four hosts: **native Linux, native macOS, native Windows 
 ```bash
 cd src
 make -j4                         # build everything (Linux/macOS/WSL)
-make iso                         # produce out/zhaoxu_{os_version}_installer.iso (UEFI + BIOS)
+make iso                         # produce out/zhaoxu-os_x86-64_{os_version}_{build}_ld.iso (UEFI + BIOS)
 make run-iso                     # UEFI CD boot (no data disk attached)
 make out/wlstock.zxe             # stock libwayland client regression binary
 make out/ft_test.zxe             # FreeType regression binary

@@ -34,13 +34,13 @@ installer_disks = [
   "-device ide-hd,drive=zdst,bus=ide.3",
 ]
 boot = ENV["SMOKE_BOOT"] || "esp"
-# Rule 11: ISO images are named zhaoxu_{version}_installer.iso.
-iso_file = Dir[File.join(win_root, "out", "zhaoxu_*_installer.iso")]
+# Rule 11: ISO images are named zhaoxu-os_x86-64_{version}_{build}_ld.iso.
+iso_file = Dir[File.join(win_root, "out", "zhaoxu-os_x86-64_*_ld.iso")]
            .max_by { |f| File.mtime(f) }
 if boot.start_with?("iso") && !iso_file
-  abort "out/zhaoxu_*_installer.iso not found; run `make iso` first"
+  abort "out/zhaoxu-os_x86-64_*_ld.iso not found; run `make iso` first"
 end
-iso_drive = "-cdrom out/#{iso_file ? File.basename(iso_file) : "zhaoxu_0.5.0_installer.iso"}"
+iso_drive = "-cdrom out/#{iso_file ? File.basename(iso_file) : "zhaoxu-os_x86-64_0.7.1_5_ld.iso"}"
 drives = case boot
          when "esp"
            [

@@ -69,7 +69,7 @@ cd src
 .\build.ps1 iso
 ```
 
-The product is `src/out/zhaoxu_0.6.0_installer.iso`. The version in the filename comes from `version.cfg`; do not edit it by hand.
+The product is `src/out/zhaoxu-os_x86-64_0.7.1_5_ld.iso`. The version in the filename comes from `version.cfg`; do not edit it by hand.
 
 Build dependencies vary by host:
 
@@ -81,7 +81,7 @@ The output of `ruby tools/build.rb --check` is more accurate than this list; whe
 
 ### Download from the release page
 
-If you use a published ISO, its filename should also be `zhaoxu_0.6.0_installer.iso`. Verify the size and checksum after downloading, then write it to the medium.
+If you use a published ISO, its filename should also be `zhaoxu-os_x86-64_0.7.1_5_ld.iso`. Verify the size and checksum after downloading, then write it to the medium.
 
 ---
 
@@ -93,7 +93,7 @@ The ISO is a hybrid image with dual El Torito entries plus a GPT hybrid layout; 
 
 Rufus is recommended on Windows:
 
-1. Select `zhaoxu_0.6.0_installer.iso`.
+1. Select `zhaoxu-os_x86-64_0.7.1_5_ld.iso`.
 2. Set partition type to GPT and target system to UEFI; machines that only use Legacy BIOS select MBR.
 3. Click "Start". When Rufus asks "ISO Image mode / DD Image mode", choose DD.
 4. Existing data on the USB drive will be erased.
@@ -101,7 +101,7 @@ Rufus is recommended on Windows:
 On Linux/macOS use `dd` directly:
 
 ```bash
-sudo dd if=zhaoxu_0.6.0_installer.iso of=/dev/sdX bs=4M status=progress oflag=sync
+sudo dd if=zhaoxu-os_x86-64_0.7.1_5_ld.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
 `of=/dev/sdX` is the whole USB drive, not `/dev/sdX1`. Writing the wrong device destroys another disk; check twice with `lsblk` before running.

@@ -11,6 +11,9 @@ Full version history of Zhaoxu OS. See [README.md](README.md) for what the curre
 - FreeType's smooth rasterizer is compiled at `-O0` because GCC miscompiles it at `-O1`/`-O2` with this configuration; the remaining modules use `-O2`. The optional autofit, pshinter and raster1 modules are omitted to keep the image small
 - The legacy BIOS stage 2 staging cap is raised from 448 KiB to 0x8F000 bytes (ends at 0x9F000, below the EBDA at 0x9FC00) so the FreeType-enabled initramfs still fits below 1 MiB
 
+### Build output
+- The installer ISO follows rule 11: `out/zhaoxu-os_x86-64_{version}_{build}_ld.iso`; `smoke.rb`, `screenshot.rb` and the documentation use the same pattern
+
 ### Known open items
 - Rules 37/38 are not implemented: there is no Vulkan loader/ICD and no OpenGL port. The desktop still renders through the ZOS raster path. A compliant build needs a working GPU backend and the Vulkan/OpenGL ports; this release does not claim those rules
 

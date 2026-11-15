@@ -18,7 +18,7 @@ All build commands run from `src/`.
 # The Makefile is the build system. Windows builds through WSL2:
 wsl -d Ubuntu-26.04 -- bash -lc 'cd "/mnt/g/Apps/OS/x86/AMD64/Zhaoxu OS/src" && make -j4'
 make -j4                            # Linux/macOS/WSL with the toolchain
-make iso                            # out/zhaoxu_{os_version}_installer.iso
+make iso                            # out/zhaoxu-os_x86-64_{os_version}_{build}_ld.iso
 make run-iso                        # UEFI QEMU boot from the ISO
 make host-test                      # pure-Ruby host-detection test
 

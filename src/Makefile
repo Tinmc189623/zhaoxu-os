@@ -924,7 +924,7 @@ clean:
 	       $(OUT)/OSLDRX64.efi \
 	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/aqua.zxe \
 	       $(OUT)/8sh.zxe $(OUT)/initramfs.tar $(OUT)/initramfs.z \
-	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu_*_installer.iso \
+	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu-os_x86-64_*_ld.iso \
 	       $(OUT)/*.patched \
 	       $(OUT)/bios_stage1.bin $(OUT)/bios_stage2.bin $(OUT)/bios.img \
 	       $(OUT)/target.img $(ESP)/BOOTX64.EFI $(ESP)/OSLDRX64.efi
@@ -962,7 +962,7 @@ $(TARGET_IMG):
 run: run-iso
 
 # ---- UEFI ISO --------------------------------------------------------
-# Rule 11: ISO files are named zhaoxu_{version}_installer.iso.
+# Rule 11: ISO files are named zhaoxu-os_x86-64_{version}_{build}_ld.iso.
 # version.cfg is the single source; version.h holds the synced macros.  Read
 # all four values with one Ruby call so the ISO metadata matches the build.
 VERSION_FIELDS := $(shell $(RUBY) -e 'h=File.read("kernel/include/version.h"); %w[VERSION CODENAME KERNEL KERNEL_VERSION BUILD].each { |k| print(h[/ZHAOXU_#{k}\s+"([^"]+)"/, 1], " ") }')
@@ -971,7 +971,7 @@ ZHAOXU_CODENAME := $(word 2,$(VERSION_FIELDS))
 ZHAOXU_KERNEL := $(word 3,$(VERSION_FIELDS))
 ZHAOXU_KERNEL_VERSION := $(word 4,$(VERSION_FIELDS))
 ZHAOXU_BUILD := $(word 5,$(VERSION_FIELDS))
-ISO := $(OUT)/zhaoxu_$(ZHAOXU_VERSION)_installer.iso
+ISO := $(OUT)/zhaoxu-os_x86-64_$(ZHAOXU_VERSION)_$(ZHAOXU_BUILD)_ld.iso
 ISO_ROOT := $(BUILD)/iso
 # The ISO ESP is FAT32, and mkfs.fat only accepts FAT32 above ~32 MiB.
 # Keep it at 64 MiB to match the installed ESP; xorriso records a zero
