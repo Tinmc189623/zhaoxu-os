@@ -10,7 +10,7 @@
 
 [🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
-**Current version: 0.7.1 「Yuanshuo」, kernel 0.7.1, build 18**. Version history in [CHANGELOG.md](CHANGELOG.md)
+**Current version: 0.7.1 「Yuanshuo」, kernel 0.7.1, build 19**. Version history in [CHANGELOG.md](CHANGELOG.md)
 
 </div>
 
@@ -23,6 +23,7 @@
 ## ✨ What's in 0.7.1
 
 ### 🚀 0.7.1 fixes and improvements
+- Color: fixed the Limine framebuffer format mapping that swapped R and B, so blue window chrome, buttons and the installer header now render blue instead of orange. The convention (0 = swap, 1 = native BGRX) is documented in AGENTS.md
 - Process control: `SYS_FORK` (72) and `SYS_EXEC` (73) bring POSIX fork/exec to Ring3. `fork()` copies the caller's pages and zfd descriptors; the child resumes after `int 0x80` with `rax=0`. `exec()` loads a ZXE/ELF image into a fresh address space, switches CR3, releases the old pages and rewrites the interrupt frame. `FE_BOOT_TEST=1` forks, reaps the child (status 7), then execs `HELLO.ZXE`. `SYS_PIPE` (74) adds a 64 KiB blocking pipe shared by two zfd descriptors, and `SYS_DUP2` (75) installs a descriptor at an exact number or redirects fd 0/1/2; `SYS_IOCTL` (76) exposes TCGETS/TCSETS/TIOCGWINSZ/FIONREAD on a tty-like 0/1/2. stdout redirection changes where `u_puts` writes without touching the caller, and `POSIX_BOOT_TEST=1` covers a pipe across fork, EOF after the writer closes, dup2, stdio redirection, and termios/window size
 - C library: newlib 4.6 is built PIC for x86_64-elf by `tools/newlib.rb`, with `user/lib/posix/libgloss.c` and `crt0.S` supplying the ZOS syscall stubs and `main(argc, argv, envp)` startup. `NLIBC_BOOT_TEST=1` runs a real printf/malloc program inside Zhaoxu OS; - ncurses 6.5 now builds against newlib and runs in Zhaoxu OS: a real `initscr/printw/refresh/endwin` program reports `ncurses hello: 80x25 ok`, using the `zhaoxu` terminfo entry and the tty/termios layer. VFS `lseek` and `SYS_STAT` (77) were added for the terminfo reader. nano is the next step; gnulib's signal headers still need a newlib-compatible overlay
 - The pre-Limine boot manager and its Ruby helpers are archived under `archive/boot-legacy/`; nothing there is built or installed, which keeps the tree free of two competing boot paths
@@ -398,3 +399,4 @@ This project is licensed under the [Apache License 2.0](LICENSE). Third-party co
 Copyright © 2026 Nexsteaduser. All Rights Reserved. Email: admin@nexsteaduser.com
 
 </div>
+

@@ -2,6 +2,12 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 build 19
+
+### Color channel fix
+- Limine's framebuffer pixel_format was inverted: the common GOP/BGRX layout (red_mask_shift > blue_mask_shift) was tagged as "swap", so render_pack exchanged R and B and blue chrome came out orange. The conversion now keeps BGRX native and only swaps for RGB framebuffers.
+- The format convention is documented at the assignment: 0 = swap R/B, 1 = native. render_pack, unpack, blending and the compositor's logical_color all share it.
+
 ## 0.7.1 「Yuanshuo」 build 18
 
 ### RULES.md v1.96 compliance pass

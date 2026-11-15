@@ -238,8 +238,12 @@ __attribute__((used)) struct boot_info *limine_boot_prepare(void)
         g_limine_boot.width = (u32)framebuffer->width;
         g_limine_boot.height = (u32)framebuffer->height;
         g_limine_boot.pitch = (u32)framebuffer->pitch;
+        /* render.c's format 0 means "swap R/B before storing" and format 1
+         * means the native u32 already matches memory.  A framebuffer with
+         * red above blue (the usual BGRX layout) therefore needs no swap;
+         * the old >= comparison made blue render as orange. */
         g_limine_boot.pixel_format =
-            framebuffer->red_mask_shift >= framebuffer->blue_mask_shift ? 0 : 1;
+            framebuffer->red_mask_shift > framebuffer->blue_mask_shift ? 1 : 0;
     }
 
     if (g_limine_rsdp.response && g_limine_rsdp.response->address)
