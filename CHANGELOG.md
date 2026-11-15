@@ -2,6 +2,13 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 · build 6
+
+### Fixes
+- The cursor stays visible while the pointer is stationary. DWM now remembers that a pointer has been seen and keeps compositing it at its last position instead of hiding it whenever a damage repaint finds no fresh mouse report
+- FreeType glyphs are no longer flipped or vertically offset. `ttf_freetype.c` converts `bitmap_top` into the line-top coordinate expected by `render.c` (`ascender - bitmap_top`) and rounds the advance consistently, so glyphs sit on the baseline instead of bobbing per glyph
+- Verified with a real OVMF desktop run: the welcome window, calculator, menu bar and Dock render upright aligned text; six framebuffer captures taken 450 ms apart with a stationary pointer differ only in the menu-bar clock area
+
 ## 0.7.1 「Yuanshuo」 · build 5
 
 ### Fonts and rendering

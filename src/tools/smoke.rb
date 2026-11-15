@@ -40,7 +40,7 @@ iso_file = Dir[File.join(win_root, "out", "zhaoxu-os_x86-64_*_ld.iso")]
            .max_by { |f| File.mtime(f) }
 iso_drives = [
   "-drive if=none,id=zcd,format=raw,media=cdrom,readonly=on," \
-  "file=out/#{iso_file ? File.basename(iso_file) : "zhaoxu-os_x86-64_0.7.1_5_ld.iso"}",
+  "file=out/#{iso_file ? File.basename(iso_file) : "zhaoxu-os_x86-64_0.7.1_6_ld.iso"}",
   "-device ide-cd,drive=zcd,bus=ide.0",
 ]
 boot = ENV["SMOKE_BOOT"] || "iso"

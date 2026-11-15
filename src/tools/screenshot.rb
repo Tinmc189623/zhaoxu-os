@@ -40,7 +40,7 @@ iso_file = Dir[File.join(win_root, "out", "zhaoxu-os_x86-64_*_ld.iso")]
 if boot.start_with?("iso") && !iso_file
   abort "out/zhaoxu-os_x86-64_*_ld.iso not found; run `make iso` first"
 end
-iso_drive = "-cdrom out/#{iso_file ? File.basename(iso_file) : "zhaoxu-os_x86-64_0.7.1_5_ld.iso"}"
+iso_drive = "-cdrom out/#{iso_file ? File.basename(iso_file) : "zhaoxu-os_x86-64_0.7.1_6_ld.iso"}"
 drives = case boot
          when "esp"
            [

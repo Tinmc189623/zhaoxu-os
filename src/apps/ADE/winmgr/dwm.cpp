@@ -45,6 +45,10 @@ int g_prev_buttons;
 int g_last_tick;
 int g_last_app_tick;
 char g_cursor_name[32];
+/* Once the pointer has been reported, keep drawing it at its last position.
+ * A stationary PS/2 mouse still has valid coordinates even when no new
+ * packet arrived, and hiding on every damage repaint made the cursor blink. */
+int g_pointer_seen;
 
 struct render_rect window_damage_rect(const struct dwm_window *window){
     int pad = dwm_ui(14);
@@ -226,7 +230,7 @@ void paint(void)
 
     int mx = mouse_x();
     int my = mouse_y();
-    int ready = mouse_ready();
+    int ready = mouse_ready() || g_pointer_seen;
     if (ready)
         dwc_cursor_draw(mx, my);
 
@@ -607,6 +611,8 @@ void dwm_close_focus(void)
 
 void dwm_run(void)
 {
+    if (mouse_ready())
+        g_pointer_seen = 1;
     dwm_invalidate_all();
     paint();
 
@@ -617,6 +623,8 @@ void dwm_run(void)
 
         int mx = mouse_x();
         int my = mouse_y();
+        if (mouse_ready())
+            g_pointer_seen = 1;
         int buttons = mouse_ready() ? mouse_buttons() : 0;
 
         if (mouse_ready())
@@ -671,7 +679,7 @@ void dwm_run(void)
 
         if (g_damage.count > 0) {
             paint();
-        } else if (mouse_ready() &&
+        } else if (g_pointer_seen &&
                    (dwc_cursor_animate() || !dwc_cursor_presented() ||
                     mx != dwc_cursor_x() || my != dwc_cursor_y())) {
             render_set_target(g_back);

@@ -66,8 +66,20 @@ int ttf_render(u32 codepoint, struct ttf_glyph *out)
     if (slot->bitmap.width > TTF_MAX_PX + 6 || slot->bitmap.rows > TTF_MAX_PX ||
         (u32)slot->bitmap.width * slot->bitmap.rows > sizeof(out->alpha)) return -2;
     out->w = (u8)slot->bitmap.width; out->h = (u8)slot->bitmap.rows;
-    out->bx = (i8)slot->bitmap_left; out->by = (i8)(slot->bitmap_top);
-    out->adv = (u8)((slot->advance.x >> 6) > 255 ? 255 : (slot->advance.x >> 6));
+    out->bx = (i8)slot->bitmap_left;
+    /* render.c treats `by` as the distance from the line top (baseline minus
+     * ascender) to the bitmap top.  FreeType reports bitmap_top upwards from
+     * the baseline, so subtract it from the ascender; using it directly both
+     * flips the glyph and makes every glyph bob to its own height. */
+    i32 ascent = (i32)((g_face->size->metrics.ascender + 32) >> 6);
+    int top = (int)slot->bitmap_top;
+    out->by = (i8)(ascent - top);
+    i32 advance = (i32)((slot->advance.x + 32) >> 6);
+    if (advance < 0)
+        advance = 0;
+    if (advance > 255)
+        advance = 255;
+    out->adv = (u8)advance;
     for (u32 y = 0; y < out->h; y++)
         for (u32 x = 0; x < out->w; x++)
             out->alpha[y * out->w + x] = slot->bitmap.buffer[y * slot->bitmap.pitch + x];
