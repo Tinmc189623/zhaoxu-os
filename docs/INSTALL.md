@@ -41,7 +41,7 @@ This means:
 
 ### How large the target disk must be
 
-The recognition threshold is 2048 + 70000 + 32768 512-byte sectors, about 52 MiB. Smaller disks never appear in the `target` role.
+The recognition threshold is 2048 + 70000 + 65536 512-byte sectors (ESP minimum plus the 32 MiB ext4 minimum), about 68 MiB. Smaller disks never appear in the `target` role.
 
 In practice start at 256 MiB, matching `out/target.img` used by QEMU regression. 1 GiB or more gives room to spare. The ESP is at most 64 MiB, everything else goes to the ext4 root, and fonts plus wallpaper take about 11 MiB.
 
@@ -392,7 +392,7 @@ Check the `disks` output for `target`. If it is absent, common causes are:
 
 - The target disk is NVMe or USB, invisible to the AHCI driver.
 - The target disk already has a Windows/Linux partition table, and the first sector is neither blank nor Zhaoxu-like.
-- The target disk is smaller than about 52 MiB.
+- The target disk is smaller than about 68 MiB.
 - The target disk is a `ZHAOXUEFI` or `ZHAOXUDATA` volume, which the installer deliberately excludes.
 - The motherboard SATA mode is not AHCI.
 
