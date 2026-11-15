@@ -134,7 +134,7 @@ void paint(const struct ade_view *view)
     int x = view->x + ade_ui(16);
     int y = header_y(view);
 
-    ade_text(g_preview_mode ? "预览" : "卷 /mnt · FAT32 只读", x, y,
+    ade_text(g_preview_mode ? "预览" : "卷 /mnt / FAT32 只读", x, y,
              0x5A6E82, 1);
     ade_text("刷新", view->x + view->w - ade_ui(54), y, 0x2B6FA8, 1);
     ade_hline(x, y + ade_line_height() + ade_ui(6),

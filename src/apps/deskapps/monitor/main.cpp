@@ -73,7 +73,7 @@ void paint(const struct ade_view *view)
     ksnprintf(text, sizeof(text), "CPU  %s", cpu->brand);
     ade_text(text, x, y, 0x5A6E82, 1);
     y += line + ade_ui(1);
-    ksnprintf(text, sizeof(text), "在线 %u / 逻辑 %u · 抢占 1 kHz",
+    ksnprintf(text, sizeof(text), "在线 %u / 逻辑 %u / 抢占 1 kHz",
               smp_cpu_count(), cpu->logical_cpus ? cpu->logical_cpus : 1);
     ade_text(text, x, y, 0x5A6E82, 1);
     y += line + ade_ui(1);
@@ -81,7 +81,7 @@ void paint(const struct ade_view *view)
               seconds / 3600, (seconds / 60) % 60, seconds % 60);
     ade_text(text, x, y, 0x5A6E82, 1);
     y += line + ade_ui(1);
-    ksnprintf(text, sizeof(text), "显示 %ux%u · AHCI %d 盘",
+    ksnprintf(text, sizeof(text), "显示 %ux%u / AHCI %d 盘",
               boot->width, boot->height, ahci_disk_count());
     ade_text(text, x, y, 0x5A6E82, 1);
     y += line + ade_ui(8);

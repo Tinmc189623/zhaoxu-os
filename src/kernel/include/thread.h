@@ -41,6 +41,10 @@ struct thread {
     u8 is_idle;
     u8 on_cpu;               /* running or switching on some CPU */
     char name[20];
+    /* FXSAVE area: x87/SSE state is per-thread.  Without it, a Ring3 program
+     * using SSE can be preempted by another SSE user (or kernel font code)
+     * and resume with clobbered XMM registers. */
+    u8 fpu_state[512] __attribute__((aligned(16)));
 };
 
 void sched_init(u32 cpu_count);

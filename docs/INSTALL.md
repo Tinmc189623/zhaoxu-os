@@ -24,7 +24,7 @@ A few points need stating up front:
 
 - Current storage drivers cover only AHCI/IDE/SATA/SCSI. NVMe drives, USB hard disks, and USB flash drives are all invisible once the system boots. A USB drive can serve as installation media because the firmware reads the ISO, but the target disk must sit on a SATA controller.
 - Input supports PS/2 keyboard and mouse only. A machine with only USB input may accept a few keystrokes through firmware legacy emulation, with no guarantee after boot. Confirm the board has PS/2 ports, or that USB legacy support is enabled in the firmware.
-- Secure Boot must be off. ZhaoxuBootMgr is unsigned, so Secure Boot refuses to boot it.
+- Secure Boot must be off. Limine's `BOOTX64.EFI` is unsigned, so Secure Boot refuses to boot it.
 - Set SATA mode to AHCI. Intel RST, RAID, and Optane modes keep the Ring3 AHCI driver from finding disks. Switching the mode can affect an existing Windows installation, so think it through before changing anything.
 - The system has no networking, audio, USB HID, multi-user support, or POSIX compatibility layer yet. Installation steps cannot supply them.
 
@@ -36,7 +36,7 @@ This means:
 
 - Existing Windows, Linux, and data partitions on the target disk disappear with it.
 - The window lists up to four targets. It preselects the first one; click another row to switch. If more than four qualify, disconnect the extra disks so the list is unambiguous.
-- Target detection looks only at the partition table in the first sector, not at filesystem contents. Blank disks, MBR disks whose first partition starts at LBA 2048 with type 0xEF/0x0C/0x0E, and protective MBRs carrying the `ZSLBA` marker all become `target` candidates. Some Linux or Windows disks whose ESP happens to be the first partition starting at LBA 2048 also qualify as reinstall targets. If unsure, unplug the disk or check with `disks` in `8sh`.
+- Target detection looks only at the first sector, not at filesystem contents. Blank disks, disks whose boot sector carries Limine's `EB 3C 90` + `LIMINE` signature, and MBR disks whose first partition starts at LBA 2048 with type 0xEF/0x0C/0x0E all become `target` candidates. Some Linux or Windows disks also carry Limine, so confirm the disk is truly expendable; if unsure, unplug it or check with `disks` in `8sh`.
 - A disk that already holds Zhaoxu OS is recognized as a reinstall target; reinstalling wipes the old system just the same.
 
 ### How large the target disk must be
@@ -134,28 +134,23 @@ In a virtual machine the matching options are "Enable EFI", "Secure Boot", and "
 The serial log for the UEFI path looks roughly like this:
 
 ```text
-ZhaoxuBootMgr (UEFI x86_64)
-BootMgr: zhaoxu.cfg loaded
-BootMgr: starting OSLDRX64.efi
-Kernel: /install/KERNEL.ELF from the ISO.
-Font: /install/MiSans.ttf from the ISO.
+limine: Loading executable `boot():/casper/kernel.elf`...
+limine: Loading module `boot():/casper/kernel.bin`...
+limine: Loading module `boot():/boot/limine/MiSans.ttf`...
+limine: Loading module `boot():/boot/limine/WALL.RGB`...
+[boot] higher-half kernel at 0xffffffff80000000 ...
 ```
 
 Legacy BIOS path:
 
 ```text
-ZhaoxuBootloader stage1 (legacy BIOS)
-ZhaoxuBootloader stage2 (legacy BIOS)
-A20 gate enabled.
-VESA framebuffer selected.
-E820 memory map collected.
-ACPI RSDP located.
-Reading kernel image.
-Kernel image read.
-Kernel image loaded, entering long mode.
+SeaBIOS loads Limine's stage 1 from the El Torito image.
+Stage 1 loads stage 2 from the post-MBR gap.
+Stage 2 reads limine-bios.sys and the config from the ISO and follows
+the same kernel path as UEFI.
 ```
 
-After the kernel starts it launches the Aqua Desktop Environment desktop; the menu bar, Dock, welcome window, and calculator window all appear. Chinese text displays correctly, which means the font was read from `/install/MiSans.ttf` on the ISO.
+After the kernel starts it launches the Aqua Desktop Environment desktop; the menu bar, Dock, welcome window, and calculator window all appear. Chinese text displays correctly, which means the font module `MiSans.ttf` was read from the ISO.
 
 Whether the installer window opens by itself depends on two conditions:
 
@@ -188,14 +183,14 @@ Idx Port Size Label Role Model
 
 Role meanings:
 
-- `target`: a blank disk, a legacy Zhaoxu layout whose first partition starts at LBA 2048 with type 0xEF/0x0C/0x0E, or a Zhaoxu GPT with the `ZSLBA` marker. Eligible for installation.
+- `target`: a blank disk, a disk carrying Limine's boot sector (`EB 3C 90` + `LIMINE`), or a layout whose first partition starts at LBA 2048 with type 0xEF/0x0C/0x0E. Eligible for installation.
 - `media`: an ESP labeled `ZHAOXUEFI`. The installer never selects it.
 - `data`: a data disk labeled `ZHAOXUDATA` or `ZHAOXUROOT`. The installer never selects it.
 - `other`: another partition table or filesystem. The installer never selects it.
 
 ### Choose MBR or GPT
 
-GPT is the default and the row reads "自动 · GPT（推荐）". Click "高级选项" ("Advanced") to reveal the layout toggle, then click "切换为 MBR" ("Switch to MBR") if the machine only boots Legacy BIOS. The row then reads "自动 · MBR（兼容）".
+GPT is the default and the row reads "自动 GPT（推荐）". Click "高级选项" ("Advanced") to reveal the layout toggle, then click "切换为 MBR" ("Switch to MBR") if the machine only boots Legacy BIOS. The row then reads "自动 MBR（兼容）".
 
 | Layout | Use case | What is written |
 | --- | --- | --- |
@@ -227,24 +222,23 @@ Zhaoxu OS 已安装到目标磁盘。
 
 Click "立即重启" ("Reboot now") to reset the machine, or "关闭安装程序" to close the installer and reboot yourself. On failure the window turns red, says "系统没有写入目标磁盘。" ("the system did not write the target disk") and prints the kernel's actual reason, for example a missing target disk or a failed FAT32 verify. Click "返回" to rescan the disks and try again; the select screen also has a "刷新磁盘" button.
 
-Neither layout places the kernel in the ESP or in boot sectors. The kernel exists only on the ext4 root:
+Limine 12 reads FAT and ISO9660 only, so every file the boot manager loads lives on the ESP:
 
-- `/KERNEL.BIN`: read directly by legacy BIOS stage2 through a contiguous block list.
-- `/KERNEL.ELF`: parsed by the UEFI loader.
+- `/KERNEL.ELF`: the kernel executable Limine loads.
+- `/KERNEL.BIN`: the flat kernel image passed as a module (used when reinstalling from the installed system).
 - `/MiSans.ttf`: OpenType Chinese/Latin font (MiSans, with MiSans Global and Inter as the other supported faces).
-- `/WALLPAPER.RAW`: raw frame of the default wallpaper.
+- `/WALL.RGB`: raw 1920x1080 frame of the default wallpaper.
 
-The ESP label is `ZHAOXUEFI`, its type is FAT32, and it holds both UEFI stages under `EFI/BOOT/`: `BOOTX64.EFI` (ZhaoxuBootMgr) and `OSLDRX64.EFI` (the kernel loader). The ext4 root label is `ZHAOXUROOT`.
+The ESP label is `ZHAOXUEFI`, its type is FAT32, and it holds `EFI/BOOT/BOOTX64.EFI`, `EFI/BOOT/limine.conf`, `boot/limine/limine-bios.sys`, `boot/limine/limine.conf` and those four payloads at its root. The ext4 root label is `ZHAOXUROOT` and carries the installed filesystem without boot files.
 
 The matching success log on serial is:
 
 ```text
 [install] esp 131072 sectors, ext4 root ... @ 133120 (target ..., GPT)
-[ext4] formatted ... label ZHAOXUROOT
-[ext4] write /KERNEL.ELF ...
-[ext4] write /KERNEL.BIN ...
-[ext4] write /MiSans.ttf ...
-[install] complete
+[install] start t=..., kernel 968704 bytes, loader 405504, ...
+[install] stage 1/7 root formatted ...
+[install] stage 5/7 ESP built ...
+[install] stage 7/7 flushed ...
 ```
 
 The user client also prints `[install] complete` on the serial console. Wait for it before cutting power. If it does not appear, troubleshoot per section 9 instead of clicking the button repeatedly.
@@ -263,41 +257,17 @@ The user client also prints `[install] complete` on the serial console. Wait for
 After a successful UEFI boot, serial should show:
 
 ```text
-ZhaoxuBootMgr (UEFI x86_64)
-BootMgr: starting OSLDRX64.efi
-Kernel: /KERNEL.ELF from ext4.
-Font: /MiSans.ttf from ext4.
-...
-[fs  ] ext4 service ready
-[vfs ] /mnt mounted (ext4 "ZHAOXUROOT")
+limine: Loading executable `boot(2):/KERNEL.ELF`...
+[boot] higher-half kernel at 0xffffffff80000000 ...
+[ade ] font boot volume: 7924400 bytes
+[ade ] wallpaper boot volume: 6220800 bytes
+[dwc] Desktop Window Compositor back buffer 1920x1080
 Boot complete. Starting Aqua Desktop Environment.
 ```
 
-After a successful Legacy BIOS boot:
+After a successful Legacy BIOS boot the log is the same from the kernel banner onwards; Limine stage 1/2 read the ESP through its FAT32 driver.
 
-```text
-ZhaoxuBootloader stage1 (legacy BIOS)
-ZhaoxuBootloader stage2 (legacy BIOS)
-Reading kernel image.
-Kernel image read.
-Kernel image loaded, entering long mode.
-...
-[ext4] mounted "ZHAOXUROOT" on /mnt: ...
-[vfs ] /mnt mounted (ext4 "ZHAOXUROOT")
-Boot complete. Starting Aqua Desktop Environment.
-```
-
-`/` is still initramfs, and the ext4 root is mounted at `/mnt`. System programs start from initramfs, while fonts, wallpaper, and installation assets are read from `/mnt`. The installed desktop shows the wallpaper and Chinese automatically, with no further dependency on the ISO.
-
-### Fixed: UEFI installs missing the second stage
-
-Before build 7 the installer copied only `EFI/BOOT/BOOTX64.EFI` into the ESP, so a UEFI reboot of an installed disk stopped at:
-
-```text
-BootMgr: cannot read OSLDRX64.efi
-```
-
-Build 7 writes `EFI/BOOT/OSLDRX64.EFI` as part of `fat32_make_esp()` and verifies both files before reporting success. If you installed with an older build, reinstall with build 7 or attach the disk to another system and copy `EFI/BOOT/OSLDRX64.efi` from the ISO into the ESP. `BootMgr: zhaoxu.cfg missing, using defaults` is normal output; ZhaoxuBootMgr then falls back to the default `OSLDRX64.efi` path.
+`/` is still initramfs, and the ext4 root is forwarded to the `/bin/ext4fs` service. System programs start from initramfs, while the font and wallpaper Limine passes as modules come from the ESP. The installed desktop shows the wallpaper and Chinese automatically, with no further dependency on the ISO.
 
 ---
 
@@ -432,13 +402,13 @@ If the target disk is present but the window did not open automatically, a data 
 
 The installer is a separate process, `/bin/apps/install.zxe`. A closed window does not come back on its own; click "File" in the menu bar to reopen it. After a failed install the window turns red, says "系统没有写入目标磁盘。" and shows the kernel's reason (for example a missing target or a failed FAT32 verify); the same reason is available through `SYS_INSTALL_ERROR`.
 
-### Stuck at `BootMgr: cannot read OSLDRX64.efi`
+### Limine reports `Failed to open executable with path`
 
-Build 7 writes `EFI/BOOT/OSLDRX64.EFI` as part of the install and verifies it, so this should not happen on a fresh installation. If it does, the ESP is damaged or the disk was installed by an older build; reinstall with build 7 (or copy the file from the ISO, as described in section 6). Legacy BIOS never takes this path.
+Limine can only read FAT and ISO9660, so the kernel and its modules must be on the ESP. Fresh installs put `KERNEL.ELF`, `KERNEL.BIN`, `MiSans.ttf` and `WALL.RGB` there next to `limine.conf`. If this panic appears, the ESP is missing one of those files or `limine.conf` points at the wrong partition; reinstall, or mount the ESP on another system and check its contents.
 
-### Stuck after `BootMgr: zhaoxu.cfg missing`
+### Limine reports `Failed to open config file`
 
-That line is not an error by itself; the next line is what matters. If it is followed by `cannot read OSLDRX64.efi`, the ESP is missing the second stage (see above). If it is followed by `starting OSLDRX64.efi`, the boot manager has handed over control.
+`BOOTX64.EFI` found no `limine.conf` in its own directory and none under `/boot/limine/`. The installer writes both copies; a damaged ESP needs a reinstall.
 
 ### UEFI boot goes straight to firmware setup or a black screen
 
@@ -446,9 +416,9 @@ That line is not an error by itself; the next line is what matters. If it is fol
 - The target disk was installed for Legacy boot but started in UEFI mode, or the reverse. Make sure the layout chosen at install time matches the firmware mode.
 - A pure NVMe machine has no usable SATA target disk, so the system cannot install or boot.
 
-### Legacy BIOS reports `stage2: disk read failed`
+### Legacy BIOS stops before the kernel banner
 
-The boot stage cannot read the kernel. Common causes are an incomplete install, power loss on the target disk, or booting from a different disk. Reinstall once and confirm `[install] complete` appears on serial.
+Limine stage 2 could not read the ESP. Common causes are an incomplete install, power loss on the target disk, or booting from a different disk. Reinstall once and confirm the done screen and `[install] complete` appear on serial.
 
 ### Keyboard and mouse dead after boot
 
@@ -458,9 +428,9 @@ The system drives PS/2 only. USB keyboard and mouse may work during the firmware
 
 UEFI uses GOP, Legacy BIOS uses 32bpp VBE. Some discrete GPUs provide no usable VBE linear framebuffer in Legacy mode; switch to integrated graphics, enable CSM, or boot in UEFI mode instead. In a virtual machine set the display adapter to standard VGA/VMware SVGA, leave 3D acceleration off, and do not use a PCI passthrough GPU.
 
-### Installation stuck at `KERNEL.BIN is not contiguous inside ext4`
+### Installation stuck on the ESP stage
 
-The ext4 service could not allocate contiguous blocks for the kernel. Reinstalling once usually gets past it; if it keeps failing, change the target disk, or first confirm the disk has no bad sectors and its capacity is not truncated by the controller.
+The ESP build writes the kernel, font and wallpaper through the Ring3 driver service. A disk that reports I/O errors makes this stage repeat block requests; check the serial log for `[dev ] rpc timeout`, and reinstall once. A custom ESP smaller than 34 MiB is rejected before any write.
 
 ### The target disk has an old system and the installer refuses it
 
@@ -499,9 +469,9 @@ After installation the target disk should have two visible partitions. The GPT l
 
 | Partition | Filesystem | Label | Contents |
 | --- | --- | --- | --- |
-| BIOS boot (GPT only), from LBA34 | none | none | stage2 boot code |
-| ESP, from LBA 2048, 64 MiB max | FAT32 | `ZHAOXUEFI` | `EFI/BOOT/BOOTX64.EFI` and `EFI/BOOT/OSLDRX64.EFI` |
-| ext4 root, after the ESP up to the backup GPT | ext4 | `ZHAOXUROOT` | `/KERNEL.ELF`, `/KERNEL.BIN`, `/MiSans.ttf`, `/WALLPAPER.RAW` |
+| BIOS boot (GPT only), from LBA34 | none | none | Limine stage 2 |
+| ESP, from LBA 2048, 64 MiB max | FAT32 | `ZHAOXUEFI` | Limine files plus `KERNEL.ELF`, `KERNEL.BIN`, `MiSans.ttf`, `WALL.RGB` |
+| ext4 root, after the ESP up to the backup GPT | ext4 | `ZHAOXUROOT` | installed filesystem, no boot files |
 
 On a Linux host you can inspect it like this:
 
@@ -510,10 +480,10 @@ lsblk -f
 sudo blkid
 ```
 
-When `8sh` is available, `disks` also shows roles. However, the first sector of an installed disk is the Zhaoxu MBR, so `disks` may still mark the whole disk as `target`. To judge whether installation succeeded, check serial for `Kernel: /KERNEL.ELF from ext4.` and `[vfs ] /mnt mounted (ext4 "ZHAOXUROOT")`.
+When `8sh` is available, `disks` also shows roles. However, the first sector of an installed disk is Limine's boot sector, so `disks` marks the whole disk as `target`; that is expected. To judge whether installation succeeded, boot the disk and check serial for `limine: Loading executable`, `[ade ] font boot volume` and `[ade ] wallpaper boot volume`, then `Boot complete. Starting Aqua Desktop Environment.`
 
 ---
 
-Zhaoxu OS · Nexsteaduser
+Zhaoxu OS / Nexsteaduser
 
 Copyright © 2026 Nexsteaduser. All Rights Reserved

@@ -22,6 +22,9 @@ struct dir_slot {
     struct fat_entry entry;
 };
 
+static void store_entry(u8 *entry, const char name[11], u32 first, u32 size);
+static void mark_dirty(void);
+
 static u32 cluster_bytes(void)
 {
     return fat32_state()->sectors_per_cluster * 512;
@@ -41,6 +44,40 @@ static int write_cluster(u32 cluster, const u8 *buffer)
                            fs->sectors_per_cluster, buffer);
 }
 
+/* One sector of the primary FAT is cached while a file's cluster chain is
+ * being allocated.  Without this, writing a 400 KiB bootloader performed two
+ * FAT sector writes per 512-byte cluster and took minutes in QEMU. */
+static u32 g_fat_cache_sector = 0xFFFFFFFFu;
+static u8 g_fat_cache[512];
+static int g_fat_cache_dirty;
+
+static int fat_cache_flush(void)
+{
+    struct fat32_fs *fs = fat32_state();
+    if (!g_fat_cache_dirty || g_fat_cache_sector == 0xFFFFFFFFu)
+        return 0;
+    for (u32 copy = 0; copy < fs->num_fats; copy++) {
+        u64 lba = fs->volume_base + (u64)copy * fs->fat_size +
+                  g_fat_cache_sector;
+        if (block_disk_write(fs->disk, lba, 1, g_fat_cache) != 0)
+            return -1;
+    }
+    g_fat_cache_dirty = 0;
+    return 0;
+}
+
+static int fat_cache_select(u32 sector)
+{
+    if (g_fat_cache_sector == sector)
+        return 0;
+    if (fat_cache_flush() != 0)
+        return -1;
+    if (read_sector(sector, g_fat_cache) != 0)
+        return -1;
+    g_fat_cache_sector = sector;
+    return 0;
+}
+
 static u32 fat_read(u32 cluster)
 {
     struct fat32_fs *fs = fat32_state();
@@ -48,10 +85,14 @@ static u32 fat_read(u32 cluster)
     u32 sector = fs->reserved_sectors + offset / 512;
     u32 index = (offset % 512) / 4;
     u8 buffer[512];
+    const u8 *source = buffer;
 
-    if (read_sector(sector, buffer) != 0)
+    if (g_fat_cache_sector == sector) {
+        source = g_fat_cache;
+    } else if (read_sector(sector, buffer) != 0) {
         return 0xFFFFFFFFu;
-    u32 value = read_le32(buffer + index * 4) & 0x0FFFFFFFu;
+    }
+    u32 value = read_le32(source + index * 4) & 0x0FFFFFFFu;
     if (value == 0 || value >= FAT_END)
         return 0xFFFFFFFFu;
     return value;
@@ -63,22 +104,17 @@ static int fat_write(u32 cluster, u32 value)
     u32 offset = cluster * 4;
     u32 sector = fs->reserved_sectors + offset / 512;
     u32 index = (offset % 512) / 4;
-    u8 buffer[512];
 
-    for (u32 copy = 0; copy < fs->num_fats; copy++) {
-        u64 lba = fs->volume_base + (u64)copy * fs->fat_size + sector;
-        if (block_disk_read(fs->disk, lba, 1, buffer) != 0)
-            return -1;
-        u32 old = read_le32(buffer + index * 4);
-        u32 merged = (old & 0xF0000000u) | (value & 0x0FFFFFFFu);
-        u8 *slot = buffer + index * 4;
-        slot[0] = (u8)merged;
-        slot[1] = (u8)(merged >> 8);
-        slot[2] = (u8)(merged >> 16);
-        slot[3] = (u8)(merged >> 24);
-        if (block_disk_write(fs->disk, lba, 1, buffer) != 0)
-            return -1;
-    }
+    if (fat_cache_select(sector) != 0)
+        return -1;
+    u32 old = read_le32(g_fat_cache + index * 4);
+    u32 merged = (old & 0xF0000000u) | (value & 0x0FFFFFFFu);
+    u8 *slot = g_fat_cache + index * 4;
+    slot[0] = (u8)merged;
+    slot[1] = (u8)(merged >> 8);
+    slot[2] = (u8)(merged >> 16);
+    slot[3] = (u8)(merged >> 24);
+    g_fat_cache_dirty = 1;
     fs->cache_valid = 0;
     return 0;
 }
@@ -88,6 +124,8 @@ static u32 g_alloc_hint = 2;
 void fat32_alloc_reset(void)
 {
     g_alloc_hint = 2;
+    g_fat_cache_sector = 0xFFFFFFFFu;
+    g_fat_cache_dirty = 0;
 }
 
 static u32 fat_value(u32 cluster)
@@ -95,6 +133,8 @@ static u32 fat_value(u32 cluster)
     struct fat32_fs *fs = fat32_state();
     u32 offset = cluster * 4;
     u32 sector = fs->reserved_sectors + offset / 512;
+    if (g_fat_cache_sector == sector)
+        return read_le32(g_fat_cache + (offset % 512)) & 0x0FFFFFFFu;
     u8 buffer[512];
     if (read_sector(sector, buffer) != 0)
         return 0xFFFFFFFFu;
@@ -141,25 +181,43 @@ static int free_chain(u32 first)
 
 static int write_chain(u32 first, const u8 *data, u64 size)
 {
+    struct fat32_fs *fs = fat32_state();
     u32 block = cluster_bytes();
     u32 cluster = first;
     u64 offset = 0;
 
     while (offset < size) {
-        u32 chunk = (size - offset) > block ? block : (u32)(size - offset);
-        u8 *buffer = kmalloc(block);
+        /* Collect a contiguous run of up to 8 clusters and write it with one
+         * block request; a 750 KiB ESP payload then costs ~190 IPC calls
+         * instead of one per 512-byte cluster. */
+        u32 run = 1;
+        u32 probe = cluster;
+        while (run < 8 && offset + (u64)run * block < size) {
+            u32 next = fat_read(probe);
+            if (next != probe + 1)
+                break;
+            probe = next;
+            run++;
+        }
+        u32 bytes = block * run;
+        if (bytes > size - offset)
+            bytes = (u32)(size - offset);
+        u8 *buffer = kmalloc(block * run);
         if (!buffer)
             return -1;
-        memset(buffer, 0, block);
-        memcpy(buffer, data + offset, chunk);
-        int result = write_cluster(cluster, buffer);
+        memset(buffer, 0, block * run);
+        memcpy(buffer, data + offset, bytes);
+        int result = block_disk_write(fs->disk, fs->volume_base +
+                                      cluster_lba(cluster),
+                                      fs->sectors_per_cluster * run,
+                                      buffer);
         kfree(buffer);
         if (result != 0)
             return -1;
 
-        offset += block;
+        offset += bytes;
         if (offset < size) {
-            cluster = fat_read(cluster);
+            cluster = fat_read(probe);
             if (cluster < 2)
                 return -1;
         }
@@ -379,43 +437,19 @@ static void update_entry(u8 *entry, u32 first, u32 size)
     entry[11] |= 0x20;
 }
 
+/* Mark the FSInfo counters unknown instead of rescanning the whole FAT.
+ * Scanning wrote one block read per FAT sector after every directory or file
+ * operation; on a 64 MiB ESP that turned an install into a minute of I/O. */
 static void mark_dirty(void)
 {
     struct fat32_fs *fs = fat32_state();
     if (!fs->fsinfo_sector)
         return;
-
-    u32 total = fs->cluster_count + 2;
-    u32 free_count = 0;
-    u32 next_free = 0xFFFFFFFFu;
     u8 buffer[512];
-
-    for (u32 sector = 0; sector < fs->fat_size; sector++) {
-        if (read_sector(fs->reserved_sectors + sector, buffer) != 0)
-            return;
-        for (u32 index = 0; index < 128; index++) {
-            u32 cluster = sector * 128 + index;
-            if (cluster < 2 || cluster >= total)
-                continue;
-            if ((read_le32(buffer + index * 4) & 0x0FFFFFFFu) != 0)
-                continue;
-            free_count++;
-            if (next_free == 0xFFFFFFFFu)
-                next_free = cluster;
-        }
-    }
-
     if (read_sector(fs->fsinfo_sector, buffer) != 0)
         return;
-    u8 *free = buffer + 0x1E8;
-    free[0] = (u8)free_count;
-    free[1] = (u8)(free_count >> 8);
-    free[2] = (u8)(free_count >> 16);
-    free[3] = (u8)(free_count >> 24);
-    free[4] = (u8)next_free;
-    free[5] = (u8)(next_free >> 8);
-    free[6] = (u8)(next_free >> 16);
-    free[7] = (u8)(next_free >> 24);
+    for (int i = 0; i < 8; i++)
+        buffer[0x1E8 + i] = 0xFF;
     block_disk_write(fs->disk, fs->volume_base + fs->fsinfo_sector, 1, buffer);
 }
 
@@ -440,6 +474,169 @@ static int commit_slot(const struct dir_slot *slot, const char suffix[11],
     return result;
 }
 
+/* Build an 8.3 alias for a long name (LIMINE~1.SYS style). */
+static int short_alias(const char *leaf, char output[11])
+{
+    memset(output, ' ', 11);
+    int index = 0;
+    const char *cursor = leaf;
+    for (; *cursor && *cursor != '.' && index < 6; cursor++) {
+        char character = *cursor;
+        if (character >= 'a' && character <= 'z')
+            character = (char)(character - 'a' + 'A');
+        if (character == ' ' || character == ':' || character == '*' ||
+            character == '?' || character == '"' || character == '<' ||
+            character == '>' || character == '|' || character == '\\' ||
+            character == '/')
+            return -1;
+        output[index++] = character;
+    }
+    if (index == 0)
+        return -1;
+    output[6] = '~';
+    output[7] = '1';
+    if (*cursor == '.') {
+        cursor++;
+        int extension = 0;
+        for (; *cursor && extension < 3; cursor++) {
+            char character = *cursor;
+            if (character >= 'a' && character <= 'z')
+                character = (char)(character - 'a' + 'A');
+            if (character == ' ' || character == ':' || character == '*' ||
+                character == '?' || character == '"' || character == '<' ||
+                character == '>' || character == '|' || character == '\\' ||
+                character == '/' || character == '.')
+                return -1;
+            output[8 + extension++] = character;
+        }
+    }
+    return 0;
+}
+
+/* VFAT checksum over the 11-byte short name. */
+static u8 vfat_checksum(const char name[11])
+{
+    u8 sum = 0;
+    for (int i = 0; i < 11; i++)
+        sum = (u8)(((sum & 1) << 7) + (sum >> 1) + (u8)name[i]);
+    return sum;
+}
+
+static void lfn_char(u8 *entry, int index, u16 value)
+{
+    int offset;
+    if (index < 5)
+        offset = 1 + index * 2;
+    else if (index < 11)
+        offset = 14 + (index - 5) * 2;
+    else
+        offset = 28 + (index - 11) * 2;
+    entry[offset] = (u8)value;
+    entry[offset + 1] = (u8)(value >> 8);
+}
+
+/* Append a VFAT long-name group plus its 8.3 entry to a directory.
+ *
+ * The walk uses fat_value (the write-side FAT cache), not fat_next_cluster:
+ * that helper reports end-of-chain as 0xFFFFFFFF and re-reads a sector on
+ * every call, which turned a full directory scan into minutes of failed
+ * out-of-range block reads.  A fresh cluster is only chained when the last
+ * cluster of the directory has no free run for the whole LFN group. */
+static int append_long_entry(u32 directory, const char *leaf,
+                             const char shortname[11], u32 first, u32 size)
+{
+    struct fat32_fs *fs = fat32_state();
+    int length = 0;
+    while (leaf[length])
+        length++;
+    if (length == 0 || length > 255)
+        return -1;
+    int entries = (length + 12) / 13;
+    u8 checksum = vfat_checksum(shortname);
+    u32 block = cluster_bytes();
+
+    /* Find the last cluster that already belongs to the directory. */
+    u32 tail = directory;
+    u32 guard = fs->cluster_count + 2;
+    for (;;) {
+        if (guard-- == 0)
+            return -1;
+        u32 next = fat_value(tail);
+        if (next < 2 || next >= FAT_END)
+            break;
+        tail = next;
+    }
+
+    u8 *buffer = kmalloc(block);
+    if (!buffer)
+        return -1;
+    if (read_cluster(tail, buffer) != 0) {
+        kfree(buffer);
+        return -1;
+    }
+
+    /* A free slot is either an erased entry (0xE5) or past the end marker
+     * (0x00).  The whole group must fit in one cluster. */
+    int slots = entries + 1;
+    long offset = -1;
+    for (u32 at = 0; (u64)at + (u64)slots * 32 <= block; at += 32) {
+        int free_run = 1;
+        for (int k = 0; k < slots; k++) {
+            u8 marker = buffer[at + (u32)k * 32];
+            if (marker != 0x00 && marker != 0xE5) {
+                free_run = 0;
+                break;
+            }
+        }
+        if (free_run) {
+            offset = (long)at;
+            break;
+        }
+    }
+
+    u32 cluster = tail;
+    if (offset < 0) {
+        cluster = alloc_cluster();
+        if (!cluster) {
+            kfree(buffer);
+            return -1;
+        }
+        if (fat_write(tail, cluster) != 0) {
+            free_chain(cluster);
+            kfree(buffer);
+            return -1;
+        }
+        memset(buffer, 0, block);
+        offset = 0;
+    }
+
+    u8 *group = buffer + offset;
+    for (int sequence = entries; sequence >= 1; sequence--) {
+        int slot = entries - sequence;
+        u8 *entry = group + slot * 32;
+        entry[0] = (u8)(sequence | (sequence == entries ? 0x40 : 0));
+        entry[11] = 0x0F;
+        entry[12] = 0;
+        entry[13] = checksum;
+        for (int i = 0; i < 13; i++) {
+            int source = (sequence - 1) * 13 + i;
+            u16 value = 0xFFFF;
+            if (source < length)
+                value = (u16)(u8)leaf[source];
+            else if (source == length)
+                value = 0x0000;
+            lfn_char(entry, i, value);
+        }
+    }
+    store_entry(group + entries * 32, shortname, first, size);
+
+    int result = write_cluster(cluster, buffer);
+    kfree(buffer);
+    if (result != 0 || fat_cache_flush() != 0)
+        return -1;
+    return block_disk_flush(fs->disk) == 0 ? 0 : -1;
+}
+
 int fat32_write_file(const char *path, const u8 *data, u64 size)
 {
     struct fat32_fs *fs = fat32_state();
@@ -452,16 +649,20 @@ int fat32_write_file(const char *path, const u8 *data, u64 size)
         return -1;
 
     char suffix[11];
-    if (short_name_from(leaf, suffix) != 0)
+    int long_name = short_name_from(leaf, suffix) != 0;
+    if (long_name && short_alias(leaf, suffix) != 0)
         return -1;
 
     struct dir_slot slot;
-    if (locate_slot(parent, leaf, &slot) != 0)
-        return -1;
-    if (slot.found && slot.entry.is_dir)
-        return -1;
+    memset(&slot, 0, sizeof(slot));
+    if (!long_name) {
+        if (locate_slot(parent, leaf, &slot) != 0)
+            return -1;
+        if (slot.found && slot.entry.is_dir)
+            return -1;
+    }
 
-    u32 old_first = slot.found ? slot.entry.cluster : 0;
+    u32 old_first = (!long_name && slot.found) ? slot.entry.cluster : 0;
 
     u32 first = 0;
     u32 previous = 0;
@@ -493,13 +694,23 @@ int fat32_write_file(const char *path, const u8 *data, u64 size)
     if (old_first >= 2)
         free_chain(old_first);
 
+    if (long_name) {
+        if (append_long_entry(parent, leaf, suffix, first, (u32)size) != 0) {
+            if (first)
+                free_chain(first);
+            return -1;
+        }
+        return 0;
+    }
+
     if (commit_slot(&slot, suffix, first, (u32)size) != 0) {
         if (first)
             free_chain(first);
         return -1;
     }
 
-    mark_dirty();
+    if (fat_cache_flush() != 0)
+        return -1;
     return block_disk_flush(fs->disk) == 0 ? 0 : -1;
 }
 

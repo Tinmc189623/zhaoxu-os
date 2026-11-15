@@ -297,27 +297,27 @@ static void draw_layout(long channel)
     char detail[64];
     int at = 0;
     detail[0] = 0;
-    append_text(detail, sizeof(detail), &at, "FAT32 · ");
+    append_text(detail, sizeof(detail), &at, "FAT32 / ");
     append_uint(detail, sizeof(detail), &at, g_esp_mib);
-    append_text(detail, sizeof(detail), &at, " MB · 点击切换");
+    append_text(detail, sizeof(detail), &at, " MB / 点击切换");
     draw_layout_row(channel, 120, "EFI 系统分区", detail, 1);
 
     unsigned long root = layout_root_mib();
     at = 0;
     detail[0] = 0;
-    append_text(detail, sizeof(detail), &at, "ext4 · ");
+    append_text(detail, sizeof(detail), &at, "ext4 / ");
     append_uint(detail, sizeof(detail), &at, root);
-    append_text(detail, sizeof(detail), &at, " MB · 自动");
+    append_text(detail, sizeof(detail), &at, " MB / 自动");
     draw_layout_row(channel, 168, "系统分区", detail, 0);
 
     at = 0;
     detail[0] = 0;
     if (g_data_mib) {
-        append_text(detail, sizeof(detail), &at, "FAT32 · ");
+        append_text(detail, sizeof(detail), &at, "FAT32 / ");
         append_uint(detail, sizeof(detail), &at, g_data_mib);
-        append_text(detail, sizeof(detail), &at, " MB · 点击切换");
+        append_text(detail, sizeof(detail), &at, " MB / 点击切换");
     } else {
-        append_text(detail, sizeof(detail), &at, "无 · 点击添加");
+        append_text(detail, sizeof(detail), &at, "无 / 点击添加");
     }
     draw_layout_row(channel, 216, "数据分区", detail, 1);
 
@@ -370,9 +370,9 @@ static void draw_select(long channel)
         summary[0] = 0;
         append_text(summary, sizeof(summary), &at, "布局：ESP ");
         append_uint(summary, sizeof(summary), &at, g_esp_mib);
-        append_text(summary, sizeof(summary), &at, " MB · 系统 ");
+        append_text(summary, sizeof(summary), &at, " MB / 系统 ");
         append_uint(summary, sizeof(summary), &at, layout_root_mib());
-        append_text(summary, sizeof(summary), &at, " MB · 数据 ");
+        append_text(summary, sizeof(summary), &at, " MB / 数据 ");
         if (g_data_mib)
             append_uint(summary, sizeof(summary), &at, g_data_mib);
         else
@@ -384,7 +384,7 @@ static void draw_select(long channel)
 
     ade_text(channel, 24, 318, COLOR_DARK, "分区方案");
     ade_text(channel, 130, 318, COLOR_GRAY,
-             g_gpt ? "自动 · GPT（推荐）" : "自动 · MBR（兼容）");
+             g_gpt ? "自动 / GPT（推荐）" : "自动 / MBR（兼容）");
     if (g_advanced) {
         ade_round(channel, 430, 306, 166, 34, 8, 0xDCE6EF);
         ade_text(channel, 452, 315, COLOR_DARK,
@@ -425,9 +425,9 @@ static void draw_confirm(long channel)
     layout_text[0] = 0;
     append_text(layout_text, sizeof(layout_text), &at, "ESP ");
     append_uint(layout_text, sizeof(layout_text), &at, g_esp_mib);
-    append_text(layout_text, sizeof(layout_text), &at, "MB · 系统 ");
+    append_text(layout_text, sizeof(layout_text), &at, "MB / 系统 ");
     append_uint(layout_text, sizeof(layout_text), &at, layout_root_mib());
-    append_text(layout_text, sizeof(layout_text), &at, "MB · 数据 ");
+    append_text(layout_text, sizeof(layout_text), &at, "MB / 数据 ");
     if (g_data_mib) {
         append_uint(layout_text, sizeof(layout_text), &at, g_data_mib);
         append_text(layout_text, sizeof(layout_text), &at, "MB");

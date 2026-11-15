@@ -76,6 +76,20 @@ Zhaoxu OS kernel image.
   The ICD implementation, loader entry points and SPIR-V interpreter are
   original Zhaoxu OS code.
 
+## Limine
+
+- Files: `src/third_party/limine/`
+- Version: 12.10.0
+- Copyright © 2019-2026 Mintsuki, 2026 Kamila Szewczyk, and contributors
+- License: BSD-2-Clause (see `src/third_party/limine/LICENSE`); some bundled
+  components are 0BSD, listed in `src/third_party/limine/3RDPARTY.md`
+- Limine is the boot manager. Its `bin/` images are packed into the ISO and
+  copied to installed ESPs, `include/limine.h` supplies the Limine Boot
+  Protocol used by `src/kernel/boot/limine_boot.c`, `limine-bios-hdd.h` is
+  the source of the installer's BIOS HDD image (extracted by
+  `src/tools/limine-bios-hdd.rb`), and `limine.c` builds the host-side
+  `limine bios-install` helper used by `make iso`.
+
 ## UEFI / OVMF / QEMU
 
 UEFI firmware (OVMF) and QEMU are development and test dependencies and are not

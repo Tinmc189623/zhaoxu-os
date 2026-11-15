@@ -591,6 +591,16 @@ void process_handle_exception(struct interrupt_frame *frame)
     console_set_color(COLOR_LIGHT_RED, COLOR_BLACK);
     kprintf("\n[proc] user exception %llu at rip 0x%llx, cr2 0x%llx, error 0x%llx, rsp 0x%llx\n",
             frame->vector, frame->rip, cr2, frame->error, frame->rsp);
+    /* A #GP from a non-canonical data address is invisible without the
+     * register file: the faulting operand is usually a corrupted pointer. */
+    kprintf("[proc] regs rax 0x%llx rbx 0x%llx rcx 0x%llx rdx 0x%llx\n",
+            frame->rax, frame->rbx, frame->rcx, frame->rdx);
+    kprintf("[proc] regs rsi 0x%llx rdi 0x%llx rbp 0x%llx r8 0x%llx\n",
+            frame->rsi, frame->rdi, frame->rbp, frame->r8);
+    kprintf("[proc] regs r9 0x%llx r10 0x%llx r11 0x%llx r12 0x%llx "
+            "r13 0x%llx r14 0x%llx r15 0x%llx\n",
+            frame->r9, frame->r10, frame->r11, frame->r12, frame->r13,
+            frame->r14, frame->r15);
     if (frame->vector == 14 && process_current()) {
         struct process *process = current_process();
         for (u32 i = 0; i < 6; i++) {

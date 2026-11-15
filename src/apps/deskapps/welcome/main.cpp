@@ -19,19 +19,19 @@ void paint(const struct ade_view *view)
 
     ade_text("Zhaoxu OS", x, y, 0x123A5A, 2);
     y += line * 2 + ade_ui(2);
-    ade_text("兆旭操作系统 · Aqua Desktop Environment", x, y, 0x2B6FA8, 1);
+    ade_text("兆旭操作系统 / Aqua Desktop Environment", x, y, 0x2B6FA8, 1);
     y += line + ade_ui(14);
 
     char text[160];
-    ksnprintf(text, sizeof(text), "版本 %s \"%s\" · 内核 %s Kernel %s",
+    ksnprintf(text, sizeof(text), "版本 %s \"%s\" / 内核 %s Kernel %s",
               ZHAOXU_VERSION, ZHAOXU_CODENAME, ZHAOXU_KERNEL,
               ZHAOXU_KERNEL_VERSION);
     ade_text(text, x, y, 0x2A4258, 1);
     y += line + ade_ui(6);
-    ade_text("窗口管理器 Desktop Window Manager · 系统渲染 API · 应用与桌面分离",
+    ade_text("窗口管理器 Desktop Window Manager / 系统渲染 API / 应用与桌面分离",
              x, y, 0x4A627A, 1);
     y += line + ade_ui(6);
-    ksnprintf(text, sizeof(text), "在线处理器 %u · 字体由系统提供",
+    ksnprintf(text, sizeof(text), "在线处理器 %u / 字体由系统提供",
               smp_cpu_count());
     ade_text(text, x, y, 0x4A627A, 1);
     y += line + ade_ui(16);
@@ -41,16 +41,16 @@ void paint(const struct ade_view *view)
 
     ade_text("桌面已经就绪", x, y, 0x123A5A, 1);
     y += line + ade_ui(4);
-    ade_text("· 点击 Dock 图标打开应用，拖动标题栏移动窗口。",
+    ade_text("点击 Dock 图标打开应用，拖动标题栏移动窗口。",
              x, y, 0x2A4258, 1);
     y += line + ade_ui(2);
-    ade_text("· 点击窗口左侧红色按钮关闭，ESC 也可关闭当前窗口。",
+    ade_text("点击窗口左侧红色按钮关闭，ESC 也可关闭当前窗口。",
              x, y, 0x2A4258, 1);
     y += line + ade_ui(2);
-    ade_text("· 应用位于 src/apps/UserApps，只通过 ade.h 使用桌面 API。",
+    ade_text("应用位于 src/apps/UserApps，只通过 ade.h 使用桌面 API。",
              x, y, 0x2A4258, 1);
     y += line + ade_ui(12);
-    ade_text("Aqua · Desktop Window Manager · Aqua Desktop Environment", x, y,
+    ade_text("Aqua Desktop Window Manager / Aqua Desktop Environment", x, y,
              0x2B6FA8, 1);
 }
 

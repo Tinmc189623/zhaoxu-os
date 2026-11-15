@@ -2,7 +2,30 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
-## 0.7.1 「Yuanshuo」 · build 9
+## 0.7.1 「Yuanshuo」 build 10
+
+### Limine boot manager
+- Limine 12.10.0 replaces the in-tree boot manager for both UEFI and legacy BIOS. `third_party/limine` vendors the binaries, the Limine Boot Protocol header and the host deploy tool; `boot/limine.conf` is the ISO menu
+- `kernel/boot/limine_boot.c` implements the Limine protocol: it converts the memmap, framebuffer, RSDP, executable address and modules (KERNEL.BIN, MiSans.ttf, WALL.RGB) into `struct boot_info`, installs the 64 GiB identity map over Limine's HHDM tables and maps the BSS boot stack
+- `make iso` now produces a hybrid Limine ISO: BIOS El Torito entry, UEFI El Torito entry and `limine bios-install`; both firmware paths boot to Aqua Desktop Environment
+- The installer writes Limine's BIOS boot sector and stage 2, the ESP loader, both `limine.conf` copies and a `limine-bios.sys`, then verifies the boot sector by its `EB 3C 90` + `LIMINE` signature
+- Limine 12 has no ext4 driver, so the installed ESP carries `KERNEL.ELF`, `KERNEL.BIN`, `MiSans.ttf` and `WALL.RGB`; the ext4 `ZHAOXUROOT` volume holds no boot files. `limine.conf` addresses the ESP as `boot(2)` on GPT and `boot(1)` on MBR
+- An installed 256 MiB GPT disk was booted to Aqua under both OVMF and SeaBIOS, with the boot font and wallpaper loaded from the ESP
+
+### Installer reliability
+- Rewrote `append_long_entry()` to walk the directory chain with the write-side FAT cache and to reuse a free slot before chaining a cluster. The old walk treated end-of-chain as a cluster number and performed a failed out-of-range read per guard iteration, stalling the ESP stage for minutes
+- VFAT long names are written for `limine.conf`, `limine-bios.sys`, `MiSans.ttf` and `WALL.RGB`; the FAT sector cache, batched contiguous cluster writes and cheap FSInfo invalidation cut ESP writes
+- `fat32_make_esp()` reports granular failure codes (-2..-11) and the installer maps them to concrete messages
+- The target scan recognizes a disk carrying Limine's boot sector as a previous Zhaoxu install, so reinstall over an installed disk works
+- Install stages are now 7 (8 with a data partition): root format, MBR/GPT, Limine BIOS, gap, ESP, verify, flush. The ext4 format is synced before the partition table is written
+- The kernel and modules are written once, to the ESP, instead of being duplicated into the ext4 root
+
+### Scheduler and diagnostics
+- Per-thread FXSAVE/FXRSTOR saves x87 and SSE state across preemption, so a Ring3 program using SSE cannot be resumed with another thread's XMM registers
+- User exceptions now print the full register file; `FT_Done_Face` faults became diagnosable from serial alone
+- Kernel install stages, ESP payload writes and user font loading log their tick counts and pointers
+
+## 0.7.1 「Yuanshuo」 build 9
 
 ### Custom partitioning and formatting
 - The installer gained a "自定义分区" screen. ESP size cycles through 64/128/256 MiB; an optional FAT32 `ZHAOXUDATA` data partition cycles through none/64/128/256 MiB; the ext4 system partition takes the remaining space and the screen rejects layouts that leave it under 64 MiB
@@ -21,7 +44,7 @@ Full version history of Zhaoxu OS. See [README.md](README.md) for what the curre
 - Regenerated the desktop, application, installer and custom-partition screenshots from this build and updated their README captions; the older shell/editor/disk/font screens are explicitly marked as earlier-release captures
 - INSTALL.md documents the layout editor, the FAT32/ext4 formatting of each partition, the data partition's `/media/<n>` mount and the confirmation/progress/reboot flow
 
-## 0.7.1 「Yuanshuo」 · build 8
+## 0.7.1 「Yuanshuo」 build 8
 
 ### Installer progress and post-install actions
 - The installer now runs the blocking disk write in a `worker` child process. The UI process maps a shared page, passes its shm id to the worker, and paints a real stage counter from `SYS_INSTALL_PROGRESS` (70) while the child blocks in the kernel
@@ -50,7 +73,7 @@ Full version history of Zhaoxu OS. See [README.md](README.md) for what the curre
 - THIRD_PARTY_NOTICES records Vulkan-Headers (Apache 2.0)
 - README, AGENTS, CLAUDE, INSTALL and the ZAF graphics status describe the actual OpenGL/Vulkan subset instead of claiming full compliance
 
-## 0.7.1 「Yuanshuo」 · build 7
+## 0.7.1 「Yuanshuo」 build 7
 
 ### Installer
 - The graphical installer is now a short Windows-style flow: it scans the block devices, keeps only blank or previously installed Zhaoxu targets, auto-selects a single disk, and asks for one confirmation before writing. GPT is the default; MBR is behind the advanced toggle
@@ -79,14 +102,14 @@ Full version history of Zhaoxu OS. See [README.md](README.md) for what the curre
 ### Tooling
 - `tools/screenshot.rb` gains `SMOKE_BOOT=iso-install` (CD plus one blank target), `SHOT_NO_SHELL` for graphical boots, `SHOT_SERIAL` to persist the serial log, and byte-wise PPM header parsing that survives whitespace bytes inside pixel data and Windows text-mode pipes
 
-## 0.7.1 「Yuanshuo」 · build 6
+## 0.7.1 「Yuanshuo」 build 6
 
 ### Fixes
 - The cursor stays visible while the pointer is stationary. DWM now remembers that a pointer has been seen and keeps compositing it at its last position instead of hiding it whenever a damage repaint finds no fresh mouse report
 - FreeType glyphs are no longer flipped or vertically offset. `ttf_freetype.c` converts `bitmap_top` into the line-top coordinate expected by `render.c` (`ascender - bitmap_top`) and rounds the advance consistently, so glyphs sit on the baseline instead of bobbing per glyph
 - Verified with a real OVMF desktop run: the welcome window, calculator, menu bar and Dock render upright aligned text; six framebuffer captures taken 450 ms apart with a stationary pointer differ only in the menu-bar clock area
 
-## 0.7.1 「Yuanshuo」 · build 5
+## 0.7.1 「Yuanshuo」 build 5
 
 ### Fonts and rendering
 - Rule 17: removed the non-OpenType WenQuanYi fallback from the boot loader, Aqua Desktop Environment, installer, ISO and FAT data image. Only MiSans, MiSans Global and Inter (OpenType) are accepted. The ISO ships `install/MiSans.ttf` and `install/Inter.otf`; the installer writes `/MiSans.ttf` to the ext4 root and the boot loader reads it from there
@@ -101,7 +124,7 @@ Full version history of Zhaoxu OS. See [README.md](README.md) for what the curre
 ### Known open items
 - Rules 37/38 are not implemented: there is no Vulkan loader/ICD and no OpenGL port. The desktop still renders through the ZOS raster path. A compliant build needs a working GPU backend and the Vulkan/OpenGL ports; this release does not claim those rules
 
-## 0.7.1 「Yuanshuo」 · build 4
+## 0.7.1 「Yuanshuo」 build 4
 
 ### Wayland
 - Ported the stock libwayland 1.23.1 client core (`wayland-client.c`, `wayland-util.c`, `connection.c`) with generated core and xdg-shell bindings; libffi 3.4.6 supplies the x86_64 SysV `ffi_call` path used to invoke listeners
@@ -112,7 +135,7 @@ Full version history of Zhaoxu OS. See [README.md](README.md) for what the curre
 ### Documentation
 - `THIRD_PARTY_NOTICES.md` records libwayland (MIT) and libffi (MIT), including the generated xdg-shell bindings
 
-## 0.7.1 「Yuanshuo」 · build 3
+## 0.7.1 「Yuanshuo」 build 3
 
 ### Kernel
 - New `eventfd`, `timerfd`, and `epoll` objects in `kernel/ipc/`, registered as zfd descriptor types above `ZFD_BASE`; duplicate and `SCM_RIGHTS` paths keep the existing refcount rules
@@ -123,7 +146,7 @@ Full version history of Zhaoxu OS. See [README.md](README.md) for what the curre
 ### Documentation
 - All project documentation except `AGENTS.md` is now in English; the GitHub repository description is in English too. Product names, commands, paths, code blocks, and the `Nexsteaduser` copyright lines are unchanged
 
-## 0.7.1 「Yuanshuo」 · build 2
+## 0.7.1 「Yuanshuo」 build 2
 
 ### Display
 - `/bin/display` no longer hardcodes the control queue size at 64: `virtio-gpu-gl-pci` uses 256 and 2D devices use 64, so the queue size is now validated against the device value and allocated accordingly, fixing `invalid control queue size` on gl devices
@@ -136,7 +159,7 @@ Full version history of Zhaoxu OS. See [README.md](README.md) for what the curre
 - When `tools/version.rb` updates `/etc/version` it now replaces the old `build N` too, so `build 2 build 1` no longer appears
 - `virtio-gpu-pci` regression: the 64-entry control queue, 2D resources, Wayland frame submission, and the compositor connection all work with no command errors
 
-## 0.7.1 「Yuanshuo」 · build 1
+## 0.7.1 「Yuanshuo」 build 1
 
 ### Build
 - The Makefile is the only build entry point; Ruby keeps only auxiliary scripts (ZXE packing, version sync, ISO metadata, smoke tests/screenshots, host probing)

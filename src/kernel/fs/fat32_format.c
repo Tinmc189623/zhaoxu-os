@@ -9,8 +9,10 @@
 #include "fat32_internal.h"
 
 #include <block.h>
+#include <kprintf.h>
 #include <mem.h>
 #include <string.h>
+#include <timer.h>
 #include <types.h>
 
 static int write_sector(int disk, u64 lba, const u8 *buffer)
@@ -166,34 +168,82 @@ int fat32_format_volume(int disk, u64 volume_base, u32 sectors,
 }
 
 int fat32_make_esp(int disk, u64 volume_base, u32 sectors, const u8 *bootx64,
-                   u64 bootx64_size, const u8 *osldr, u64 osldr_size)
+                   u64 bootx64_size, const u8 *bios_sys, u64 bios_sys_size,
+                   const char *config, const struct fat32_boot_file *extra,
+                   u32 extra_count)
 {
     struct fat32_fs saved = *fat32_state();
     int result = -1;
 
-    if (!bootx64 || !bootx64_size || !osldr || !osldr_size)
-        return -1;
+    if (!bootx64 || !bootx64_size || !bios_sys || !bios_sys_size || !config)
+        return -2;
+    u64 config_size = strlen(config);
+    if (!config_size)
+        return -2;
+    kprintf("[esp ] format begin %u sectors t=%llu\n", sectors,
+            (unsigned long long)timer_ticks());
     if (fat32_format_volume(disk, volume_base, sectors, "ZHAOXUEFI") != 0)
-        return -1;
-    if (fat32_mount_at(disk, volume_base) != 0)
+        return -3;
+    kprintf("[esp ] formatted t=%llu\n", (unsigned long long)timer_ticks());
+    if (fat32_mount_at(disk, volume_base) != 0) {
+        result = -4;
         goto restore;
+    }
     fat32_alloc_reset();
 
-    if (fat32_mkdir("/EFI") != 0 || fat32_mkdir("/EFI/BOOT") != 0)
+    if (fat32_mkdir("/EFI") != 0 || fat32_mkdir("/EFI/BOOT") != 0 ||
+        fat32_mkdir("/boot") != 0 || fat32_mkdir("/boot/limine") != 0) {
+        result = -5;
         goto restore;
-    if (fat32_write_file("/EFI/BOOT/BOOTX64.EFI", bootx64, bootx64_size) != 0)
+    }
+    if (fat32_write_file("/EFI/BOOT/BOOTX64.EFI", bootx64, bootx64_size) != 0) {
+        result = -6;
         goto restore;
-    /* ZhaoxuBootMgr reads its second stage from the same ESP. */
-    if (fat32_write_file("/EFI/BOOT/OSLDRX64.EFI", osldr, osldr_size) != 0)
+    }
+    kprintf("[esp ] BOOTX64.EFI %llu bytes t=%llu\n",
+            (unsigned long long)bootx64_size,
+            (unsigned long long)timer_ticks());
+    if (fat32_write_file("/EFI/BOOT/limine.conf", (const u8 *)config,
+                         config_size) != 0) {
+        result = -7;
         goto restore;
+    }
+    if (fat32_write_file("/boot/limine/limine-bios.sys", bios_sys,
+                         bios_sys_size) != 0) {
+        result = -8;
+        goto restore;
+    }
+    kprintf("[esp ] limine-bios.sys %llu bytes t=%llu\n",
+            (unsigned long long)bios_sys_size,
+            (unsigned long long)timer_ticks());
+    if (fat32_write_file("/boot/limine/limine.conf", (const u8 *)config,
+                         config_size) != 0) {
+        result = -9;
+        goto restore;
+    }
+    /* The boot payloads share the ESP with Limine; the ext4 root is not
+     * readable by Limine, so the kernel and its modules must live here. */
+    for (u32 i = 0; i < extra_count; i++) {
+        if (!extra[i].path || !extra[i].data || !extra[i].size)
+            continue;
+        if (fat32_write_file(extra[i].path, extra[i].data,
+                             extra[i].size) != 0) {
+            result = -11;
+            goto restore;
+        }
+        kprintf("[esp ] %s %llu bytes t=%llu\n", extra[i].path,
+                (unsigned long long)extra[i].size,
+                (unsigned long long)timer_ticks());
+    }
 
     struct fat_entry entry;
     if (fat32_find("/EFI/BOOT/BOOTX64.EFI", &entry) != 0 ||
-        entry.size != (u32)bootx64_size)
+        entry.size != (u32)bootx64_size) {
+        result = -10;
         goto restore;
-    if (fat32_find("/EFI/BOOT/OSLDRX64.EFI", &entry) != 0 ||
-        entry.size != (u32)osldr_size)
-        goto restore;
+    }
+    /* fat32_find does not resolve VFAT long names yet; the long files were
+     * written successfully above, so only the 8.3 loader is re-read here. */
 
     result = 0;
 

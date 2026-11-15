@@ -83,12 +83,14 @@ module ZosHost
       end
     end
 
-    # Convert C:\a\b to /c/a/b for MSYS2/Git-Bash and WSL.  The function is
-    # a no-op for POSIX paths so callers can use it unconditionally.
+    # Convert C:\a\b to /c/a/b for MSYS2/Git-Bash and WSL.  The drive letter
+    # is matched before File.expand_path: on a POSIX host Ruby would treat
+    # "C:\..." as a relative path and glue it onto the current directory.
     def to_posix_path(path)
-      expanded = File.expand_path(path.to_s).tr("\\", "/")
-      match = expanded.match(/\A([A-Za-z]):\/(.*)\z/)
-      match ? "/#{match[1].downcase}/#{match[2]}" : expanded
+      text = path.to_s.tr("\\", "/")
+      match = text.match(/\A([A-Za-z]):\/(.*)\z/)
+      return "/#{match[1].downcase}/#{match[2]}" if match
+      File.expand_path(text)
     end
 
     # Git Bash and make split unquoted arguments on spaces, so tools under

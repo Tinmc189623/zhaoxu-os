@@ -25,7 +25,7 @@ void about_paint(const struct ade_view *view)
     ade_text("内核：" ZHAOXU_KERNEL " Kernel " ZHAOXU_KERNEL_VERSION "（微内核）",
              x + ade_ui(24), line, 0x36495C, 1);
     line += step;
-    ade_text("桌面：Aqua Desktop Environment · 窗口管理器：Desktop Window Manager",
+    ade_text("桌面：Aqua Desktop Environment；窗口管理器：Desktop Window Manager",
              x + ade_ui(24), line,
              0x36495C, 1);
     line += step;

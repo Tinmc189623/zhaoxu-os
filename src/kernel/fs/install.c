@@ -2,17 +2,18 @@
  * Zhaoxu OS - self-contained disk installer.
  *
  * No extra installation media is required (rule 27): the UEFI loader comes
- * from the initramfs (/boot/BOOTX64.EFI) and the kernel is the running
- * image.  The installer formats the FAT32 ESP itself (EFI/BOOT files only)
- * and delegates the ext4 root volume to the Ring3 /bin/ext4fs service over
- * the fs RPC channel, then writes either an MBR or a GPT layout (rule 15):
+ * from the initramfs (/boot/limine/BOOTX64.EFI) and the kernel is the
+ * running image.  The installer formats the FAT32 ESP itself and delegates
+ * the ext4 root volume to the Ring3 /bin/ext4fs service over the fs RPC
+ * channel, then writes either an MBR or a GPT layout (rule 15):
  *
  *   MBR: LBA0 stage1, LBA1 stage2, gap, ESP at LBA 2048, ext4 root after.
  *   GPT: LBA0 stage1 + protective MBR, LBA1/2 header+entries, stage2 at
  *        LBA34, gap, ESP at LBA 2048, ext4 root, backup GPT at the end.
  *
- * The kernel lives in the ext4 root filesystem, never in the ESP or the
- * boot sectors; stage2 gets a block list pointing at KERNEL.BIN.
+ * Limine 12 reads FAT and ISO9660 only, so KERNEL.ELF, KERNEL.BIN,
+ * MiSans.ttf and WALL.RGB live on the ESP; the ext4 root carries the
+ * installed filesystem and no boot files.
  */
 #include <block.h>
 #include <boot.h>
@@ -22,6 +23,7 @@
 #include <kprintf.h>
 #include <mem.h>
 #include <string.h>
+#include <timer.h>
 #include <types.h>
 #include <vfs.h>
 
@@ -34,12 +36,9 @@
 #define ESP_MIN_SECTORS 70000u         /* FAT32 needs >= 65525 clusters */
 #define EXT4_MIN_SECTORS 65536u        /* 32 MiB: kernel + font + wallpaper */
 #define DATA_MIN_SECTORS 131072u       /* 64 MiB FAT32 data volume */
-/* The legacy BIOS stage 2 stages the flat kernel into the low buffer below
- * the EBDA; keep this in sync with MAX_KERNEL_BYTES in bios_stage2.asm and
- * tools/kernel-flat.rb. */
-#define KERNEL_FLAT_MAX_BYTES 0x8F000u
 #define KERNEL_MAX_BYTES (64u * 1024u * 1024u)
 #define LOADER_MAX_BYTES (16u * 1024u * 1024u)
+#define LIMINE_BIOS_HDD_MAX (4u * 1024u * 1024u)
 #define FONT_MAX_BYTES (32u * 1024u * 1024u)
 #define WALLPAPER_MAX_BYTES (32u * 1024u * 1024u)
 /* The ext4/FAT writers and the MBR/GPT fields use 32-bit sector counts. */
@@ -82,18 +81,13 @@ static const u8 g_guid_data[16] = {
     0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7
 };
 
-extern const u8 bios_stage1_start[];
-extern const u8 bios_stage1_end[];
-extern const u8 bios_stage2_start[];
-extern const u8 bios_stage2_end[];
-
 static u8 g_sector[SECTOR_SIZE];
-static u8 g_stage1[512];
 static u8 g_gpt_entries[GPT_ENTRY_COUNT * GPT_ENTRY_SIZE];
 static u8 g_chunk[CHUNK_BYTES];
 static u8 g_zero[CHUNK_BYTES];
-static u8 g_stage2[0x8000];
 static char g_error[80];
+
+static int write_blob(int disk, u64 lba, const u8 *data, u64 bytes);
 
 static void set_error(const char *text)
 {
@@ -212,19 +206,18 @@ static u8 *build_kernel_elf(const u8 *image, u64 size, u64 *file_size)
     return file;
 }
 
-static u64 blob_sectors(const u8 *start, const u8 *end)
-{
-    return ((u64)(end - start) + SECTOR_SIZE - 1) / SECTOR_SIZE;
-}
-
 /* A previous Zhaoxu install: our MBR (0xEF/0x0C/0x0E first partition at
- * LBA 2048) or our GPT hybrid (stage1's ZSLBA marker in the protective MBR).
+ * LBA 2048) or any GPT/BIOS disk already carrying Limine's boot sector.
  * The full stage1 bytes are not compared: bootloader builds legitimately
  * differ between releases and an older install must stay a valid target. */
 static int sector_is_our_mbr(const u8 *sector)
 {
     if (sector[510] != 0x55 || sector[511] != 0xAA)
         return 0;
+    /* Limine's boot sector: EB 3C 90 followed by "LIMINE". */
+    if (sector[0] == 0xEB && sector[1] == 0x3C && sector[2] == 0x90 &&
+        memcmp(sector + 3, "LIMINE", 6) == 0)
+        return 1;
     u8 type = sector[446 + 4];
     if (type == 0xEF || type == 0x0C || type == 0x0E)
         return get_le32(sector + 446 + 8) == INSTALL_PARTITION_LBA;
@@ -298,40 +291,61 @@ static u32 crc32(const u8 *data, usize length)
     return ~crc;
 }
 
-static int patch_stage1(u16 stage2_lba)
+/* Build the Limine config written to the installed ESP.  Limine 12 reads
+ * FAT and ISO9660 only, so the kernel and its modules live on the ESP:
+ * partition 2 on GPT (BIOS boot, ESP, root) and partition 1 on MBR. */
+static int build_limine_config(char *buffer, usize capacity, int gpt,
+                               int font_present, int wallpaper_present)
 {
-    usize size = (usize)(bios_stage1_end - bios_stage1_start);
-    if (size < 512)
-        return -1;
-    memcpy(g_stage1, bios_stage1_start, 512);
-    static const u8 marker[5] = {'Z', 'S', 'L', 'B', 'A'};
-    for (usize i = 0; i + 5 + 2 <= 446; i++) {
-        if (memcmp(g_stage1 + i, marker, 5) != 0)
-            continue;
-        g_stage1[i + 5] = (u8)stage2_lba;
-        g_stage1[i + 6] = (u8)(stage2_lba >> 8);
-        return 0;
-    }
-    return -1;
+    int esp_partition = gpt ? 2 : 1;
+    char modules[3][96];
+    int count = 0;
+    ksnprintf(modules[count++], sizeof(modules[0]),
+              "    module_path: boot(%d):/KERNEL.BIN\n", esp_partition);
+    if (font_present)
+        ksnprintf(modules[count++], sizeof(modules[0]),
+                  "    module_path: boot(%d):/MiSans.ttf\n", esp_partition);
+    if (wallpaper_present)
+        ksnprintf(modules[count++], sizeof(modules[0]),
+                  "    module_path: boot(%d):/WALL.RGB\n", esp_partition);
+
+    int written = ksnprintf(
+        buffer, capacity,
+        "timeout: 0\n"
+        "serial: yes\n\n"
+        "/Zhaoxu OS\n"
+        "    protocol: limine\n"
+        "    path: boot(%d):/KERNEL.ELF\n"
+        "%s%s%s"
+        "    resolution: 1920x1080x32\n",
+        esp_partition, modules[0],
+        count > 1 ? modules[1] : "", count > 2 ? modules[2] : "");
+    return written > 0 && (usize)written < capacity ? 0 : -1;
 }
 
-static int prepare_stage2(u64 kernel_lba, u64 kernel_bytes, u64 kernel_sectors)
+/* Install Limine's BIOS boot sector and stage 2.  The MBR stage 2 lives in
+ * the post-MBR gap at byte 4096; GPT uses the BIOS boot partition at LBA 34.
+ * Partition-table bytes are preserved exactly like `limine bios-install`. */
+static int write_limine_bios(int disk, const u8 *image, u64 image_size,
+                             int gpt)
 {
-    static const u8 magic[8] = {'Z', 'B', 'O', 'O', 'T', 'P', 'R', 'M'};
-    usize size = (usize)(bios_stage2_end - bios_stage2_start);
-    if (size == 0 || size > sizeof(g_stage2))
+    if (!image || image_size <= SECTOR_SIZE)
         return -1;
-    memcpy(g_stage2, bios_stage2_start, size);
-    for (usize i = 0; i + 8 + 24 <= size; i++) {
-        if (memcmp(g_stage2 + i, magic, 8) != 0)
-            continue;
-        u8 *p = g_stage2 + i + 8;
-        put_le64(p, kernel_lba);
-        put_le64(p + 8, kernel_bytes);
-        put_le64(p + 16, kernel_sectors);
-        return 0;
-    }
-    return -1;
+    u64 stage2_bytes = image_size - SECTOR_SIZE;
+    u64 stage2_lba = gpt ? GPT_BIOS_START : 8;
+    u64 stage2_sectors = (stage2_bytes + SECTOR_SIZE - 1) / SECTOR_SIZE;
+    if (stage2_lba + stage2_sectors > INSTALL_PARTITION_LBA)
+        return -1;
+
+    if (block_disk_read(disk, 0, 1, g_sector) != 0)
+        return -1;
+    memcpy(g_sector, image, 440);
+    g_sector[510] = image[510];
+    g_sector[511] = image[511];
+    put_le64(g_sector + 0x1A4, stage2_lba * SECTOR_SIZE);
+    if (block_disk_write(disk, 0, 1, g_sector) != 0)
+        return -1;
+    return write_blob(disk, stage2_lba, image + SECTOR_SIZE, stage2_bytes);
 }
 
 static int write_blob(int disk, u64 lba, const u8 *data, u64 bytes)
@@ -389,7 +403,6 @@ static int write_mbr(int target, u64 total, u32 esp_sectors,
                      u32 root_sectors, u64 data_sectors, int gpt)
 {
     memset(g_sector, 0, SECTOR_SIZE);
-    memcpy(g_sector, g_stage1, 446);
     u8 *entry = g_sector + 446;
     if (gpt) {
         entry[0] = 0x00;
@@ -492,13 +505,33 @@ static int write_gpt(int disk, u64 total, u32 esp_sectors, u32 root_sectors,
                             entries_crc);
 }
 
-static int read_stage1_verify(int disk)
+static int read_boot_verify(int disk)
 {
-    if (block_disk_read(disk, 0, 1, g_sector) != 0)
+    if (block_disk_read(disk, 0, 1, g_sector) != 0) {
+        set_error("verification failed: boot sector is unreadable");
         return -1;
-    if (memcmp(g_sector, g_stage1, 446) != 0)
+    }
+    /* Limine's MBR code starts with EB 3C 90 and the signature string
+     * "LIMINE" begins at offset 3, immediately after the jump stub. */
+    if (g_sector[510] != 0x55 || g_sector[511] != 0xAA ||
+        memcmp(g_sector + 3, "LIMINE", 6) != 0) {
+        set_error("verification failed: Limine boot sector differs");
         return -1;
+    }
     return 0;
+}
+
+/* Publish one coarse stage to the installer UI and to the serial log; the
+ * tick count makes a slow stage visible without attaching a debugger. */
+static void stage_report(void (*progress)(void *context, u32 done, u32 total),
+                         void *context, u32 *step, u32 steps,
+                         const char *name)
+{
+    (*step)++;
+    if (progress)
+        progress(context, *step, steps);
+    kprintf("[install] stage %u/%u %s t=%llu\n", *step, steps, name,
+            (unsigned long long)timer_ticks());
 }
 
 /* Every failure after the ext4 FORMAT must leave the service in a clean
@@ -580,57 +613,46 @@ int install_run(int target_disk, int gpt, const struct install_layout *layout,
             gpt ? "GPT" : "MBR");
 
     const struct boot_info *bi = boot_get_info();
-    const u8 *kernel = (const u8 *)(uintptr_t)bi->kernel_phys_base;
-    u64 kernel_bytes = bi->kernel_size;
+    const u8 *kernel = (const u8 *)(uintptr_t)(bi->boot_image_phys
+                                                    ? bi->boot_image_phys
+                                                    : bi->kernel_phys_base);
+    u64 kernel_bytes = bi->boot_image_size ? bi->boot_image_size
+                                           : bi->kernel_size;
     if (!kernel || kernel_bytes == 0 || kernel_bytes > KERNEL_MAX_BYTES) {
         set_error("running kernel image is unavailable or too large");
-        return -1;
-    }
-    if (kernel_bytes > KERNEL_FLAT_MAX_BYTES) {
-        set_error("kernel too large for the legacy BIOS loader");
-        return -1;
-    }
-    u64 kernel_sectors = blob_sectors(kernel, kernel + kernel_bytes);
-    if (kernel_sectors > KERNEL_FLAT_MAX_BYTES / SECTOR_SIZE) {
-        set_error("kernel too large for the legacy BIOS loader");
         return -1;
     }
 
     u8 *loader = NULL;
     u64 loader_bytes = 0;
-    u8 *osldr = NULL;
-    u64 osldr_bytes = 0;
+    u8 *bios_sys = NULL;
+    u64 bios_sys_bytes = 0;
+    u8 *bios_hdd = NULL;
+    u64 bios_hdd_bytes = 0;
     u8 *kernel_file = NULL;
     u64 kernel_file_size = 0;
     u8 *font_copy = NULL;
     int fs_dirty = 0;
+    char limine_config[512];
 
-    if (vfs_read_all("/boot/BOOTX64.EFI", &loader, &loader_bytes) != 0 ||
+    if (vfs_read_all("/boot/limine/BOOTX64.EFI", &loader, &loader_bytes) != 0 ||
         !loader || !loader_bytes || loader_bytes > LOADER_MAX_BYTES) {
-        set_error("embedded BOOTX64.EFI is missing or too large");
+        set_error("embedded Limine BOOTX64.EFI is missing or too large");
         goto fail;
     }
-    if (vfs_read_all("/boot/OSLDRX64.EFI", &osldr, &osldr_bytes) != 0 ||
-        !osldr || !osldr_bytes || osldr_bytes > LOADER_MAX_BYTES) {
-        set_error("embedded OSLDRX64.EFI is missing or too large");
+    if (vfs_read_all("/boot/limine/limine-bios.sys", &bios_sys,
+                     &bios_sys_bytes) != 0 ||
+        !bios_sys || !bios_sys_bytes || bios_sys_bytes > LOADER_MAX_BYTES) {
+        set_error("embedded limine-bios.sys is missing or too large");
         goto fail;
     }
-
-    u64 stage1_bytes = (u64)(bios_stage1_end - bios_stage1_start);
-    u64 stage2_bytes = (u64)(bios_stage2_end - bios_stage2_start);
-    if (stage1_bytes != SECTOR_SIZE || stage2_bytes == 0 ||
-        stage2_bytes > sizeof(g_stage2)) {
-        set_error("ZhaoxuBootloader payload is not embedded");
+    if (vfs_read_all("/boot/limine/limine-bios-hdd.bin", &bios_hdd,
+                     &bios_hdd_bytes) != 0 ||
+        !bios_hdd || bios_hdd_bytes <= SECTOR_SIZE ||
+        bios_hdd_bytes > LIMINE_BIOS_HDD_MAX) {
+        set_error("embedded Limine BIOS image is missing or too large");
         goto fail;
     }
-
-    u64 stage2_sectors = blob_sectors(bios_stage2_start, bios_stage2_end);
-    u64 stage2_lba = gpt ? GPT_BIOS_START : 1;
-    if (stage2_lba + stage2_sectors > INSTALL_PARTITION_LBA) {
-        set_error("bootloader stage 2 does not fit before the partition");
-        goto fail;
-    }
-
     kernel_file = build_kernel_elf(kernel, kernel_bytes, &kernel_file_size);
     if (!kernel_file || kernel_file_size > KERNEL_MAX_BYTES) {
         set_error("cannot build the kernel ELF image");
@@ -663,16 +685,61 @@ int install_run(int target_disk, int gpt, const struct install_layout *layout,
         }
     }
 
-    /* Coarse stages: format, kernel, assets, MBR, stage2, gap, ESP,
-     * optional data format, verify and flush.  Report before the long format
-     * so the UI can show a real denominator instead of an indeterminate 0/1. */
-    u32 steps = data_sectors ? 10 : 9;
+    const u8 *wallpaper = (const u8 *)(uintptr_t)info->wallpaper_phys;
+    u64 wallpaper_size = info->wallpaper_size;
+    if (wallpaper && wallpaper_size > WALLPAPER_MAX_BYTES) {
+        set_error("boot wallpaper image is too large");
+        goto fail;
+    }
+    int font_present = font && font_size >= 13;
+    int wallpaper_present = wallpaper &&
+                            wallpaper_size >= 1920u * 1080u * 3u;
+    if (build_limine_config(limine_config, sizeof(limine_config), gpt,
+                            font_present, wallpaper_present) != 0) {
+        set_error("cannot build limine.conf");
+        goto fail;
+    }
+
+    /* Everything Limine must read goes on the ESP: it has no ext4 driver,
+     * so the root volume only carries the filesystem, not boot files. */
+    struct fat32_boot_file boot_files[4];
+    u32 boot_file_count = 0;
+    boot_files[boot_file_count].path = "/KERNEL.ELF";
+    boot_files[boot_file_count].data = kernel_file;
+    boot_files[boot_file_count].size = kernel_file_size;
+    boot_file_count++;
+    boot_files[boot_file_count].path = "/KERNEL.BIN";
+    boot_files[boot_file_count].data = kernel;
+    boot_files[boot_file_count].size = kernel_bytes;
+    boot_file_count++;
+    if (font_present) {
+        boot_files[boot_file_count].path = "/MiSans.ttf";
+        boot_files[boot_file_count].data = font;
+        boot_files[boot_file_count].size = font_size;
+        boot_file_count++;
+    }
+    if (wallpaper_present) {
+        boot_files[boot_file_count].path = "/WALL.RGB";
+        boot_files[boot_file_count].data = wallpaper;
+        boot_files[boot_file_count].size = wallpaper_size;
+        boot_file_count++;
+    }
+
+    /* Coarse stages: format, MBR/GPT, Limine BIOS, gap, ESP, optional data
+     * format, verify and flush.  Report before the long format so the UI can
+     * show a real denominator instead of an indeterminate 0/1. */
+    u32 steps = data_sectors ? 8 : 7;
     u32 step = 0;
     if (progress)
         progress(context, step, steps);
+    kprintf("[install] start t=%llu, kernel %llu bytes, loader %llu, "
+            "bios.sys %llu, bios.hdd %llu\n",
+            (unsigned long long)timer_ticks(),
+            (unsigned long long)kernel_bytes,
+            (unsigned long long)loader_bytes,
+            (unsigned long long)bios_sys_bytes,
+            (unsigned long long)bios_hdd_bytes);
 
-    u32 bin_block = 0;
-    u32 bin_blocks = 0;
     if (fs_call_format(target_disk, root_lba, root_sectors,
                        "ZHAOXUROOT") != 0) {
         set_error("ext4 service could not format the root volume");
@@ -681,89 +748,13 @@ int install_run(int target_disk, int gpt, const struct install_layout *layout,
     /* The service now has the target mounted: every later failure must
      * SYNC (commit + restore the previous mount) in the cleanup path. */
     fs_dirty = 1;
-    step++;
-    if (progress)
-        progress(context, step, steps);
-    for (u64 offset = 0; offset < kernel_bytes;) {
-        u32 chunk = (u32)(kernel_bytes - offset);
-        if (chunk > FS_DATA_SIZE)
-            chunk = FS_DATA_SIZE;
-        if (fs_call_write_contig("/KERNEL.BIN", kernel_bytes, offset,
-                                 kernel + offset, chunk, &bin_block,
-                                 &bin_blocks) != 0) {
-            set_error("ext4 service could not write KERNEL.BIN");
-            goto fail;
-        }
-        offset += chunk;
-    }
-    for (u64 offset = 0; offset < kernel_file_size;) {
-        u32 chunk = (u32)(kernel_file_size - offset);
-        if (chunk > FS_DATA_SIZE)
-            chunk = FS_DATA_SIZE;
-        if (fs_call_write("/KERNEL.ELF", kernel_file_size, offset,
-                          kernel_file + offset, chunk, offset == 0) != 0) {
-            set_error("ext4 service could not write KERNEL.ELF");
-            goto fail;
-        }
-        offset += chunk;
-    }
-    step++;
-    if (progress)
-        progress(context, step, steps);
-    for (u64 offset = 0; font && offset < font_size;) {
-        u32 chunk = (u32)(font_size - offset);
-        if (chunk > FS_DATA_SIZE)
-            chunk = FS_DATA_SIZE;
-        if (fs_call_write("/MiSans.ttf", font_size, offset, font + offset,
-                          chunk, offset == 0) != 0) {
-            set_error("ext4 service could not write MiSans.ttf");
-            goto fail;
-        }
-        offset += chunk;
-    }
-    const u8 *wallpaper = (const u8 *)(uintptr_t)info->wallpaper_phys;
-    u64 wallpaper_size = info->wallpaper_size;
-    if (wallpaper && wallpaper_size > WALLPAPER_MAX_BYTES) {
-        set_error("boot wallpaper image is too large");
-        goto fail;
-    }
-    if (wallpaper && wallpaper_size >= 1920u * 1080u * 3u) {
-        for (u64 offset = 0; offset < wallpaper_size;) {
-            u32 chunk = (u32)(wallpaper_size - offset);
-            if (chunk > FS_DATA_SIZE)
-                chunk = FS_DATA_SIZE;
-            if (fs_call_write("/WALLPAPER.RAW", wallpaper_size, offset,
-                              wallpaper + offset, chunk,
-                              offset == 0) != 0) {
-                set_error("ext4 service could not write WALLPAPER.RAW");
-                goto fail;
-            }
-            offset += chunk;
-        }
-    }
     if (fs_call_sync() != 0) {
         set_error("ext4 service could not sync the root volume");
         /* The cleanup retries the (idempotent) sync once. */
         goto fail;
     }
     fs_dirty = 0;
-    step++;
-    if (progress)
-        progress(context, step, steps);
-
-    u64 bin_lba = root_lba + (u64)bin_block * 8u;
-    if ((u64)bin_blocks * 8u < kernel_sectors ||
-        (u64)bin_blocks * 8u > root_sectors ||
-        bin_lba + kernel_sectors > root_lba + root_sectors) {
-        set_error("KERNEL.BIN is not contiguous inside ext4");
-        goto fail;
-    }
-
-    if (patch_stage1((u16)stage2_lba) != 0 ||
-        prepare_stage2(bin_lba, kernel_bytes, kernel_sectors) != 0) {
-        set_error("stage 1/2 parameter blocks are missing");
-        goto fail;
-    }
+    stage_report(progress, context, &step, steps, "root formatted");
 
     if (write_mbr(target_disk, total, esp_sectors, root_sectors,
                   data_sectors, gpt) != 0) {
@@ -776,9 +767,7 @@ int install_run(int target_disk, int gpt, const struct install_layout *layout,
         set_error("failed to clear the old GPT backup");
         goto fail;
     }
-    step++;
-    if (progress)
-        progress(context, step, steps);
+    stage_report(progress, context, &step, steps, "partition table written");
 
     if (gpt && write_gpt(target_disk, total, esp_sectors, root_sectors,
                          data_sectors) != 0) {
@@ -786,31 +775,44 @@ int install_run(int target_disk, int gpt, const struct install_layout *layout,
         goto fail;
     }
 
-    if (write_blob(target_disk, stage2_lba, g_stage2, stage2_bytes) != 0) {
-        set_error("failed to write bootloader stage 2");
+    if (write_limine_bios(target_disk, bios_hdd, bios_hdd_bytes, gpt) != 0) {
+        set_error("failed to install Limine BIOS stages");
         goto fail;
     }
-    step++;
-    if (progress)
-        progress(context, step, steps);
+    stage_report(progress, context, &step, steps, "Limine BIOS installed");
 
+    u64 stage2_sectors = (bios_hdd_bytes - SECTOR_SIZE + SECTOR_SIZE - 1) /
+                         SECTOR_SIZE;
+    u64 stage2_lba = gpt ? GPT_BIOS_START : 8;
     if (zero_gap(target_disk, stage2_lba + stage2_sectors,
                  INSTALL_PARTITION_LBA) != 0) {
         set_error("failed to clear the partition gap");
         goto fail;
     }
-    step++;
-    if (progress)
-        progress(context, step, steps);
+    stage_report(progress, context, &step, steps, "gap cleared");
 
-    if (fat32_make_esp(target_disk, INSTALL_PARTITION_LBA, esp_sectors, loader,
-                       loader_bytes, osldr, osldr_bytes) != 0) {
-        set_error("failed to build the FAT32 ESP");
+    int esp_status = fat32_make_esp(target_disk, INSTALL_PARTITION_LBA,
+                                    esp_sectors, loader, loader_bytes,
+                                    bios_sys, bios_sys_bytes, limine_config,
+                                    boot_files, boot_file_count);
+    if (esp_status != 0) {
+        if (esp_status == -3)
+            set_error("could not format the FAT32 ESP");
+        else if (esp_status == -5)
+            set_error("could not create the ESP directories");
+        else if (esp_status == -6)
+            set_error("could not write the Limine EFI loader");
+        else if (esp_status == -8)
+            set_error("could not write limine-bios.sys");
+        else if (esp_status == -7 || esp_status == -9)
+            set_error("could not write limine.conf");
+        else if (esp_status == -11)
+            set_error("could not write the kernel to the ESP");
+        else
+            set_error("failed to build the FAT32 ESP");
         goto fail;
     }
-    step++;
-    if (progress)
-        progress(context, step, steps);
+    stage_report(progress, context, &step, steps, "ESP built");
 
     if (data_sectors) {
         if (fat32_format_volume(target_disk, data_lba, (u32)data_sectors,
@@ -818,15 +820,11 @@ int install_run(int target_disk, int gpt, const struct install_layout *layout,
             set_error("failed to format the FAT32 data partition");
             goto fail;
         }
-        step++;
-        if (progress)
-            progress(context, step, steps);
+        stage_report(progress, context, &step, steps, "data formatted");
     }
 
-    if (read_stage1_verify(target_disk) != 0) {
-        set_error("verification failed: bootloader MBR differs");
-        goto fail;
-    }
+    if (read_boot_verify(target_disk) != 0)
+        goto fail;   /* read_boot_verify already published the reason */
     if (block_disk_read(target_disk, INSTALL_PARTITION_LBA, 1, g_sector) != 0 ||
         g_sector[510] != 0x55 || g_sector[511] != 0xAA ||
         memcmp(g_sector + 82, "FAT32   ", 8) != 0) {
@@ -847,22 +845,19 @@ int install_run(int target_disk, int gpt, const struct install_layout *layout,
             goto fail;
         }
     }
-    step++;
-    if (progress)
-        progress(context, step, steps);
+    stage_report(progress, context, &step, steps, "verified");
 
     if (block_disk_flush(target_disk) != 0) {
         set_error("failed to flush the target disk");
         goto fail;
     }
-    step++;
-    if (progress)
-        progress(context, step, steps);
+    stage_report(progress, context, &step, steps, "flushed");
 
     g_error[0] = 0;
     kfree(font_copy);
     kfree(kernel_file);
-    kfree(osldr);
+    kfree(bios_hdd);
+    kfree(bios_sys);
     kfree(loader);
     return 0;
 
@@ -871,7 +866,8 @@ fail:
         fs_call_sync();
     kfree(font_copy);
     kfree(kernel_file);
-    kfree(osldr);
+    kfree(bios_hdd);
+    kfree(bios_sys);
     kfree(loader);
     return -1;
 }

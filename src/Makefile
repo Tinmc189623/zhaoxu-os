@@ -95,7 +95,8 @@ CFLAGS  := $(CROSS) -m64 -std=gnu11 -O2 -g -ffreestanding -fno-pie -fno-pic \
            -mno-red-zone -mcmodel=kernel -mgeneral-regs-only \
            -mno-sse -mno-sse2 -mno-mmx -mno-avx \
            -Wall -Wextra -Wno-unused-parameter \
-           -Ikernel/include -Ikernel -Ikernel/font
+           -Ikernel/include -Ikernel -Ikernel/font \
+           -Ithird_party/limine/include
 CFLAGS += -MMD -MP
 CXXFLAGS := $(filter-out -std=gnu11,$(CFLAGS)) -std=gnu++20 \
             -fno-exceptions -fno-rtti -fno-threadsafe-statics \
@@ -165,6 +166,7 @@ BOOT_LDFLAGS := /subsystem:efi_application /entry:efi_start /nodefaultlib \
                 /debug:none
 
 C_SRCS := kernel/main.c \
+          kernel/boot/limine_boot.c \
           kernel/arch/x86_64/io.c \
           kernel/arch/x86_64/gdt.c \
           kernel/arch/x86_64/pic.c \
@@ -238,9 +240,7 @@ ASM_SRCS := kernel/arch/x86_64/entry.S \
 
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(C_SRCS)) \
         $(patsubst %.S,$(BUILD)/%.o,$(ASM_SRCS)) \
-        $(BUILD)/initramfs.o \
-        $(BUILD)/bios_stage1.o \
-        $(BUILD)/bios_stage2.o
+        $(BUILD)/initramfs.o
 DEPS := $(OBJS:.o=.d)
 
 HEADLESS ?= 0
@@ -258,7 +258,7 @@ FORCE:
 
 # The kernel is built for the ISO and the installer; rule 25 keeps it out of
 # BOOTX64.EFI and the ESP only carries the loader.
-all: $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(ESP)/BOOTX64.EFI $(OUT)/kernel.elf
+all: $(OUT)/kernel.elf $(BUILD)/limine-host
 
 # MiSans/MiSans Global are not redistributable, so they are fetched here.
 FONT_FILES := initramfs/data/MiSans-Regular.ttf \
@@ -705,7 +705,9 @@ RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/aqua $(RAMFS)/bin/8sh \
                $(RAMFS)/bin/wayland $(RAMFS)/bin/wldemo \
                $(RAMFS)/bin/apps/welcome.zxe $(RAMFS)/bin/apps/calc.zxe \
                $(RAMFS)/bin/apps/install.zxe \
-               $(RAMFS)/boot/BOOTX64.EFI $(RAMFS)/boot/OSLDRX64.EFI \
+               $(RAMFS)/boot/limine/BOOTX64.EFI \
+               $(RAMFS)/boot/limine/limine-bios.sys \
+               $(RAMFS)/boot/limine/limine-bios-hdd.bin \
                $(RAMFS)/etc/motd $(RAMFS)/etc/version \
                $(RAMFS)/mnt \
                $(RAMFS)/data/HELLO.TXT $(RAMFS)/data/HELLO.ZXE \
@@ -757,11 +759,15 @@ $(RAMFS)/bin/wldemo: $(OUT)/wldemo.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-$(RAMFS)/boot/BOOTX64.EFI: $(OUT)/BOOTX64.EFI
+$(RAMFS)/boot/limine/BOOTX64.EFI: third_party/limine/bin/BOOTX64.EFI
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-$(RAMFS)/boot/OSLDRX64.EFI: $(OUT)/OSLDRX64.efi
+$(RAMFS)/boot/limine/limine-bios.sys: third_party/limine/bin/limine-bios.sys
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/boot/limine/limine-bios-hdd.bin: $(BUILD)/limine-bios-hdd.bin
 	@mkdir -p $(dir $@)
 	cp $< $@
 
@@ -968,6 +974,19 @@ $(OUT)/kernel.elf: $(OBJS) kernel/linker.ld
 	@mkdir -p $(OUT)
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
 
+# Host-side Limine deployment tool (bios-install for ISO images/disk images).
+$(BUILD)/limine-host: third_party/limine/limine.c
+	@mkdir -p $(BUILD)
+	$(HOST_CC) -O2 -std=c99 -D_FILE_OFFSET_BITS=64 -o $@ $<
+HOST_CC ?= cc
+
+# Raw Limine BIOS disk image embedded in limine-bios-hdd.h; the installer
+# writes its boot sector and stage 2 when creating a BIOS-bootable disk.
+$(BUILD)/limine-bios-hdd.bin: third_party/limine/limine-bios-hdd.h \
+                              tools/limine-bios-hdd.rb
+	@mkdir -p $(BUILD)
+	$(RUBY) tools/limine-bios-hdd.rb $< $@
+
 $(ESP)/BOOTX64.EFI: $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi
 	@mkdir -p $(ESP)
 	cp $< $@
@@ -1027,53 +1046,41 @@ ZHAOXU_KERNEL_VERSION := $(word 4,$(VERSION_FIELDS))
 ZHAOXU_BUILD := $(word 5,$(VERSION_FIELDS))
 ISO := $(OUT)/zhaoxu-os_x86-64_$(ZHAOXU_VERSION)_$(ZHAOXU_BUILD)_ld.iso
 ISO_ROOT := $(BUILD)/iso
-# The ISO ESP is FAT32, and mkfs.fat only accepts FAT32 above ~32 MiB.
-# Keep it at 64 MiB to match the installed ESP; xorriso records a zero
-# El Torito load size for images beyond 65535 blocks and extends the entry
-# to the end of the image, which OVMF accepts.
-ISO_ESP_MB ?= 64
+LIMINE_DIR := third_party/limine
+LIMINE_BINS := $(LIMINE_DIR)/bin/limine-bios.sys \
+               $(LIMINE_DIR)/bin/limine-bios-cd.bin \
+               $(LIMINE_DIR)/bin/limine-uefi-cd.bin \
+               $(LIMINE_DIR)/bin/BOOTX64.EFI
+LIMINE_CONF := boot/limine.conf
 
-# The El Torito ESP only holds the loader; the kernel is read from the CD
-# root by the loader's ISO9660 reader (not from the ESP).
-$(EFI_IMG): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi boot/zhaoxu.cfg
-	@mkdir -p $(OUT)
-	dd if=/dev/zero of=$@ bs=1M count=$(ISO_ESP_MB) 2>/dev/null
-	$(MKFS_VFAT) -F 32 -n ZHAOXUEFI $@ >/dev/null
-	MTOOLS_SKIP_CHECK=1 $(MMD) -i $@ ::/EFI
-	MTOOLS_SKIP_CHECK=1 $(MMD) -i $@ ::/EFI/BOOT
-	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ $(OUT)/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
-	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ $(OUT)/OSLDRX64.efi ::/EFI/BOOT/OSLDRX64.efi
-	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ boot/zhaoxu.cfg ::/EFI/BOOT/zhaoxu.cfg
-
-$(ISO): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(OUT)/kernel.elf $(EFI_IMG) $(BIOS_IMG) \
-        $(FONT_FILES) boot/fonts/unicode.pf2 \
-        tools/kernel-flat.rb tools/iso-bios.rb \
-        tools/iso-manifest.rb boot/zhaoxu.cfg boot/zhaoxuenv $(WALLPAPER_RAW)
+# Rule 8/31: Limine is the only boot manager.  The hybrid ISO uses Limine's
+# BIOS and UEFI El Torito images; the kernel is loaded through the Limine boot
+# protocol, with the flat image and desktop assets as Limine modules.
+$(ISO): $(OUT)/kernel.elf $(OUT)/initramfs.tar $(OUT)/drivers.zxe \
+        $(FONT_FILES) $(WALLPAPER_RAW) $(LIMINE_BINS) $(LIMINE_CONF) \
+        $(BUILD)/limine-host tools/kernel-flat.rb tools/iso-manifest.rb
 	@rm -rf $(ISO_ROOT)
-	@mkdir -p $(ISO_ROOT)/install
-	@mkdir -p $(ISO_ROOT)/boot/zhaoxu/fonts
-	@mkdir -p $(ISO_ROOT)/EFI/BOOT
-	@mkdir -p $(ISO_ROOT)/casper
+	@mkdir -p $(ISO_ROOT)/install $(ISO_ROOT)/casper
+	@mkdir -p $(ISO_ROOT)/boot/limine $(ISO_ROOT)/EFI/BOOT
 	@mkdir -p $(ISO_ROOT)/dists/jammy/main $(ISO_ROOT)/dists/jammy/restricted \
 	          $(ISO_ROOT)/dists/jammy/universe $(ISO_ROOT)/dists/jammy/multiverse
 	@mkdir -p $(ISO_ROOT)/pool/main $(ISO_ROOT)/pool/restricted \
 	          $(ISO_ROOT)/pool/universe $(ISO_ROOT)/pool/multiverse
-	cp $(EFI_IMG) $(ISO_ROOT)/efi.img
-	cp $(BIOS_IMG) $(ISO_ROOT)/bios.img
-	cp boot/zhaoxu.cfg $(ISO_ROOT)/boot/zhaoxu/zhaoxu.cfg
-	cp boot/zhaoxuenv $(ISO_ROOT)/boot/zhaoxu/zhaoxuenv
-	cp $(OUT)/OSLDRX64.efi $(ISO_ROOT)/boot/zhaoxu/osloader.elf
-	cp $(OUT)/bios_stage1.bin $(ISO_ROOT)/boot/zhaoxu/BOOTX16.BIN
-	cp boot/fonts/unicode.pf2 $(ISO_ROOT)/boot/zhaoxu/fonts/unicode.pf2
-	cp $(WALLPAPER_RAW) $(ISO_ROOT)/boot/zhaoxu/WALL.RGB
-	cp $(OUT)/BOOTX64.EFI $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
-	cp $(OUT)/OSLDRX64.efi $(ISO_ROOT)/EFI/BOOT/OSLDRX64.ELF
+	cp $(LIMINE_DIR)/bin/limine-bios.sys $(ISO_ROOT)/boot/limine/
+	cp $(LIMINE_DIR)/bin/limine-bios-cd.bin $(ISO_ROOT)/boot/limine/
+	cp $(LIMINE_DIR)/bin/limine-uefi-cd.bin $(ISO_ROOT)/boot/limine/
+	cp $(LIMINE_DIR)/bin/BOOTX64.EFI $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
+	cp $(LIMINE_CONF) $(ISO_ROOT)/boot/limine/limine.conf
+	cp $(LIMINE_CONF) $(ISO_ROOT)/EFI/BOOT/limine.conf
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/casper/kernel.elf
 	cp $(OUT)/initramfs.tar $(ISO_ROOT)/casper/initrd.img
 	cp $(OUT)/drivers.zxe $(ISO_ROOT)/casper/vga.ko
+	$(RUBY) tools/kernel-flat.rb $(OUT)/kernel.elf $(ISO_ROOT)/casper/kernel.bin
+	cp initramfs/data/MiSans-Regular.ttf $(ISO_ROOT)/boot/limine/MiSans.ttf
+	cp $(WALLPAPER_RAW) $(ISO_ROOT)/boot/limine/WALL.RGB
 	$(MKSQUASHFS) $(BUILD)/initramfs $(ISO_ROOT)/casper/filesystem.squashfs \
 	  -noappend -comp gzip -no-progress >/dev/null
-	$(RUBY) tools/kernel-flat.rb $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.BIN
+	cp $(ISO_ROOT)/casper/kernel.bin $(ISO_ROOT)/install/KERNEL.BIN
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.ELF
 	cp initramfs/data/MiSans-Regular.ttf $(ISO_ROOT)/install/MiSans.ttf
 	cp initramfs/data/Inter-Regular.otf $(ISO_ROOT)/install/Inter.otf
@@ -1081,11 +1088,10 @@ $(ISO): $(OUT)/BOOTX64.EFI $(OUT)/OSLDRX64.efi $(OUT)/kernel.elf $(EFI_IMG) $(BI
 	  $(ZHAOXU_CODENAME) $(ZHAOXU_KERNEL) $(ZHAOXU_KERNEL_VERSION) \
 	  $(ZHAOXU_BUILD)
 	$(XORRISO) -as mkisofs -o $@ -V ZHAOXU_OS -J -R \
-	  -b bios.img -no-emul-boot -eltorito-alt-boot \
-	  -e efi.img -no-emul-boot -isohybrid-gpt-basdat $(ISO_ROOT)
-	$(RUBY) tools/iso-bios.rb $@
-	test -f $@.patched
-	rm -f $@.patched
+	  -b boot/limine/limine-bios-cd.bin -no-emul-boot -boot-load-size 4 \
+	  -boot-info-table --efi-boot boot/limine/limine-uefi-cd.bin \
+	  -efi-boot-part --efi-boot-image --protective-msdos-label $(ISO_ROOT)
+	$(BUILD)/limine-host bios-install $@
 
 iso: $(ISO)
 

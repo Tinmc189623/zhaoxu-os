@@ -6,6 +6,7 @@
  */
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include <kprintf.h>
 #include <ttf.h>
 #include <types.h>
 
@@ -30,6 +31,8 @@ int ttf_line_height(void)
 int ttf_load(const u8 *data, u64 size)
 {
     if (!data || size == 0) return -1;
+    kprintf("[ttf ] load %llu bytes, prior face 0x%llx\n",
+            (unsigned long long)size, (unsigned long long)(uintptr_t)g_face);
     if (g_face) { FT_Done_Face(g_face); g_face = 0; }
     if (!g_library && FT_Init_FreeType(&g_library) != 0) return -1;
     if (FT_New_Memory_Face(g_library, data, (FT_Long)size, 0, &g_face) != 0) return -1;

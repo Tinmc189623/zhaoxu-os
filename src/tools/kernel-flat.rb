@@ -13,7 +13,9 @@
 
 KERNEL_VMA = 0xffffffff80000000
 CD_SECTOR = 2048
-MAX_KERNEL_BYTES = 0x8F000      # stage 2 low buffer, ends below the EBDA at 0x9FC00
+# Limine loads the flat image as a module, so the old 448 KiB BIOS stage-2
+# buffer no longer limits it; keep a sane 64 MiB installer limit.
+MAX_KERNEL_BYTES = 64 * 1024 * 1024
 
 in_path, out_path = ARGV
 abort "usage: kernel-flat.rb <kernel.elf> <out.bin>" unless out_path
@@ -50,7 +52,7 @@ flat = "\x00".b * span
 segments.each { |virtual, offset, filesz| flat[virtual, filesz] = data[offset, filesz] }
 
 padded = flat.bytesize + (CD_SECTOR - flat.bytesize % CD_SECTOR) % CD_SECTOR
-abort "kernel-flat: #{padded} bytes exceed the stage 2 buffer " \
+abort "kernel-flat: #{padded} bytes exceed the installer limit " \
       "(#{MAX_KERNEL_BYTES})" if padded > MAX_KERNEL_BYTES
 
 flat << ("\x00".b * (padded - flat.bytesize))

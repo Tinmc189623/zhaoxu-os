@@ -21,7 +21,18 @@ int fat32_mkdir(const char *path);
 int fat32_mount_at(int disk, u64 volume_base);
 int fat32_format_volume(int disk, u64 volume_base, u32 sectors,
                         const char *label);
+
+/* One extra boot payload written to the ESP.  Limine reads FAT only, so the
+ * kernel and its modules live on the ESP instead of the ext4 root. */
+struct fat32_boot_file {
+    const char *path;
+    const u8 *data;
+    u64 size;
+};
+
 int fat32_make_esp(int disk, u64 volume_base, u32 sectors, const u8 *bootx64,
-                   u64 bootx64_size, const u8 *osldr, u64 osldr_size);
+                   u64 bootx64_size, const u8 *bios_sys, u64 bios_sys_size,
+                   const char *config, const struct fat32_boot_file *extra,
+                   u32 extra_count);
 
 #endif

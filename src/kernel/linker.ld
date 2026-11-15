@@ -33,6 +33,7 @@ SECTIONS
     .data : ALIGN(4096)
     {
         *(.data .data.*)
+        KEEP(*(.limine_requests))
     }
 
     .bss : ALIGN(4096)

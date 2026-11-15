@@ -22,6 +22,27 @@
 
 extern void thread_switch(u64 *save_rsp, u64 next_rsp, u64 flags);
 
+/* Initial x87 control word and MXCSR for a fresh thread. */
+static void fpu_state_init(struct thread *thread)
+{
+    memset(thread->fpu_state, 0, sizeof(thread->fpu_state));
+    thread->fpu_state[0] = 0x7F;
+    thread->fpu_state[1] = 0x03;
+    u32 mxcsr = 0x1F80;
+    memcpy(thread->fpu_state + 24, &mxcsr, sizeof(mxcsr));
+}
+
+/* Save/restore the full x87 + SSE register file with FXSAVE/FXRSTOR. */
+static void fpu_state_save(struct thread *thread)
+{
+    __asm__ volatile("fxsave (%0)" :: "r"(thread->fpu_state) : "memory");
+}
+
+static void fpu_state_restore(struct thread *thread)
+{
+    __asm__ volatile("fxrstor (%0)" :: "r"(thread->fpu_state) : "memory");
+}
+
 static struct thread g_threads[MAX_THREADS];
 static spinlock_t g_sched_lock = SPINLOCK_INIT;
 static volatile u32 g_sched_ready;
@@ -110,6 +131,8 @@ static void schedule(void)
         tss_set_rsp0_cpu(pc->index, next->kernel_stack_top);
 
     previous->switches++;
+    fpu_state_save(previous);
+    fpu_state_restore(next);
     thread_switch(&previous->rsp, next->rsp, flags);
 
     /* Resumed on the next thread's stack: the context that switched to it
@@ -229,6 +252,7 @@ void sched_init(u32 cpu_count)
     main_thread->quantum = SCHED_QUANTUM_TICKS;
     main_thread->kernel_stack_top = KERNEL_BOOT_STACK_TOP;
     main_thread->on_cpu = 1;
+    fpu_state_init(main_thread);
     strncpy(main_thread->name, "main", sizeof(main_thread->name) - 1);
     g_percpu[0].current = main_thread;
 
@@ -348,6 +372,7 @@ struct thread *kthread_create_ctx(const char *name, void (*entry)(void *),
 
     if (thread) {
         memset(thread, 0, sizeof(*thread));
+        fpu_state_init(thread);
         thread->rsp = (u64)(uintptr_t)sp;
         thread->stack_base = (u64)(uintptr_t)stack;
         thread->stack_size = KERNEL_THREAD_STACK;

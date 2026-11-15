@@ -8,7 +8,7 @@ static void draw(long channel, int clicked)
     ade_clear(channel, 0xF7FAFD);
     ade_fill(channel, 0, 0, 640, 72, 0x1E6FB8);
     ade_text(channel, 24, 22, 0xFFFFFF, "欢迎使用 Zhaoxu OS");
-    ade_text(channel, 24, 96, 0x1B2C3D, "Ring3 客户端 · ADE");
+    ade_text(channel, 24, 96, 0x1B2C3D, "Ring3 客户端 / ADE");
     ade_text(channel, 24, 136, 0x51606F, "端口 + 命令协议解耦");
     ade_fill(channel, 24, 180, 592, 1, 0xD7E3EF);
     ade_text(channel, 24, 200, 0x36495C, "字体与渲染由系统提供");

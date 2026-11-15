@@ -2,21 +2,21 @@
 
 # 🖥️ Zhaoxu OS
 
-### Yuanshuo · Aqua Desktop Environment · x86_64
+### Yuanshuo, Aqua Desktop Environment, x86_64
 
 <kbd>🧩 Microkernel</kbd> <kbd>🧵 Ring 3 user mode</kbd> <kbd>💾 FAT32 + ext4</kbd> <kbd>💿 UEFI + Legacy BIOS</kbd> <kbd>🧬 MBR + GPT(ISO)</kbd> <kbd>🎨 Aqua</kbd>
 
-**C** kernel and UEFI boot · **FASM** BIOS boot · **GAS** low-level assembly · **Ada** drivers · **C++20** applications · **Ruby** toolchain
+**C** kernel, **Limine** UEFI/BIOS boot, **GAS** low-level assembly, **Ada** drivers, **C++20** applications, **Ruby** toolchain
 
-[🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) · [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) · [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) · [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
+[🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
-**Current version: 0.7.1 「Yuanshuo」 · kernel 0.7.1 · build 9** · version history in [CHANGELOG.md](CHANGELOG.md)
+**Current version: 0.7.1 「Yuanshuo」, kernel 0.7.1, build 10**. Version history in [CHANGELOG.md](CHANGELOG.md)
 
 </div>
 
 ---
 
-> 🧭 **In one sentence**: Zhaoxu OS is a microkernel operating system for x86_64. The boot manager **ZhaoxuBootMgr** supports both UEFI and legacy BIOS; **Yuanshuo** is the microkernel written in C; drivers are written in **Ada + C** and run in ring 3; the shell **8sh** and the **Aqua Desktop Environment** desktop also live in ring 3, and the UI is composited by **Desktop Window Compositor**; the VFS spans ext4, UBIFS, tmpfs, initramfs, procfs, sysfs, debugfs, efivarfs, ramfs, rootfs, overlayfs, ecryptfs, vfat, NTFS, ISO 9660/CDFS, UDF, and exFAT; the executable format is **ZXE v1**.
+> 🧭 **In one sentence**: Zhaoxu OS is a microkernel operating system for x86_64. The boot manager **Limine** supports both UEFI and legacy BIOS; **Yuanshuo** is the microkernel written in C; drivers are written in **Ada + C** and run in ring 3; the shell **8sh** and the **Aqua Desktop Environment** desktop also live in ring 3, and the UI is composited by **Desktop Window Compositor**; the VFS spans ext4, UBIFS, tmpfs, initramfs, procfs, sysfs, debugfs, efivarfs, ramfs, rootfs, overlayfs, ecryptfs, vfat, NTFS, ISO 9660/CDFS, UDF, and exFAT; the executable format is **ZXE v1**.
 
 ---
 
@@ -38,8 +38,8 @@
 - M6: stock libwayland 1.23.1 client core ported into Ring3 with the upstream `wayland-client.c`, `wayland-util.c`, `connection.c` and generated core/xdg-shell bindings; libffi 3.4.6 supplies the x86_64 SysV `ffi_call` path, and `user/lib/wayland/compat.c` supplies libc, errno, pthread and socket entry points. `/data/WLSTOCK.ZXE` binds `wl_compositor`/`wl_shm`, submits a 320x240 shm frame through SCM_RIGHTS, and exits 0
 - Fonts: the non-OpenType WenQuanYi fallback is gone. Boot, Aqua Desktop Environment, the installer, the ISO and the FAT data image use only MiSans, MiSans Global and Inter (OpenType); the installer writes `/MiSans.ttf` and the boot loader prefers `install/MiSans.ttf`
 - FreeType 2.13.3 is vendored under `third_party/freetype` and backs the Ring3 desktop font adapter. `make out/ft_test.zxe` loads the boot font and rasterizes U+4E2D; `FT_BOOT_TEST=1` with `out/data.img` prints `[ft] FreeType PASS` and exits 0
-- Installer: the graphical flow is Windows-like. It finds blank or previous Zhaoxu disks, auto-selects a single target, asks for one confirmation, defaults to GPT and keeps MBR behind an advanced toggle. The write runs in a worker child; the UI paints real **written stage N / 9** progress from a shared page. A refresh button rescans disks, failures show the kernel's actual reason through `SYS_INSTALL_ERROR` (68), and the done screen offers "立即重启" through `SYS_REBOOT` (69). The UEFI install writes both `BOOTX64.EFI` and `OSLDRX64.EFI` into the ESP; a blank 256 MiB disk was installed through real mouse clicks and then booted to Aqua Desktop Environment
-- Installer hardening: targets over 2 TiB, root partitions outside the ext4 32-bit range, oversized kernel/loader/font/wallpaper blobs and a flat kernel above `0x8F000` bytes are rejected. An MBR install also clears the stale backup GPT at the end of the disk
+- Installer: the graphical flow is Windows-like. It finds blank or previous Zhaoxu disks (a disk carrying Limine's boot sector counts as a previous install), auto-selects a single target, asks for one confirmation, defaults to GPT and keeps MBR behind an advanced toggle. The write runs in a worker child; the UI paints real **written stage N / 7** progress (8 with a data partition) from a shared page. A refresh button rescans disks, failures show the kernel's actual reason through `SYS_INSTALL_ERROR` (68), and the done screen offers "立即重启" through `SYS_REBOOT` (69). The install writes Limine's BIOS boot sector/stage 2 and the ESP files `EFI/BOOT/BOOTX64.EFI`, `EFI/BOOT/limine.conf`, `boot/limine/limine-bios.sys`, `KERNEL.ELF`, `KERNEL.BIN`, `MiSans.ttf` and `WALL.RGB`; Limine 12 has no ext4 driver, so every file it must read lives on the FAT32 ESP. A blank 256 MiB disk was installed through real mouse clicks and then booted to Aqua Desktop Environment under both UEFI and SeaBIOS
+- Installer hardening: targets over 2 TiB, root partitions outside the ext4 32-bit range and oversized kernel/loader/font/wallpaper blobs are rejected. An MBR install also clears the stale backup GPT at the end of the disk
 - Custom partitioning: the installer's "自定义分区" screen cycles the FAT32 ESP through 64/128/256 MiB and adds an optional 64/128/256 MiB FAT32 `ZHAOXUDATA` data partition; the ext4 system partition takes the rest. `SYS_INSTALL_CONFIG` (71) carries the layout to the kernel, which writes the third MBR/GPT entry, formats the data volume and verifies its label. The installed system mounts the data partition at `/media/<n>`
 - Cursor and flicker: the pointer is no longer drawn into the system-RAM back buffer. The compositor keeps the back buffer cursor-free, erases the old pointer with one blit and composites the new pointer directly onto the framebuffer; the DWM loop runs at 250 Hz instead of 1 kHz. Button text is centred with server-side UTF-8 measurement rather than byte counts
 - Fixed the GPT/partition scanner rejecting any volume whose start sector exceeded its own length, which hid late data partitions from `/media` probing
@@ -136,7 +136,7 @@
 <tr>
 <td width="50%" align="center">
 <img src="docs/shot-desktop.png" width="100%" alt="Aqua desktop">
-<br><b>🎨 Aqua Desktop Environment · Aqua</b><br>
+<br><b>🎨 Aqua Desktop Environment Aqua</b><br>
 <sub>Menu bar, welcome window, calculator, Dock and the compositor cursor on a real 1920×1080 boot</sub>
 </td>
 <td width="50%" align="center">
@@ -148,7 +148,7 @@
 <tr>
 <td width="50%" align="center">
 <img src="docs/shot-desktop-install.png" width="100%" alt="Graphical installer">
-<br><b>💿 Graphical installer · custom partitions</b><br>
+<br><b>💿 Graphical installer custom partitions</b><br>
 <sub>Adjustable EFI and optional FAT32 ZHAOXUDATA data partition; the ext4 system partition follows automatically</sub>
 </td>
 <td width="50%" align="center">
@@ -167,8 +167,8 @@
 
 <table>
 <tr><th>Layer</th><th>Language</th><th>Implementation</th></tr>
-<tr><td>UEFI boot</td><td>🧩 C + GAS</td><td><code>efi_bootmgr.c</code> (ZhaoxuBootMgr) → <code>efi_main.c</code> (OSLDRX64): GOP, RSDP, memory map, page tables, <code>ExitBootServices</code></td></tr>
-<tr><td>Legacy BIOS boot</td><td>⚙️ FASM</td><td><code>bios_stage1.asm</code> → <code>bios_stage2.asm</code>: VBE, E820, long mode</td></tr>
+<tr><td>UEFI boot</td><td>🧩 Limine</td><td><code>third_party/limine</code>: Limine <code>BOOTX64.EFI</code> loads <code>kernel.elf</code> with the Limine protocol; <code>kernel/boot/limine_boot.c</code> builds the identity map and <code>boot_info</code></td></tr>
+<tr><td>Legacy BIOS boot</td><td>⚙️ Limine</td><td>Limine BIOS stage 1 + <code>limine-bios.sys</code>; the same Limine protocol entry and kernel boot bridge</td></tr>
 <tr><td>Kernel</td><td>🔧 C</td><td><code>kernel/</code>: GDT/TSS, IDT, PMM/VMM, heap, processes, VFS; no drivers</td></tr>
 <tr><td>File systems</td><td>💾 C (kernel + Ring3)</td><td>initramfs/rootfs/overlayfs/ramfs/ecryptfs, FAT32/vfat, ext4 (<code>fs/ext4</code> + <code>/bin/ext4fs</code>), read-only NTFS/exFAT/ISO 9660/CDFS/UDF/UBIFS</td></tr>
 <tr><td>Low-level assembly</td><td>🧱 GAS</td><td>Entry, ISR stubs, user-mode switch, kernel image embedding</td></tr>
@@ -176,7 +176,7 @@
 <tr><td>Shell / desktop / applications</td><td>🚀 C + C++20</td><td><code>apps/csh/</code> (8sh), <code>apps/ADE/</code> (C++20), <code>apps/display/</code> (KMS), <code>apps/wayland/</code> (Wayland core), <code>apps/ext4fs/</code>, and standalone clients under <code>user/</code></td></tr>
 <tr><td>Graphics framework</td><td>🎨 C + C++20</td><td>Desktop Window Compositor + Desktop Window Manager; M1 KMS, M2 wl_shm compositing, M3 xdg-shell/seat; <code>zaf/</code> is still the Z0 rasterizer</td></tr>
 <tr><td>User programs</td><td>🧵 C</td><td><code>user/</code>: `init`, `hello`, `wldemo`, and other ZXE images; linked at <code>0x10000000000</code> (1 TiB), running in ring 3</td></tr>
-<tr><td>Toolchain</td><td>💎 Make + Ruby</td><td>The Makefile is the build entry point; the Ruby under <code>tools/</code> only handles ELF→.zxe, BIOS images, smoke tests, screenshots, version sync, and ISO metadata</td></tr>
+<tr><td>Toolchain</td><td>💎 Make + Ruby</td><td>The Makefile is the build entry point; the Ruby under <code>tools/</code> only handles ELF→.zxe, Limine modules, smoke tests, screenshots, version sync, and ISO metadata</td></tr>
 </table>
 
 **Memory layout**
@@ -230,17 +230,16 @@ The full definitions live in `kernel/proc/syscall.c` and `user/userlib.h`, and t
 
 **UEFI path**
 
-1. Firmware loads `EFI/BOOT/BOOTX64.EFI` (**ZhaoxuBootMgr**, a PE32+ application built from C with `lld-link`).
-2. The boot manager loads `OSLDRX64.ELF`, which fetches the GOP framebuffer, the ACPI RSDP, and the UEFI memory map.
-3. The kernel is read from `install/KERNEL.ELF` at the disc root (ISO) or `KERNEL.ELF` under an installed ext4 root, copied into page-aligned physical memory below 4 GiB, and low identity mappings plus higher-half page tables are built.
-4. `ExitBootServices` → switch CR3 → jump to `0xffffffff80000000`.
+1. Firmware loads Limine's `EFI/BOOT/BOOTX64.EFI`.
+2. Limine reads `EFI/BOOT/limine.conf` (or `boot/limine/limine.conf`), loads `kernel.elf`, the flat `KERNEL.BIN` installer image, `MiSans.ttf` and `WALL.RGB` as modules, and enters the Limine boot protocol.
+3. `kernel/boot/limine_boot.c` converts the memory map, framebuffer, RSDP, executable address and modules into `struct boot_info`, installs a 64 GiB identity map over Limine's HHDM tables, maps the reserved kernel stack window, and switches to the kernel stack.
+4. The kernel continues at `0xffffffff80000000` with the familiar `kernel_main` entry.
 
 **Legacy BIOS path**
 
-1. SeaBIOS loads the 512-byte stage 1 from El Torito (or the MBR of an install disk).
-2. Stage 1 reads stage 2 with INT 13h (on the ISO, stage 2 already sits inside the boot image, so it far jumps to `0x8000` directly).
-3. Stage 2 picks a 32bpp VBE LFB, collects E820, scans for the RSDP, and reads the kernel with EDD LBA48.
-4. Page tables are built, the 16 MiB kernel window is zeroed, `boot_info` is written, and the CPU enters long mode.
+1. SeaBIOS loads Limine's stage 1 from the El Torito image (or the boot sector written to an installed MBR/GPT disk).
+2. Stage 1 loads Limine stage 2 from the post-MBR gap or the GPT BIOS boot partition; stage 2 reads `boot/limine/limine-bios.sys` and `limine.conf` from the ESP.
+3. Limine then takes the same path as UEFI: kernel and modules loaded, Limine protocol entry, identity-map bootstrap, `kernel_main`.
 
 **Common kernel path**
 
@@ -334,13 +333,12 @@ Zhaoxu OS/
 ├── docs/                     screenshots and architecture/ZAF design docs
 └── src/
     ├── Makefile              four-host build rules (Linux/macOS/Windows/WSL)
+    ├── third_party/limine/   Limine binaries, headers and host deploy tool
     ├── boot/
-    │   ├── efi_bootmgr.c     UEFI boot manager ZhaoxuBootMgr (C)
-    │   ├── efi_main.c        UEFI OS loader OSLDRX64 (C)
-    │   ├── bios_stage1.asm   MBR boot sector (FASM)
-    │   ├── bios_stage2.asm   real mode → long mode (FASM)
+    │   ├── limine.conf       ISO/installed Limine menu and module list
     │   └── fonts/            boot-time unicode.pf2 (Inter + grub-mkfont)
     ├── kernel/
+    │   ├── boot/limine_boot.c Limine protocol → boot_info and identity map
     │   ├── arch/x86_64/      entry, GDT/TSS, ISRs, PIC, ring 3 switch
     │   ├── int/              IDT and exceptions/IRQs/syscalls
     │   ├── drivers/          timing and ACPI/AHCI glue (hardware drivers live in Ring3)
@@ -392,8 +390,8 @@ This project is licensed under the [Apache License 2.0](LICENSE). Third-party co
 
 <div align="center">
 
-**Zhaoxu OS · Yuanshuo** · built with C / FASM / GAS / Ada / C++
+**Zhaoxu OS, Yuanshuo**. Built with C / FASM / GAS / Ada / C++
 
-Copyright © 2026 Nexsteaduser. All Rights Reserved. · admin@nexsteaduser.com
+Copyright © 2026 Nexsteaduser. All Rights Reserved. Email: admin@nexsteaduser.com
 
 </div>
