@@ -11,9 +11,10 @@
 #include <userlib.h>
 
 #define WINDOW_W 620
-/* The ADE window height includes the title bar and border; leave enough
- * client height for the 402-pixel select screen. */
-#define WINDOW_H 480
+/* The ADE window height includes the title bar and border.  The 460-pixel
+ * window leaves a 410-pixel client area, enough for the 402-pixel select
+ * screen while still fitting above the Dock on an 800x600 display. */
+#define WINDOW_H 460
 #define MAX_TARGETS 8
 #define VISIBLE_TARGETS 4
 
