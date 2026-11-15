@@ -55,12 +55,12 @@ end
 
 def build_support
   FileUtils.mkdir_p(SUPPORT)
-  %w[libgloss glob].each do |name|
+  %w[libgloss].each do |name|
     run([WRAPPER, "-c", "#{REPO}/user/lib/posix/#{name}.c",
          "-o", "#{SUPPORT}/#{name}.o"])
   end
   run(%w[llvm-ar-21 rcs] + [File.join(SUPPORT, "libgloss.a")] +
-      %w[libgloss.o glob.o].map { |o| File.join(SUPPORT, o) })
+      %w[libgloss.o].map { |o| File.join(SUPPORT, o) })
 end
 
 def fetch(url, target)
@@ -122,10 +122,10 @@ def build_nano
     ac_cv_func_readdir=yes
     ac_cv_func_closedir=yes
     ac_cv_func_fdopendir=no
-    ac_cv_header_glob_h=yes
-    ac_cv_func_glob=yes
-    ac_cv_func_globfree=yes
-    ac_cv_func_fnmatch=yes
+    ac_cv_header_glob_h=no
+    ac_cv_func_glob=no
+    ac_cv_func_globfree=no
+    ac_cv_func_fnmatch=no
     ac_cv_func_getprogname=yes
     ac_cv_func_sigaction=yes
     ac_cv_func_sigprocmask=yes
@@ -143,7 +143,7 @@ def build_nano
        "--disable-nls", "--disable-utf8", "--disable-browser",
        "--disable-speller", "--disable-extra"], chdir: NANO_BUILD,
       env: { "CC" => "#{WRAPPER} -I#{FASTINC}", "CC_FOR_BUILD" => "gcc",
-             "CPPFLAGS" => "-DOK_TO_USE_1S_CLOCK -I#{HOME}/ncurses-build/include",
+             "CPPFLAGS" => "-D_GNU_SOURCE -DFNM_EXTMATCH=32 -DOK_TO_USE_1S_CLOCK -I#{HOME}/ncurses-build/include",
              "LDFLAGS" => "-L#{HOME}/ncurses-build/lib",
              "LIBS" => "-lncurses -ltinfo" })
   run(["make", "-j#{Etc.nprocessors}"], chdir: NANO_BUILD)
@@ -161,3 +161,5 @@ write_wrapper
 build_support
 build_ncurses
 build_nano
+
+

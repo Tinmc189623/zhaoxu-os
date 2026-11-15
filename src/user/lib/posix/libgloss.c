@@ -394,6 +394,15 @@ char *getlogin(void)
     return (char *)"zhaoxu";
 }
 
+int gethostname(char *name, size_t length)
+{
+    static const char host[] = "zhaoxu";
+    if (!name || length < sizeof(host))
+        return -1;
+    memcpy(name, host, sizeof(host));
+    return 0;
+}
+
 char *getwd(char *buffer)
 {
     if (!buffer)
