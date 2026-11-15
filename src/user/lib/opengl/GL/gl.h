@@ -56,9 +56,58 @@ typedef unsigned char GLubyte;
 #define GL_INVALID_ENUM 0x0500
 #define GL_INVALID_VALUE 0x0501
 #define GL_INVALID_OPERATION 0x0502
+#define GL_OUT_OF_MEMORY 0x0505
 
+#define GL_RGB 0x1907
 #define GL_RGBA 0x1908
 #define GL_UNSIGNED_BYTE 0x1401
+#define GL_FLOAT 0x1406
+
+#define GL_TEXTURE_2D 0x0DE1
+#define GL_TEXTURE_MAG_FILTER 0x2800
+#define GL_TEXTURE_MIN_FILTER 0x2801
+#define GL_TEXTURE_WRAP_S 0x2802
+#define GL_TEXTURE_WRAP_T 0x2803
+#define GL_NEAREST 0x2600
+#define GL_LINEAR 0x2601
+#define GL_REPEAT 0x2901
+#define GL_CLAMP 0x2900
+#define GL_TEXTURE_ENV 0x2300
+#define GL_TEXTURE_ENV_MODE 0x2200
+#define GL_MODULATE 0x2100
+#define GL_DECAL 0x2101
+#define GL_REPLACE 0x1E01
+#define GL_ADD 0x0104
+
+#define GL_LIGHTING 0x0B50
+#define GL_LIGHT0 0x4000
+#define GL_LIGHT1 0x4001
+#define GL_LIGHT2 0x4002
+#define GL_LIGHT3 0x4003
+#define GL_LIGHT4 0x4004
+#define GL_LIGHT5 0x4005
+#define GL_LIGHT6 0x4006
+#define GL_LIGHT7 0x4007
+#define GL_POSITION 0x1203
+#define GL_AMBIENT 0x1200
+#define GL_DIFFUSE 0x1201
+#define GL_SPECULAR 0x1202
+#define GL_EMISSION 0x1600
+#define GL_SHININESS 0x1601
+#define GL_AMBIENT_AND_DIFFUSE 0x1602
+#define GL_LIGHT_MODEL_AMBIENT 0x0B53
+#define GL_NORMALIZE 0x0BA1
+
+#define GL_BLEND 0x0BE2
+#define GL_SRC_ALPHA 0x0302
+#define GL_ONE_MINUS_SRC_ALPHA 0x0303
+#define GL_ONE 1
+#define GL_ZERO 0
+
+#define GL_ALPHA_TEST 0x0BC0
+#define GL_GREATER 0x0204
+#define GL_GEQUAL 0x0206
+#define GL_SCISSOR_TEST 0x0C11
 
 /* Bind a 0xAARRGGBB framebuffer.  Width and height are in pixels; the depth
  * buffer is allocated by the library. */
@@ -97,6 +146,30 @@ void glColor4f(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
 void glVertex2f(GLfloat x, GLfloat y);
 void glVertex3f(GLfloat x, GLfloat y, GLfloat z);
 void glVertex4f(GLfloat x, GLfloat y, GLfloat z, GLfloat w);
+
+/* Textures.  GL_TEXTURE_2D supports RGBA/RGB unsigned-byte images, nearest or
+ * linear filtering and repeat/clamp wrapping. */
+void glGenTextures(GLsizei count, GLuint *textures);
+void glBindTexture(GLenum target, GLuint texture);
+void glDeleteTextures(GLsizei count, const GLuint *textures);
+void glTexImage2D(GLenum target, GLint level, GLint internal_format,
+                  GLsizei width, GLsizei height, GLint border, GLenum format,
+                  GLenum type, const void *pixels);
+void glTexParameteri(GLenum target, GLenum name, GLint value);
+void glTexEnvi(GLenum target, GLenum name, GLint value);
+void glTexCoord2f(GLfloat s, GLfloat t);
+
+/* Per-vertex lighting for GL_LIGHT0..7.  Attenuation and spot cones are not
+ * implemented; positions are stored in eye space when set. */
+void glNormal3f(GLfloat x, GLfloat y, GLfloat z);
+void glLightfv(GLenum light, GLenum name, const GLfloat *params);
+void glLightModelfv(GLenum name, const GLfloat *params);
+void glMaterialfv(GLenum face, GLenum name, const GLfloat *params);
+
+/* Alpha blending, alpha test and scissor clipping. */
+void glBlendFunc(GLenum source, GLenum destination);
+void glAlphaFunc(GLenum function, GLclampf reference);
+void glScissor(GLint x, GLint y, GLsizei width, GLsizei height);
 
 void glFinish(void);
 void glFlush(void);

@@ -14,6 +14,7 @@
 #include <drivers.h>
 #include <fat32.h>
 #include <install.h>
+#include <io.h>
 #include <ipc.h>
 #include <kprintf.h>
 #include <mem.h>
@@ -98,6 +99,8 @@
 #define SYS_EPOLL_CTL       66
 #define SYS_EPOLL_WAIT      67
 #define SYS_INSTALL_ERROR   68
+#define SYS_REBOOT          69
+#define SYS_INSTALL_PROGRESS 70
 
 #define BLK_SECTOR_BYTES 512u
 #define BLK_MAX_SECTORS  8u
@@ -426,11 +429,82 @@ static long syscall_install(u64 target, u64 gpt)
         destination = install_pick_target();
     if (destination < 0)
         return -3;
-    if (install_run(destination, gpt != 0, NULL) != 0) {
+    if (install_run(destination, gpt != 0, NULL, NULL) != 0) {
         kprintf("[install] %s\n", install_last_error());
         return -4;
     }
     return 0;
+}
+
+/* One progress page shared between the UI process and its worker child. */
+struct install_progress {
+    u32 done;
+    u32 total;
+};
+
+struct install_progress_context {
+    struct process *process;
+    u64 pointer;
+};
+
+/* Publish one install stage into the worker's shared progress page. */
+static void install_progress_report(void *context, u32 done, u32 total)
+{
+    struct install_progress_context *state = context;
+    struct install_progress progress;
+    progress.done = done;
+    progress.total = total;
+    if (state && state->pointer)
+        process_user_write(state->process, state->pointer, &progress,
+                           sizeof(progress));
+}
+
+/* SYS_INSTALL_PROGRESS: install while reporting done/total to a user page. */
+static long syscall_install_progress(struct process *process, u64 target,
+                                     u64 gpt, u64 progress_pointer,
+                                     u64 capacity)
+{
+    if (!process || capacity < sizeof(struct install_progress) ||
+        user_range_ok(process, progress_pointer,
+                      sizeof(struct install_progress)) != 1)
+        return -1;
+    int destination = (int)target;
+    if (destination < 0)
+        destination = install_pick_target();
+    if (destination < 0)
+        return -3;
+
+    struct install_progress_context context;
+    context.process = process;
+    context.pointer = progress_pointer;
+    int status = install_run(destination, gpt != 0, install_progress_report,
+                             &context);
+    if (status != 0) {
+        kprintf("[install] %s\n", install_last_error());
+        return -4;
+    }
+    return 0;
+}
+
+/* SYS_REBOOT: pulse the keyboard controller reset line, then triple fault. */
+static void syscall_reboot(void)
+{
+    cli();
+    for (int i = 0; i < 100000; i++) {
+        if ((inb(0x64) & 0x02) == 0)
+            break;
+    }
+    outb(0x64, 0xFE);
+    for (volatile int i = 0; i < 1000000; i++)
+        pause();
+
+    struct {
+        u16 limit;
+        u64 base;
+    } __attribute__((packed)) null_idt = {0, 0};
+    __asm__ volatile("lidt %0\n\tint3" :: "m"(null_idt));
+    for (;;)
+        hlt();
 }
 
 /* Copy the installer's last diagnostic to user memory, including its NUL. */
@@ -956,6 +1030,14 @@ void syscall_dispatch(struct interrupt_frame *frame)
         break;
     case SYS_INSTALL_ERROR:
         result = syscall_install_error(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_REBOOT:
+        syscall_reboot();
+        result = 0;
+        break;
+    case SYS_INSTALL_PROGRESS:
+        result = syscall_install_progress(process, frame->rdi, frame->rsi,
+                                          frame->rdx, frame->r10);
         break;
     default:
         result = -1;

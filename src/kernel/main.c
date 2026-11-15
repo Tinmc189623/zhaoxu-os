@@ -235,6 +235,20 @@ void kernel_main(struct boot_info *boot)
         hlt();
 #endif
 
+#if VK_BOOT_TEST == 1
+    kprintf("[vk ] running /mnt/VK_TEST.ZXE\n");
+    u64 vk_pid = process_spawn("/mnt/VK_TEST.ZXE", 0, NULL);
+    if (vk_pid) {
+        int vk_status = -1;
+        process_wait(vk_pid, &vk_status);
+        kprintf("[vk ] VK_TEST exit %d\n", vk_status);
+    } else {
+        kprintf("[vk ] VK_TEST spawn failed\n");
+    }
+    for (;;)
+        hlt();
+#endif
+
 #if WLSTOCK_BOOT_TEST == 1
     kprintf("[wlstock] starting /bin/wayland\n");
     u64 wlstock_server = process_spawn("/bin/wayland", 0, NULL);

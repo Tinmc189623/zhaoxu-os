@@ -22,8 +22,11 @@ struct install_disk_info {
 
 int install_scan(struct install_disk_info *out, int capacity);
 int install_pick_target(void);
+/* `progress` runs after each coarse write stage; `context` is passed through
+ * so a syscall can update the caller's shared progress page. */
 int install_run(int target_disk, int gpt,
-                void (*progress)(u32 done, u32 total));
+                void (*progress)(void *context, u32 done, u32 total),
+                void *context);
 const char *install_last_error(void);
 
 #endif

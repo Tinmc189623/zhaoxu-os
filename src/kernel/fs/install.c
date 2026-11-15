@@ -488,7 +488,9 @@ static int read_stage1_verify(int disk)
  * state: one SYNC commits the chunks already sent and restores the volume
  * that was mounted before the install (ext4fs does the restore on SYNC).
  * The three heap buffers are freed in exactly one place each. */
-int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
+int install_run(int target_disk, int gpt,
+                void (*progress)(void *context, u32 done, u32 total),
+                void *context)
 {
 #if HEADLESS
     /* The installed stage2 and loader are copies of this build, so a
@@ -625,6 +627,14 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
         }
     }
 
+    /* Nine coarse stages: format, kernel, assets, MBR, stage2, gap, ESP,
+     * verify and flush.  Report before the long format so the UI can show a
+     * real denominator instead of an indeterminate 0/1. */
+    u32 steps = 9;
+    u32 step = 0;
+    if (progress)
+        progress(context, step, steps);
+
     u32 bin_block = 0;
     u32 bin_blocks = 0;
     if (fs_call_format(target_disk, root_lba, root_sectors,
@@ -635,6 +645,9 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     /* The service now has the target mounted: every later failure must
      * SYNC (commit + restore the previous mount) in the cleanup path. */
     fs_dirty = 1;
+    step++;
+    if (progress)
+        progress(context, step, steps);
     for (u64 offset = 0; offset < kernel_bytes;) {
         u32 chunk = (u32)(kernel_bytes - offset);
         if (chunk > FS_DATA_SIZE)
@@ -658,6 +671,9 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
         }
         offset += chunk;
     }
+    step++;
+    if (progress)
+        progress(context, step, steps);
     for (u64 offset = 0; font && offset < font_size;) {
         u32 chunk = (u32)(font_size - offset);
         if (chunk > FS_DATA_SIZE)
@@ -695,6 +711,9 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
         goto fail;
     }
     fs_dirty = 0;
+    step++;
+    if (progress)
+        progress(context, step, steps);
 
     u64 bin_lba = root_lba + (u64)bin_block * 8u;
     if ((u64)bin_blocks * 8u < kernel_sectors ||
@@ -710,9 +729,6 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
         goto fail;
     }
 
-    u32 steps = 7;
-    u32 step = 0;
-
     if (write_mbr(target_disk, total, esp_sectors, root_sectors, gpt) != 0) {
         set_error("failed to write the MBR");
         goto fail;
@@ -725,7 +741,7 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     }
     step++;
     if (progress)
-        progress(step, steps);
+        progress(context, step, steps);
 
     if (gpt && write_gpt(target_disk, total, esp_sectors,
                          root_sectors) != 0) {
@@ -739,7 +755,7 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     }
     step++;
     if (progress)
-        progress(step, steps);
+        progress(context, step, steps);
 
     if (zero_gap(target_disk, stage2_lba + stage2_sectors,
                  INSTALL_PARTITION_LBA) != 0) {
@@ -748,7 +764,7 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     }
     step++;
     if (progress)
-        progress(step, steps);
+        progress(context, step, steps);
 
     if (fat32_make_esp(target_disk, INSTALL_PARTITION_LBA, esp_sectors, loader,
                        loader_bytes, osldr, osldr_bytes) != 0) {
@@ -757,7 +773,7 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     }
     step++;
     if (progress)
-        progress(step, steps);
+        progress(context, step, steps);
 
     if (read_stage1_verify(target_disk) != 0) {
         set_error("verification failed: bootloader MBR differs");
@@ -777,7 +793,7 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     }
     step++;
     if (progress)
-        progress(step, steps);
+        progress(context, step, steps);
 
     if (block_disk_flush(target_disk) != 0) {
         set_error("failed to flush the target disk");
@@ -785,7 +801,7 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     }
     step++;
     if (progress)
-        progress(step, steps);
+        progress(context, step, steps);
 
     g_error[0] = 0;
     kfree(font_copy);

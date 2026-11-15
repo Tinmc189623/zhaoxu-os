@@ -226,9 +226,147 @@ static int test_perspective(void)
     return glGetError() == GL_NO_ERROR;
 }
 
+/* Upload a 2x2 RGBA texture and sample all four texels through a quad. */
+static int test_texture(void)
+{
+    static const unsigned char image[16] = {
+        255, 0, 0, 255,     0, 255, 0, 255,
+        0, 0, 255, 255,     255, 255, 255, 255};
+    reset_frame();
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    if (!texture)
+        return 0;
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, image);
+    glColor3f(1, 1, 1);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0);
+    glVertex2f(-1, -1);
+    glTexCoord2f(1, 0);
+    glVertex2f(1, -1);
+    glTexCoord2f(1, 1);
+    glVertex2f(1, 1);
+    glTexCoord2f(0, 1);
+    glVertex2f(-1, 1);
+    glEnd();
+    glDisable(GL_TEXTURE_2D);
+    glDeleteTextures(1, &texture);
+
+    if (!expect_rgb(40, 30, 0, 0, 255))
+        return 0;
+    if (!expect_rgb(120, 90, 0, 255, 0))
+        return 0;
+    if (!expect_rgb(40, 90, 255, 0, 0))
+        return 0;
+    return glGetError() == GL_NO_ERROR;
+}
+
+/* A directional white light on a red diffuse material lights the quad red. */
+static int test_lighting(void)
+{
+    reset_frame();
+    GLfloat zero[4] = {0, 0, 0, 1};
+    GLfloat red[4] = {1, 0, 0, 1};
+    GLfloat position[4] = {0, 0, 1, 0};
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, zero);
+    glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, red);
+    glMaterialfv(GL_FRONT, GL_SPECULAR, zero);
+    glLightfv(GL_LIGHT0, GL_POSITION, position);
+    glEnable(GL_LIGHTING);
+    glEnable(GL_LIGHT0);
+    glNormal3f(0, 0, 1);
+    glBegin(GL_QUADS);
+    glVertex2f(-0.7f, -0.7f);
+    glVertex2f(0.7f, -0.7f);
+    glVertex2f(0.7f, 0.7f);
+    glVertex2f(-0.7f, 0.7f);
+    glEnd();
+    glDisable(GL_LIGHT0);
+    glDisable(GL_LIGHTING);
+    if (!expect_rgb_near(TEST_W / 2, TEST_H / 2, 255, 0, 0, 2))
+        return 0;
+    return glGetError() == GL_NO_ERROR;
+}
+
+/* Half-alpha red over black must blend to mid red, and alpha test must cull. */
+static int test_blending(void)
+{
+    reset_frame();
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(1, 0, 0, 0.5f);
+    glBegin(GL_QUADS);
+    glVertex2f(-0.8f, -0.8f);
+    glVertex2f(0.8f, -0.8f);
+    glVertex2f(0.8f, 0.8f);
+    glVertex2f(-0.8f, 0.8f);
+    glEnd();
+    glDisable(GL_BLEND);
+    if (!expect_rgb_near(TEST_W / 2, TEST_H / 2, 128, 0, 0, 2))
+        return 0;
+
+    reset_frame();
+    glEnable(GL_ALPHA_TEST);
+    glAlphaFunc(GL_GREATER, 0.9f);
+    glColor4f(0, 1, 0, 0.5f);
+    glBegin(GL_QUADS);
+    glVertex2f(-0.8f, -0.8f);
+    glVertex2f(0.8f, -0.8f);
+    glVertex2f(0.8f, 0.8f);
+    glVertex2f(-0.8f, 0.8f);
+    glEnd();
+    glColor4f(0, 1, 0, 1);
+    glBegin(GL_QUADS);
+    glVertex2f(-0.4f, -0.4f);
+    glVertex2f(0.4f, -0.4f);
+    glVertex2f(0.4f, 0.4f);
+    glVertex2f(-0.4f, 0.4f);
+    glEnd();
+    glDisable(GL_ALPHA_TEST);
+    if (!expect_rgb(20, 20, 0, 0, 0))
+        return 0;
+    if (!expect_rgb(TEST_W / 2, TEST_H / 2, 0, 255, 0))
+        return 0;
+    return glGetError() == GL_NO_ERROR;
+}
+
+/* Scissor keeps the left half red and leaves the right half black. */
+static int test_scissor(void)
+{
+    reset_frame();
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(0, 0, TEST_W / 2, TEST_H);
+    glColor3f(1, 0, 0);
+    glBegin(GL_QUADS);
+    glVertex2f(-0.9f, -0.9f);
+    glVertex2f(0.9f, -0.9f);
+    glVertex2f(0.9f, 0.9f);
+    glVertex2f(-0.9f, 0.9f);
+    glEnd();
+    glDisable(GL_SCISSOR_TEST);
+    if (!expect_rgb(20, 60, 255, 0, 0))
+        return 0;
+    if (!expect_rgb(TEST_W - 20, 60, 0, 0, 0))
+        return 0;
+    return glGetError() == GL_NO_ERROR;
+}
+
 /* glReadPixels uses a bottom-left origin; row 0 is the last framebuffer row. */
 static int test_read_pixels(void)
 {
+    reset_frame();
+    glColor3f(0, 1, 1);
+    glBegin(GL_QUADS);
+    glVertex2f(-0.5f, -0.5f);
+    glVertex2f(0.5f, -0.5f);
+    glVertex2f(0.5f, 0.5f);
+    glVertex2f(-0.5f, 0.5f);
+    glEnd();
     glReadPixels(0, 0, TEST_W, TEST_H, GL_RGBA, GL_UNSIGNED_BYTE,
                  g_readback);
     unsigned int top = (unsigned int)g_readback[0] |
@@ -294,6 +432,30 @@ int user_main(long *stack)
         return 1;
     }
     u_puts("[gl ] perspective PASS\n");
+
+    if (!test_texture()) {
+        u_puts("[gl ] texture FAIL\n");
+        return 1;
+    }
+    u_puts("[gl ] texture PASS\n");
+
+    if (!test_lighting()) {
+        u_puts("[gl ] lighting FAIL\n");
+        return 1;
+    }
+    u_puts("[gl ] lighting PASS\n");
+
+    if (!test_blending()) {
+        u_puts("[gl ] blend FAIL\n");
+        return 1;
+    }
+    u_puts("[gl ] blend PASS\n");
+
+    if (!test_scissor()) {
+        u_puts("[gl ] scissor FAIL\n");
+        return 1;
+    }
+    u_puts("[gl ] scissor PASS\n");
 
     if (!test_read_pixels()) {
         u_puts("[gl ] readpixels FAIL\n");

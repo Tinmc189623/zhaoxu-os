@@ -2,6 +2,35 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 · build 8
+
+### Installer progress and post-install actions
+- The installer now runs the blocking disk write in a `worker` child process. The UI process maps a shared page, passes its shm id to the worker, and paints a real stage counter from `SYS_INSTALL_PROGRESS` (70) while the child blocks in the kernel
+- `install_run()` reports nine stages: ext4 format, kernel image, assets, MBR, stage 2, gap clear, ESP, verify and flush. The former 0/1 indeterminate display is gone; long formats now show the denominator before the first write
+- The done screen offers "立即重启" (`SYS_REBOOT`, 69) next to "关闭安装程序". Reboot pulses the keyboard-controller reset line and falls back to a triple fault
+- The select screen has a "刷新磁盘" button; failures rescan the block devices before returning to selection
+- New syscalls: `SYS_REBOOT` (69) and `SYS_INSTALL_PROGRESS` (70). `install_run()` takes an opaque progress context so concurrent SMP installs cannot share a global pointer
+- Verified in QEMU: a real click-through install showed `写入阶段 2 / 9` mid-write, completed to the green screen, and the reboot button path was compiled and wired
+
+### OpenGL
+- Texture mapping: `glGenTextures`/`glBindTexture`/`glDeleteTextures`, `glTexImage2D` (RGB/RGBA unsigned byte, up to 512x512), nearest and bilinear filtering, repeat/clamp wrapping, `glTexCoord2f`, and MODULATE/DECAL/REPLACE texture environments. Texture coordinates are interpolated perspective-correctly
+- Lighting: `glNormal3f`, `glLightfv` for `GL_LIGHT0..7`, `glLightModelfv`, `glMaterialfv` (ambient/diffuse/specular/emission/shininess). Supports directional and positional lights, ambient/diffuse/specular terms and per-vertex normal transformation; attenuation and spot cones remain open
+- Blending and fragment tests: `glBlendFunc` for ZERO/ONE/SRC_ALPHA/ONE_MINUS_SRC_ALPHA, `glAlphaFunc`, and `glScissor` with bottom-left OpenGL coordinates
+- The regression gained `[gl ] texture PASS`, `lighting PASS`, `blend PASS` and `scissor PASS`; the full suite passes on the host and in QEMU
+
+### Vulkan
+- Vendored the Khronos Vulkan-Headers core C headers and added a software Vulkan 1.0 ICD under `src/user/lib/vulkan`
+- Implemented instances, one CPU physical device, devices and queues, host-visible coherent memory, buffers, RGBA8 images, image views, render passes, framebuffers, shader modules, graphics pipelines, command pools/buffers, fences and synchronous queue submission
+- Added a real SPIR-V 1.0 interpreter (`spirv.c`) for straight-line float/vector shaders: types, constants, location/builtin decorations, global variables, loads/stores, composite construct/extract, add/sub/mul/div, vector-times-scalar and dot. Unsupported instructions fail instead of guessing
+- The CPU triangle rasterizer runs the vertex stage per vertex and the fragment stage per covered pixel, writes RGBA8 and supports simple pipeline blending
+- `make out/vk_test.zxe` creates a real instance/device/image/render pass/pipeline/command buffer, draws an RGB triangle, submits it, maps the image and checks the centre/corner pixels. `VK_BOOT_TEST=1` prints `[vk ] Vulkan PASS` and exits 0 in QEMU
+- Not complete: there is no WSI/swapchain, descriptor sets, uniform buffers, compute, depth/stencil, multisampling, semaphores/timeline fences, tiling or GPU acceleration. The desktop still renders through `kernel/gfx/render.c`, so rules 37/38 remain open
+
+### Tooling and docs
+- `tools/spirv-test-gen.rb` generates the two regression SPIR-V modules from explicit instruction streams
+- THIRD_PARTY_NOTICES records Vulkan-Headers (Apache 2.0)
+- README, AGENTS, CLAUDE, INSTALL and the ZAF graphics status describe the actual OpenGL/Vulkan subset instead of claiming full compliance
+
 ## 0.7.1 「Yuanshuo」 · build 7
 
 ### Installer

@@ -41,12 +41,16 @@ enum install_state {
 };
 
 static struct target_disk g_targets[MAX_TARGETS];
+static char g_disks[1024];
 static int g_target_count;
 static int g_selected;
 static int g_gpt = 1;
 static int g_advanced;
 static enum install_state g_state;
 static char g_error[160];
+static struct zos_install_progress *g_progress;
+static long g_progress_id;
+static long g_worker_pid;
 
 static unsigned long parse_uint(const char *text, const char **end_out)
 {
@@ -127,6 +131,21 @@ static void parse_targets(const char *text)
     }
     if (g_selected >= g_target_count)
         g_selected = 0;
+}
+
+/* Re-read the block device table and rebuild the target list. */
+static int refresh_disks(void)
+{
+    long count = sys_disks(g_disks, sizeof(g_disks) - 1);
+    if (count <= 0) {
+        g_target_count = 0;
+        return 0;
+    }
+    if (count >= (long)sizeof(g_disks))
+        count = (long)sizeof(g_disks) - 1;
+    g_disks[count] = 0;
+    parse_targets(g_disks);
+    return g_target_count;
 }
 
 static int text_length(const char *text)
@@ -232,6 +251,9 @@ static void draw_select(long channel)
         draw_button(channel, 24, 350, 260, 52, COLOR_BLUE, "安装 Zhaoxu OS");
         ade_cursor(channel, 24, 350, 260, 52, "hand");
     }
+    ade_round(channel, 300, 350, 150, 52, 10, 0xDCE6EF);
+    ade_text(channel, 332, 366, COLOR_DARK, "刷新磁盘");
+    ade_cursor(channel, 300, 350, 150, 52, "hand");
     ade_commit(channel);
 }
 
@@ -260,7 +282,8 @@ static void draw_confirm(long channel)
     ade_commit(channel);
 }
 
-static void draw_installing(long channel)
+static void draw_installing(long channel, unsigned int done,
+                            unsigned int total)
 {
     ade_clear(channel, COLOR_PANEL);
     ade_fill(channel, 0, 0, WINDOW_W, 72, COLOR_BLUE);
@@ -269,8 +292,25 @@ static void draw_installing(long channel)
              "正在分区、格式化并复制系统文件…");
     ade_text(channel, 24, 150, COLOR_GRAY,
              "请勿关闭电源或拔出安装介质。");
+
+    if (total == 0)
+        total = 1;
+    if (done > total)
+        done = total;
+    int width = (int)(572u * done / total);
+    if (width < 9)
+        width = 9;
     ade_round(channel, 24, 210, 572, 18, 9, 0xDCE6EF);
-    ade_round(channel, 24, 210, 360, 18, 9, COLOR_BLUE);
+    ade_round(channel, 24, 210, width, 18, 9, COLOR_BLUE);
+
+    char label[32];
+    int at = 0;
+    label[0] = 0;
+    append_text(label, sizeof(label), &at, "写入阶段 ");
+    append_uint(label, sizeof(label), &at, done);
+    append_text(label, sizeof(label), &at, " / ");
+    append_uint(label, sizeof(label), &at, total);
+    ade_text(channel, 24, 242, COLOR_GRAY, label);
     ade_cursor(channel, 0, 0, WINDOW_W, WINDOW_H, "wait");
     ade_commit(channel);
 }
@@ -284,8 +324,11 @@ static void draw_done(long channel)
              "Zhaoxu OS 已安装到目标磁盘。");
     ade_text(channel, 24, 144, COLOR_GRAY,
              "请取出 ISO，然后从目标磁盘启动。");
-    draw_button(channel, 24, 210, 200, 52, COLOR_BLUE, "关闭安装程序");
+    draw_button(channel, 24, 210, 200, 52, COLOR_BLUE, "立即重启");
     ade_cursor(channel, 24, 210, 200, 52, "hand");
+    ade_round(channel, 244, 210, 200, 52, 10, 0xDCE6EF);
+    ade_text(channel, 266, 226, COLOR_DARK, "关闭安装程序");
+    ade_cursor(channel, 244, 210, 200, 52, "hand");
     ade_commit(channel);
 }
 
@@ -302,26 +345,131 @@ static void draw_failed(long channel)
     ade_commit(channel);
 }
 
+/* Compare a command prefix without pulling in libc. */
+static int starts_with(const char *text, const char *prefix)
+{
+    while (*prefix) {
+        if (*text++ != *prefix++)
+            return 0;
+    }
+    return 1;
+}
+
+/* Worker mode: run the blocking install and publish progress/result into the
+ * shared page the UI process mapped before spawning this child. */
+static int worker_main(const char *command)
+{
+    const char *cursor = command + 6;
+    unsigned long id = parse_uint(cursor, &cursor);
+    unsigned long disk = parse_uint(cursor, &cursor);
+    unsigned long gpt = parse_uint(cursor, &cursor);
+    struct zos_install_progress *progress =
+        (struct zos_install_progress *)sys_shm_map((long)id);
+    if (!progress)
+        return 1;
+
+    progress->done = 0;
+    progress->total = 9;
+    progress->finished = 0;
+    progress->result = -1;
+    progress->error[0] = 0;
+
+    long result = sys_install_progress((long)disk, (long)gpt, progress);
+    if (result != 0) {
+        sys_install_error(progress->error, sizeof(progress->error) - 1);
+        if (!progress->error[0]) {
+            const char *fallback =
+                result == -3 ? "未找到可安装的空白磁盘。"
+                             : "写入磁盘失败，请检查磁盘后重试。";
+            copy_text(progress->error, sizeof(progress->error), fallback,
+                      text_length(fallback));
+        }
+    }
+    progress->result = (int)result;
+    __asm__ volatile("" ::: "memory");
+    progress->finished = 1;
+    return result == 0 ? 0 : 1;
+}
+
+/* Create the shared progress page and spawn the worker child. */
+static int start_worker(int disk, int gpt)
+{
+    g_progress_id = (long)sys_shm_create(sizeof(struct zos_install_progress));
+    if (g_progress_id <= 0)
+        return -1;
+    g_progress = (struct zos_install_progress *)sys_shm_map(g_progress_id);
+    if (!g_progress)
+        return -1;
+    g_progress->done = 0;
+    g_progress->total = 9;
+    g_progress->finished = 0;
+    g_progress->result = -1;
+    g_progress->error[0] = 0;
+
+    char argument[64];
+    int at = 0;
+    argument[0] = 0;
+    append_text(argument, sizeof(argument), &at, "worker ");
+    append_uint(argument, sizeof(argument), &at, (unsigned long)g_progress_id);
+    append_text(argument, sizeof(argument), &at, " ");
+    append_uint(argument, sizeof(argument), &at, (unsigned long)disk);
+    append_text(argument, sizeof(argument), &at, " ");
+    append_uint(argument, sizeof(argument), &at, (unsigned long)(gpt ? 1 : 0));
+
+    g_worker_pid = sys_spawn_arg("/bin/apps/install.zxe", argument);
+    return g_worker_pid > 0 ? 0 : -1;
+}
+
 static void start_install(long channel)
 {
     g_state = STATE_INSTALLING;
-    draw_installing(channel);
     u_puts("[install] installing\n");
-    long result = sys_install(g_targets[g_selected].index, g_gpt);
-    if (result == 0) {
+    if (start_worker(g_targets[g_selected].index, g_gpt) != 0) {
+        g_state = STATE_FAILED;
+        copy_text(g_error, sizeof(g_error), "无法启动安装进程。", 24);
+        draw_failed(channel);
+        return;
+    }
+
+    unsigned int last_done = 0xFFFFFFFFu;
+    unsigned int last_total = 0xFFFFFFFFu;
+    draw_installing(channel, 0, 9);
+    for (;;) {
+        unsigned int done = g_progress->done;
+        unsigned int total = g_progress->total;
+        if (done != last_done || total != last_total) {
+            last_done = done;
+            last_total = total;
+            draw_installing(channel, done, total);
+        }
+        struct ade_message message;
+        while (ade_poll(channel, &message)) {
+            /* Ignore close/click while the worker owns the disk. */
+        }
+        if (g_progress->finished)
+            break;
+        sys_sleep(20);
+    }
+    __asm__ volatile("" ::: "memory");
+
+    int status = 0;
+    if (g_worker_pid > 0)
+        sys_wait(g_worker_pid, &status);
+    if (g_progress->result == 0) {
         g_state = STATE_DONE;
         u_puts("[install] complete\n");
         draw_done(channel);
         return;
     }
+
     g_state = STATE_FAILED;
-    g_error[0] = 0;
-    sys_install_error(g_error, sizeof(g_error) - 1);
-    if (!g_error[0]) {
-        const char *fallback = result == -3 ? "未找到可安装的空白磁盘。"
-                                            : "写入磁盘失败，请检查磁盘后重试。";
-        copy_text(g_error, sizeof(g_error), fallback, text_length(fallback));
-    }
+    int at = 0;
+    for (; at + 1 < (int)sizeof(g_error) && g_progress->error[at]; at++)
+        g_error[at] = g_progress->error[at];
+    g_error[at] = 0;
+    if (!g_error[0])
+        copy_text(g_error, sizeof(g_error), "写入磁盘失败，请检查磁盘后重试。",
+                  48);
     u_puts("[install] failed\n");
     draw_failed(channel);
 }
@@ -330,21 +478,16 @@ int user_main(long *stack)
 {
     long argc = stack[0];
     const char **argv = (const char **)(stack + 1);
-    int force = 0;
-    if (argc > 0 && argv[0] && argv[0][0] == 'f')
-        force = 1;
+    const char *command = (argc > 0 && argv[0]) ? argv[0] : "";
+    if (starts_with(command, "worker "))
+        return worker_main(command);
 
+    int force = command[0] == 'f';
     if (!force && sys_data_volume())
         return 0;
 
-    static char disks[1024];
-    long count = sys_disks(disks, sizeof(disks) - 1);
-    if (count <= 0)
+    if (refresh_disks() <= 0)
         return 0;
-    if (count >= (long)sizeof(disks))
-        count = (long)sizeof(disks) - 1;
-    disks[count] = 0;
-    parse_targets(disks);
 
     long channel = ade_connect();
     if (channel <= 0)
@@ -389,6 +532,12 @@ int user_main(long *stack)
                     break;
                 }
             }
+            if (message.x >= 300 && message.x < 450 && message.y >= 350 &&
+                message.y < 402) {
+                refresh_disks();
+                draw_select(channel);
+                continue;
+            }
             if (g_target_count > 0 && message.x >= 24 &&
                 message.x < 284 && message.y >= 350 && message.y < 402) {
                 g_state = STATE_CONFIRM;
@@ -405,13 +554,18 @@ int user_main(long *stack)
             }
         } else if (g_state == STATE_DONE) {
             if (message.x >= 24 && message.x < 224 && message.y >= 210 &&
+                message.y < 262) {
+                u_puts("[install] rebooting\n");
+                sys_reboot();
+            }
+            if (message.x >= 244 && message.x < 444 && message.y >= 210 &&
                 message.y < 262)
                 break;
         } else if (g_state == STATE_FAILED) {
             if (message.x >= 24 && message.x < 224 && message.y >= 210 &&
                 message.y < 262) {
                 g_state = STATE_SELECT;
-                parse_targets(disks);
+                refresh_disks();
                 draw_select(channel);
             }
         }

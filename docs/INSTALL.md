@@ -101,7 +101,7 @@ Rufus is recommended on Windows:
 On Linux/macOS use `dd` directly:
 
 ```bash
-sudo dd if=zhaoxu-os_x86-64_0.7.1_6_ld.iso of=/dev/sdX bs=4M status=progress oflag=sync
+sudo dd if=zhaoxu-os_x86-64_0.7.1_8_ld.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
 `of=/dev/sdX` is the whole USB drive, not `/dev/sdX1`. Writing the wrong device destroys another disk; check twice with `lsblk` before running.
@@ -206,7 +206,7 @@ GPT is the default and the row reads "自动 · GPT（推荐）". Click "高级�
 
 Clicking "安装 Zhaoxu OS" does not write anything yet. It opens a confirmation screen showing the selected disk, the layout and a red warning that the disk will be erased. Click "开始安装" ("Start installation") to begin, or "返回" ("Back") to change the selection. This second click is the point of no return.
 
-During the write the window shows "正在安装 Zhaoxu OS" with a bar and a busy cursor. The `SYS_INSTALL` call is synchronous, so the bar is an activity indicator rather than a per-sector percentage. Actual time depends on disk speed: a SATA SSD takes seconds, while virtual and spinning disks take tens of seconds. Do not power off or remove the ISO.
+During the write the window shows "正在安装 Zhaoxu OS", a progress bar and a line such as "写入阶段 2 / 9". The UI process spawns a worker that performs the blocking `SYS_INSTALL_PROGRESS` call; the kernel publishes nine coarse stages (ext4 format, kernel, assets, MBR, stage 2, gap, ESP, verify, flush) into a shared page, and the parent repaints. It is stage progress, not a per-sector percentage. Actual time depends on disk speed: a SATA SSD takes seconds, while virtual and spinning disks take tens of seconds. Do not power off or remove the ISO.
 
 On success the window turns green and reads:
 
@@ -215,7 +215,7 @@ Zhaoxu OS 已安装到目标磁盘。
 请取出 ISO，然后从目标磁盘启动。
 ```
 
-Click "关闭安装程序" ("Close installer") and reboot. On failure the window turns red, says "系统没有写入目标磁盘。" ("the system did not write the target disk") and prints the kernel's actual reason, for example a missing target disk or a failed FAT32 verify. Click "返回" to rescan the disks and try again.
+Click "立即重启" ("Reboot now") to reset the machine, or "关闭安装程序" to close the installer and reboot yourself. On failure the window turns red, says "系统没有写入目标磁盘。" ("the system did not write the target disk") and prints the kernel's actual reason, for example a missing target disk or a failed FAT32 verify. Click "返回" to rescan the disks and try again; the select screen also has a "刷新磁盘" button.
 
 Neither layout places the kernel in the ESP or in boot sectors. The kernel exists only on the ext4 root:
 

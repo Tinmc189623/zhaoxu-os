@@ -63,6 +63,19 @@ Zhaoxu OS kernel image.
   paths are not linked; the build keeps only the SysV call path used by the
   client.
 
+## Vulkan-Headers
+
+- Files: `src/third_party/vulkan-headers/include/vulkan/`
+- Project: https://github.com/KhronosGroup/Vulkan-Headers
+- Copyright © 2015-2026 The Khronos Group Inc.; portions © Valve Corporation,
+  LunarG, Inc. and contributors
+- License: Apache License 2.0 (see
+  `src/third_party/vulkan-headers/LICENSE.md`)
+- Only the core C headers needed by the software ICD are vendored
+  (`vulkan.h`, `vulkan_core.h`, `vulkan_beta.h`, `vk_platform.h`, `vk_icd.h`).
+  The ICD implementation, loader entry points and SPIR-V interpreter are
+  original Zhaoxu OS code.
+
 ## UEFI / OVMF / QEMU
 
 UEFI firmware (OVMF) and QEMU are development and test dependencies and are not

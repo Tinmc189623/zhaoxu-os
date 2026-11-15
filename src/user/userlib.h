@@ -75,6 +75,8 @@ typedef unsigned long long u64;
 #define SYS_EPOLL_CTL       66
 #define SYS_EPOLL_WAIT      67
 #define SYS_INSTALL_ERROR   68
+#define SYS_REBOOT          69
+#define SYS_INSTALL_PROGRESS 70
 
 #define AF_UNIX      1
 #define SOCK_STREAM  1
@@ -579,6 +581,31 @@ static inline long sys_epoll_wait(int epfd, struct zos_epoll_event *events,
 static inline long sys_install_error(char *buffer, unsigned long capacity)
 {
     return syscall3(SYS_INSTALL_ERROR, (long)buffer, (long)capacity, 0);
+}
+
+/* Installer UI and worker share this page through shm.  The kernel updates
+ * done/total after each coarse stage; the worker fills the result fields. */
+struct zos_install_progress {
+    volatile unsigned int done;
+    volatile unsigned int total;
+    volatile unsigned int finished;
+    volatile int result;
+    char error[128];
+};
+
+static inline long sys_install_progress(long target, long gpt,
+                                        struct zos_install_progress *progress)
+{
+    return syscall4(SYS_INSTALL_PROGRESS, target, gpt, (long)progress,
+                    sizeof(*progress));
+}
+
+/* Reboot the machine (keyboard-controller reset with a triple-fault fallback). */
+static inline void sys_reboot(void)
+{
+    syscall3(SYS_REBOOT, 0, 0, 0);
+    for (;;)
+        __asm__ volatile("hlt");
 }
 
 void u_puts(const char *text);

@@ -114,6 +114,8 @@ FT_BOOT_TEST ?= 0
 CFLAGS += -DFT_BOOT_TEST=$(FT_BOOT_TEST)
 GL_BOOT_TEST ?= 0
 CFLAGS += -DGL_BOOT_TEST=$(GL_BOOT_TEST)
+VK_BOOT_TEST ?= 0
+CFLAGS += -DVK_BOOT_TEST=$(VK_BOOT_TEST)
 # make does not track CFLAGS changes; stamps keyed by the test mode force
 # kernel/main.o to rebuild when a boot-time test toggles, so an ISO cannot
 # silently ship a self-test kernel.
@@ -142,7 +144,12 @@ $(BUILD)/gl-%.stamp:
 	@mkdir -p $(BUILD)
 	@rm -f $(BUILD)/gl-*.stamp
 	@touch $@
-$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP) $(GL_STAMP)
+VK_STAMP := $(BUILD)/vk-$(VK_BOOT_TEST).stamp
+$(BUILD)/vk-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/vk-*.stamp
+	@touch $@
+$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP) $(GL_STAMP) $(VK_STAMP)
 ADAFLAGS := -c -gnatp -gnat2022 -O2 -g -fno-pie \
             -fno-stack-protector -mno-red-zone -mcmodel=kernel \
             -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -mno-avx \
@@ -592,6 +599,25 @@ $(BUILD)/gl_test.uelf: user/gl_test.c $(GL_SRCS) $(GL_HDRS) user/user.ld
 	$(CC) $(GL_CFLAGS) -Iuser $(USER_LDFLAGS) -Wl,--gc-sections -o $@ \
 	  user/gl_test.c $(GL_SRCS)
 
+# ---- Vulkan software ICD (rule 37) -----------------------------------
+# The ICD and its SPIR-V interpreter use scalar floats, so they opt out of
+# -mno-sse like the OpenGL and FreeType sources.
+VK_CFLAGS := $(filter-out -mno-sse -mno-sse2 -mno-mmx -mno-avx,$(USER_CFLAGS)) \
+             -O2 -msse2 -mno-avx -fno-math-errno \
+             -Ithird_party/vulkan-headers/include -Iuser/lib/vulkan \
+             -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
+VK_SRCS := user/lib/vulkan/vulkan_soft.c user/lib/vulkan/spirv.c \
+           user/lib/heap.c user/userlib.c
+VK_HDRS := third_party/vulkan-headers/include/vulkan/vulkan.h \
+           third_party/vulkan-headers/include/vulkan/vulkan_core.h \
+           user/lib/vulkan/spirv.h user/lib/vulkan/test_shaders.h \
+           user/userlib.h
+
+$(BUILD)/vk_test.uelf: user/vk_test.c $(VK_SRCS) $(VK_HDRS) user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(VK_CFLAGS) -Iuser $(USER_LDFLAGS) -Wl,--gc-sections -o $@ \
+	  user/vk_test.c $(VK_SRCS)
+
 # ---- ZAF graphics (Z0) ----------------------------------------------
 ZAF_GFX_HDRS := user/lib/include/zaf_gfx.h user/userlib.h
 ZAF_GFX_SRCS := user/zaf_gfx_demo.c user/lib/zaf_gfx_soft.c user/userlib.c
@@ -826,7 +852,7 @@ $(BUILD)/initramfs.o: $(INITRAMFS_Z)
 # ---- FAT32 data volume ----------------------------------------------
 DATA_IMG := $(OUT)/data.img
 
-$(DATA_IMG): $(OUT)/hello.zxe $(OUT)/ft_test.zxe $(OUT)/gl_test.zxe $(BUILD)/hello.uelf initramfs/data/hello.txt initramfs/data/info.txt $(FONT_FILES)
+$(DATA_IMG): $(OUT)/hello.zxe $(OUT)/ft_test.zxe $(OUT)/gl_test.zxe $(OUT)/vk_test.zxe $(BUILD)/hello.uelf initramfs/data/hello.txt initramfs/data/info.txt $(FONT_FILES)
 	@mkdir -p $(OUT)
 	dd if=/dev/zero of=$@ bs=1M count=64 2>/dev/null
 	$(MKFS_VFAT) -F 32 -n ZHAOXUDATA $@ >/dev/null
@@ -839,6 +865,7 @@ $(DATA_IMG): $(OUT)/hello.zxe $(OUT)/ft_test.zxe $(OUT)/gl_test.zxe $(BUILD)/hel
 	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ initramfs/data/Inter-Regular.otf ::/
 	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ $(OUT)/ft_test.zxe ::/FT_TEST.ZXE
 	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ $(OUT)/gl_test.zxe ::/GL_TEST.ZXE
+	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ $(OUT)/vk_test.zxe ::/VK_TEST.ZXE
 	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ initramfs/data/info.txt ::/DOCS/INFO.TXT
 
 $(BUILD)/efi_main.o: boot/efi_main.c boot/uefi.h $(HEADLESS_HEADER)
