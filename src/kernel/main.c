@@ -279,6 +279,20 @@ void kernel_main(struct boot_info *boot)
         hlt();
 #endif
 
+#if NLIBC_BOOT_TEST == 1
+    kprintf("[nlibc] running /data/NLIB_HELLO.ZXE\n");
+    u64 nlibc_pid = process_spawn("/data/NLIB_HELLO.ZXE", 0, NULL);
+    if (nlibc_pid) {
+        int nlibc_status = -1;
+        process_wait(nlibc_pid, &nlibc_status);
+        kprintf("[nlibc] NLIB_HELLO exit %d\n", nlibc_status);
+    } else {
+        kprintf("[nlibc] NLIB_HELLO spawn failed\n");
+    }
+    for (;;)
+        hlt();
+#endif
+
 #if WLSTOCK_BOOT_TEST == 1
     kprintf("[wlstock] starting /bin/wayland\n");
     u64 wlstock_server = process_spawn("/bin/wayland", 0, NULL);

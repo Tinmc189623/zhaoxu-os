@@ -111,6 +111,8 @@ FE_BOOT_TEST ?= 0
 CFLAGS += -DFE_BOOT_TEST=$(FE_BOOT_TEST)
 POSIX_BOOT_TEST ?= 0
 CFLAGS += -DPOSIX_BOOT_TEST=$(POSIX_BOOT_TEST)
+NLIBC_BOOT_TEST ?= 0
+CFLAGS += -DNLIBC_BOOT_TEST=$(NLIBC_BOOT_TEST)
 # make does not track CFLAGS changes; stamps keyed by the test mode force
 # kernel/main.o to rebuild when a boot-time test toggles, so an ISO cannot
 # silently ship a self-test kernel.
@@ -154,7 +156,12 @@ $(BUILD)/posix-%.stamp:
 	@mkdir -p $(BUILD)
 	@rm -f $(BUILD)/posix-*.stamp
 	@touch $@
-$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP) $(GL_STAMP) $(VK_STAMP) $(FE_STAMP) $(POSIX_STAMP)
+NLIBC_STAMP := $(BUILD)/nlibc-$(NLIBC_BOOT_TEST).stamp
+$(BUILD)/nlibc-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/nlibc-*.stamp
+	@touch $@
+$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP) $(GL_STAMP) $(VK_STAMP) $(FE_STAMP) $(POSIX_STAMP) $(NLIBC_STAMP)
 ADAFLAGS := -c -gnatp -gnat2022 -O2 -g -fno-pie \
             -fno-stack-protector -mno-red-zone -mcmodel=kernel \
             -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -mno-avx \
@@ -330,6 +337,37 @@ $(BUILD)/%.uelf: user/%.c user/userlib.c user/userlib.h user/user.ld
 $(OUT)/%.zxe: $(BUILD)/%.uelf tools/zxe-pack.rb
 	@mkdir -p $(OUT)
 	$(RUBY) tools/zxe-pack.rb $< $@
+
+# ---- newlib smoke program -------------------------------------------
+# newlib 4.6 must be built PIC; tools/newlib.rb prepares it in the WSL home
+# directory because autoconf rejects the repository path's spaces.
+NEWLIB_ROOT ?= $(HOME)/newlib/install/x86_64-elf
+NEWLIB_CC ?= clang
+NEWLIB_CFLAGS := --target=x86_64-unknown-elf -m64 -O2 -fPIE -ffreestanding \
+                 -fno-stack-protector -fno-asynchronous-unwind-tables \
+                 -mno-red-zone -Wall -Wextra -I$(NEWLIB_ROOT)/include
+NL_BUILD := $(BUILD)/newlib
+
+$(NL_BUILD)/newlib_hello.o: user/newlib_hello.c
+	@mkdir -p $(dir $@)
+	$(NEWLIB_CC) $(NEWLIB_CFLAGS) -c $< -o $@
+
+$(NL_BUILD)/libgloss.o: user/lib/posix/libgloss.c
+	@mkdir -p $(dir $@)
+	$(NEWLIB_CC) $(NEWLIB_CFLAGS) -c $< -o $@
+
+$(NL_BUILD)/crt0.o: user/lib/posix/crt0.S
+	@mkdir -p $(dir $@)
+	$(NEWLIB_CC) $(NEWLIB_CFLAGS) -c $< -o $@
+
+$(BUILD)/nlib_hello.uelf: $(NL_BUILD)/crt0.o $(NL_BUILD)/newlib_hello.o \
+                          $(NL_BUILD)/libgloss.o user/user.ld
+	@test -f $(NEWLIB_ROOT)/lib/libc.a || { \
+	  echo "newlib is missing; run: ruby tools/newlib.rb"; exit 1; }
+	$(LD) -m elf_x86_64 -shared -Bsymbolic --build-id=none \
+	  -z max-page-size=0x1000 -T user/user.ld -o $@ \
+	  $(NL_BUILD)/crt0.o $(NL_BUILD)/newlib_hello.o $(NL_BUILD)/libgloss.o \
+	  $(NEWLIB_ROOT)/lib/libc.a $(NEWLIB_ROOT)/lib/libm.a
 
 # ---- ADE ring 3 display server --------------------------------------
 ADE_BUILD := $(BUILD)/ade
@@ -724,7 +762,7 @@ RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/aqua $(RAMFS)/bin/8sh \
                $(RAMFS)/data/PING.ZXE $(RAMFS)/data/PONG.ZXE \
                $(RAMFS)/data/NET_TEST.ZXE $(RAMFS)/data/M5_TEST.ZXE \
                $(RAMFS)/data/WLSTOCK.ZXE $(RAMFS)/data/FORKEXEC.ZXE \
-               $(RAMFS)/data/POSIX_TEST.ZXE
+               $(RAMFS)/data/POSIX_TEST.ZXE $(RAMFS)/data/NLIB_HELLO.ZXE
 
 # PNG + text cursor theme.  The compositor loads this from
 # /usr/share/cursors/Aqua at startup and falls back to the built-in arrow
@@ -846,6 +884,11 @@ $(RAMFS)/data/FORKEXEC.ZXE: $(OUT)/forkexec.zxe
 
 # POSIX pipe/dup2 regression.
 $(RAMFS)/data/POSIX_TEST.ZXE: $(OUT)/positest.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+# newlib smoke test (printf/malloc through libgloss + crt0).
+$(RAMFS)/data/NLIB_HELLO.ZXE: $(OUT)/nlib_hello.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 

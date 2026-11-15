@@ -156,6 +156,7 @@ iso-root/
 15. Vulkan 回归：`make out/vk_test.zxe out/data.img` 后以 `VK_BOOT_TEST=1 iso` 启动并把 `out/data.img` 挂为第二块盘；串口应出现 `[vk ] instance, physical device, queue PASS`、`[vk ] triangle PASS`、`[vk ] Vulkan PASS` 与 `[vk ] VK_TEST exit 0`。测试用真实 `vkCreateInstance`/`vkCreateDevice`/渲染通道/图形管线/命令缓冲渲染 64x64 RGBA 图像并回读，SPIR-V 由 `tools/spirv-test-gen.rb` 生成。
 16. fork/exec 回归：`make FE_BOOT_TEST=1 iso` 启动后串口应出现 `[fe ] running /data/FORKEXEC.ZXE`、`[forkexec] parent pid`、`[forkexec] child pid`、`[forkexec] wait returned 7, child status 7`，随后 `exec` 进入 `HELLO.ZXE`，打印 `[hello] ... argc=1, argv[0]=hello-from-exec`，最后 `[fe ] FORKEXEC exit 7`。子进程的 fork 返回值必须是 0，父进程拿到子 pid；exec 成功后同一 pid 运行新镜像。
 17. pipe/dup2 回归：`make POSIX_BOOT_TEST=1 iso` 启动后串口应出现 `[posix] pipe PASS`、`[posix] pipe eof PASS`、`[posix] dup2 PASS`、`[posix] stdio PASS`、`[posix] tty PASS`、`[posix] PIPE, EOF, DUP2, STDIO, TTY PASS` 与 `[posix] POSIX_TEST exit 0`。测试覆盖 fork 后跨进程管道、写端关闭后的 EOF、dup2 到 zfd 编号 90、dup2 把管道写端装到 fd 1 后 `u_puts` 的输出去向，以及 isatty/termios/窗口大小。
+18. newlib 回归：先运行 `ruby tools/newlib.rb`（在 `$HOME/newlib` 构建 -fPIC 的 x86_64-elf newlib，autoconf 不接受带空格的仓库路径），再 `make NLIBC_BOOT_TEST=1 iso`。串口应出现 `[nlibc] running /data/NLIB_HELLO.ZXE`、`newlib hello: argc=1 argv0=/data/NLIB_HELLO.ZXE heap=ok` 与 `[nlibc] NLIB_HELLO exit 3`。程序通过 `user/lib/posix/libgloss.c` 和 `crt0.S` 链接 newlib 的 printf/malloc；newlib 必须用 `-fPIC` 构建，否则 ZXE 的 PIE 重定位装不进随机基址。
 
 ## 架构与不变量
 

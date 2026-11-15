@@ -2,6 +2,14 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 build 14
+
+### newlib C library
+- `tools/newlib.rb` downloads the pinned Ubuntu `newlib-source` 4.6 package, builds it for x86_64-elf with clang wrappers and `-fPIC`, and installs it under `$HOME/newlib/install/x86_64-elf`. The PIC requirement comes from the ZXE PIE loader; a non-PIC build carried 61k absolute relocations and could not be based anywhere.
+- `user/lib/posix/libgloss.c` implements the newlib syscall layer: `_read/_write/_open/_close/_lseek/_fstat/_isatty/_sbrk/_exit/_getpid/_fork/_execve/_pipe/_dup2/_ioctl`, plus the public aliases newlib calls internally. `user/lib/posix/crt0.S` reads `[argc][argv][NULL]` from the ZXE entry stack, calls `main` and exits with its status.
+- `make NLIBC_BOOT_TEST=1 iso` builds `user/newlib_hello.c` against libc.a/libm.a and runs it: `newlib hello: argc=1 argv0=/data/NLIB_HELLO.ZXE heap=ok`, exit 3
+- Still open: ncurses and terminfo, then nano. The tty/termios ABI from build 13 is the base those ports will use.
+
 ## 0.7.1 「Yuanshuo」 build 13
 
 ### stdio redirection
