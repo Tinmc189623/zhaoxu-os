@@ -2,6 +2,13 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 build 16
+
+### nano 8.4
+- nano 8.4 now compiles for x86_64-elf against newlib and ncurses (binary at $HOME/nano-build/src/nano). The POSIX overlay gained pwd, utime, signal-set/sigaction shims, unlink/chmod/chdir/getcwd/getwd/dup2/getuid/getpwnam, dirname/basename and a real readdir-backed glob.
+- `tools/posix-ports.rb` is the Ruby build driver for ncurses + nano, replacing the earlier ad-hoc shell steps; it writes the clang wrapper, builds the support archive, applies the ncurses config fixes and runs both configure/make passes.
+- nano is not yet relaunched through the ZXE PIE linker script, so the binary is the upstream ELF link; wiring it into the initramfs and running it in a curses session is the next step.
+
 ## 0.7.1 「Yuanshuo」 build 15
 
 ### ncurses and terminfo

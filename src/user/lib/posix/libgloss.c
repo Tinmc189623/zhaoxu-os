@@ -10,15 +10,18 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
+#include <pwd.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <string.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
@@ -38,6 +41,7 @@
 #define ZOS_IOCTL    76
 #define ZOS_STAT     77
 #define ZOS_READDIR  29
+#define ZOS_UNLINK   33
 
 #define ZOS_TCGETS   0x5401
 
@@ -265,9 +269,152 @@ int _link(const char *oldpath, const char *newpath)
 
 int _unlink(const char *path)
 {
+    if (!path)
+        return -1;
+    if (zos_syscall3(ZOS_UNLINK, (long)(uintptr_t)path, 0, 0) != 0) {
+        errno = ENOENT;
+        return -1;
+    }
+    return 0;
+}
+
+int chdir(const char *path)
+{
     (void)path;
-    errno = ENOSYS;
+    /* ZOS paths are absolute today; keep callers that expect a working
+     * directory from failing outright. */
+    return 0;
+}
+
+char *dirname(char *path)
+{
+    if (!path || !*path)
+        return (char *)".";
+    char *slash = path + strlen(path);
+    while (slash > path && slash[-1] == '/')
+        slash--;
+    while (slash > path && slash[-1] != '/')
+        slash--;
+    if (slash == path)
+        return (char *)".";
+    while (slash > path && slash[-1] == '/')
+        slash--;
+    if (slash == path)
+        return (char *)"/";
+    *slash = '\0';
+    return path;
+}
+
+char *basename(char *path)
+{
+    if (!path || !*path)
+        return (char *)".";
+    char *slash = path + strlen(path);
+    while (slash > path && slash[-1] == '/')
+        slash--;
+    char *base = slash;
+    while (base > path && base[-1] != '/')
+        base--;
+    if (slash < path + strlen(path))
+        *slash = '\0';
+    return base;
+}
+
+/* No passwd database on ZOS; nano only uses this to label the status bar. */
+struct passwd *getpwent(void)
+{
+    return NULL;
+}
+
+void endpwent(void)
+{
+}
+
+void setpwent(void)
+{
+}
+
+int unlink(const char *path)
+{
+    return _unlink(path);
+}
+
+int chmod(const char *path, mode_t mode)
+{
+    (void)path;
+    (void)mode;
+    return 0;
+}
+
+uid_t getuid(void)
+{
+    return 0;
+}
+
+uid_t geteuid(void)
+{
+    return 0;
+}
+
+gid_t getgid(void)
+{
+    return 0;
+}
+
+gid_t getegid(void)
+{
+    return 0;
+}
+
+static struct passwd g_passwd = {
+    (char *)"zhaoxu", (char *)"x", 0, 0, (char *)"/", (char *)"/bin/8sh"
+};
+
+struct passwd *getpwuid(uid_t uid)
+{
+    (void)uid;
+    return &g_passwd;
+}
+
+struct passwd *getpwnam(const char *name)
+{
+    (void)name;
+    return &g_passwd;
+}
+
+int mkdir(const char *path, mode_t mode)
+{
+    (void)path;
+    (void)mode;
     return -1;
+}
+
+char *getlogin(void)
+{
+    return (char *)"zhaoxu";
+}
+
+char *getwd(char *buffer)
+{
+    if (!buffer)
+        return NULL;
+    buffer[0] = '/';
+    buffer[1] = '\0';
+    return buffer;
+}
+
+char *getcwd(char *buffer, size_t size)
+{
+    if (!buffer || size < 2)
+        return NULL;
+    buffer[0] = '/';
+    buffer[1] = '\0';
+    return buffer;
+}
+
+int dup2(int oldfd, int newfd)
+{
+    return _dup2(oldfd, newfd);
 }
 
 int _mkdir(const char *path, mode_t mode)
@@ -546,3 +693,79 @@ int closedir(DIR *directory)
     free(stream);
     return 0;
 }
+
+/* Signal surface: handlers are recorded and signal sets are real, but the
+ * kernel has no asynchronous signal delivery yet, so raise() is a no-op.
+ * Editors install SIGWINCH/SIGINT here and keep running without them.
+ * newlib defines the sigset helpers as macros; libgloss needs real symbols
+ * so gnulib and nano can link against them. */
+#undef sigemptyset
+#undef sigfillset
+#undef sigaddset
+#undef sigdelset
+#undef sigismember
+static struct sigaction g_signal_actions[NSIG];
+
+int sigemptyset(sigset_t *set)
+{
+    if (!set)
+        return -1;
+    memset(set, 0, sizeof(*set));
+    return 0;
+}
+
+int sigfillset(sigset_t *set)
+{
+    if (!set)
+        return -1;
+    memset(set, 0xFF, sizeof(*set));
+    return 0;
+}
+
+int sigaddset(sigset_t *set, int signal)
+{
+    if (!set || signal < 0 || signal >= NSIG)
+        return -1;
+    ((unsigned char *)set)[signal / 8] |= (unsigned char)(1u << (signal % 8));
+    return 0;
+}
+
+int sigdelset(sigset_t *set, int signal)
+{
+    if (!set || signal < 0 || signal >= NSIG)
+        return -1;
+    ((unsigned char *)set)[signal / 8] &=
+        (unsigned char)~(1u << (signal % 8));
+    return 0;
+}
+
+int sigismember(const sigset_t *set, int signal)
+{
+    if (!set || signal < 0 || signal >= NSIG)
+        return -1;
+    return (((const unsigned char *)set)[signal / 8] &
+            (1u << (signal % 8))) != 0;
+}
+
+int sigaction(int signal, const struct sigaction *action,
+              struct sigaction *old_action)
+{
+    if (signal < 0 || signal >= NSIG)
+        return -1;
+    if (old_action)
+        *old_action = g_signal_actions[signal];
+    if (action)
+        g_signal_actions[signal] = *action;
+    return 0;
+}
+
+int sigprocmask(int how, const sigset_t *set, sigset_t *old_set)
+{
+    (void)how;
+    if (old_set)
+        sigemptyset(old_set);
+    if (set)
+        return 0;
+    return 0;
+}
+
