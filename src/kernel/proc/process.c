@@ -96,6 +96,8 @@ struct process *process_alloc(void)
             g_processes[i].used = 1;
             g_processes[i].pid = g_next_pid++;
             g_processes[i].state = PROC_RUNNING;
+            for (int fd = 0; fd < 3; fd++)
+                g_processes[i].stdio[fd] = -1;
             return &g_processes[i];
         }
     }

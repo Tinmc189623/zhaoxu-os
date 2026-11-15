@@ -88,6 +88,8 @@ long process_fork(struct interrupt_frame *frame)
         fork_discard(child);
         return -1;
     }
+    for (int fd = 0; fd < 3; fd++)
+        child->stdio[fd] = parent->stdio[fd];
 
     struct fork_request *request = kzalloc(sizeof(*request));
     if (!request) {

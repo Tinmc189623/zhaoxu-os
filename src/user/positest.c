@@ -27,7 +27,7 @@ static int pipe_roundtrip(void)
         const char message[] = "hello pipe\n";
         long written = sys_write(fds[1], message, sizeof(message) - 1);
         sys_close(fds[1]);
-        return written == (long)(sizeof(message) - 1) ? 0 : 1;
+        sys_exit(written == (long)(sizeof(message) - 1) ? 0 : 1);
     }
     if (pid < 0)
         return -1;
@@ -92,12 +92,66 @@ static int dup2_roundtrip(void)
     return 0;
 }
 
+static int stdio_redirect(void)
+{
+    int fds[2];
+    if (sys_pipe(fds) != 0)
+        return -1;
+
+    long pid = sys_fork();
+    if (pid == 0) {
+        /* u_puts() writes fd 1, now the pipe instead of the console. */
+        sys_dup2(fds[1], 1);
+        u_puts("redirected\n");
+        sys_exit(0);
+    }
+    if (pid < 0)
+        return -1;
+
+    sys_close(fds[1]);
+    char buffer[32];
+    long got = sys_read(fds[0], buffer, sizeof(buffer) - 1);
+    sys_close(fds[0]);
+    int status = -1;
+    sys_wait(pid, &status);
+    if (got != 11 || status != 0) {
+        u_puts("[posix] stdio failed\n");
+        return -1;
+    }
+    u_puts("[posix] stdio PASS\n");
+    return 0;
+}
+
+static int tty_checks(void)
+{
+    if (!sys_isatty(0) || !sys_isatty(1))
+        return -1;
+
+    struct winsize size;
+    if (sys_ioctl(0, TIOCGWINSZ, &size) != 0 || size.ws_col != 80 ||
+        size.ws_row != 25) {
+        u_puts("[posix] tty winsize failed\n");
+        return -1;
+    }
+
+    struct termios termios;
+    if (sys_ioctl(0, TCGETS, &termios) != 0 || !(termios.c_lflag & ICANON)) {
+        u_puts("[posix] tty termios failed\n");
+        return -1;
+    }
+    if (sys_ioctl(0, TCSETS, &termios) != 0)
+        return -1;
+    u_puts("[posix] tty PASS\n");
+    return 0;
+}
+
 int user_main(long *stack)
 {
     (void)stack;
 
-    if (pipe_roundtrip() != 0 || pipe_eof() != 0 || dup2_roundtrip() != 0)
+    if (pipe_roundtrip() != 0 || pipe_eof() != 0 || dup2_roundtrip() != 0 ||
+        stdio_redirect() != 0 || tty_checks() != 0)
         return 1;
-    u_puts("[posix] PIPE, EOF, DUP2 PASS\n");
+    u_puts("[posix] PIPE, EOF, DUP2, STDIO, TTY PASS\n");
     return 0;
 }

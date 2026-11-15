@@ -52,6 +52,9 @@ struct process {
     u64 entry;
     u64 user_stack;
     struct zfd_entry fds[ZFD_MAX];
+    /* POSIX stdio redirection: -1 means the default console/tty, otherwise
+     * the zfd number that fd 0/1/2 resolves to after dup2. */
+    int stdio[3];
 };
 
 int user_range_ok(struct process *process, u64 pointer, u64 length);

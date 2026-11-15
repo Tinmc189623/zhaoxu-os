@@ -82,6 +82,37 @@ typedef unsigned long long u64;
 #define SYS_EXEC             73
 #define SYS_PIPE             74
 #define SYS_DUP2             75
+#define SYS_IOCTL            76
+
+/* Terminal ABI mirrored from kernel/include/tty.h. */
+struct termios {
+    unsigned int c_iflag;
+    unsigned int c_oflag;
+    unsigned int c_cflag;
+    unsigned int c_lflag;
+    unsigned char c_line;
+    unsigned char c_cc[19];
+};
+
+struct winsize {
+    unsigned short ws_row;
+    unsigned short ws_col;
+    unsigned short ws_xpixel;
+    unsigned short ws_ypixel;
+};
+
+#define TCGETS      0x5401
+#define TCSETS      0x5402
+#define TIOCGWINSZ  0x5413
+#define FIONREAD    0x541B
+
+#define ICANON      0x0002
+#define ECHO        0x0008
+#define ISIG        0x0001
+
+#define VERASE      2
+#define VMIN        6
+#define VTIME       5
 
 #define AF_UNIX      1
 #define SOCK_STREAM  1
@@ -287,6 +318,19 @@ static inline long sys_pipe(int fds[2])
 static inline long sys_dup2(int oldfd, int newfd)
 {
     return syscall3(SYS_DUP2, oldfd, newfd, 0);
+}
+
+/* Terminal control for fd 0/1/2; returns -1 when the descriptor has been
+ * redirected to a pipe or socket. */
+static inline long sys_ioctl(int fd, unsigned long request, void *argument)
+{
+    return syscall3(SYS_IOCTL, fd, (long)request, (long)argument);
+}
+
+static inline int sys_isatty(int fd)
+{
+    struct termios termios;
+    return sys_ioctl(fd, TCGETS, &termios) == 0;
 }
 
 static inline long sys_port_listen(const char *name)

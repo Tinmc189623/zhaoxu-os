@@ -2,6 +2,21 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 build 13
+
+### stdio redirection
+- Each process carries `stdio[3]`. `dup2(zfd, 0/1/2)` duplicates the source into a private zfd and points the stdio slot at it, so `read`, `write` and `close` on 0/1/2 follow the redirect while the original descriptor stays independently closable. `close` on a redirected stdio slot restores the console default
+- `fork` copies the stdio table and its descriptor references; `exec` preserves them
+- Installing a descriptor at 3..63 is still rejected: VFS descriptors are a process-global table and are the next item on the POSIX list
+
+### tty and termios
+- `kernel/proc/tty.c` gives the default fd 0/1/2 terminal semantics: canonical line buffering with erase and echo, raw byte mode, and blocking reads that sleep while the driver key ring is empty
+- `SYS_IOCTL` (76) implements TCGETS, TCSETS, TIOCGWINSZ (80x25) and FIONREAD. The termios and winsize layouts are identical in `kernel/include/tty.h` and `user/userlib.h`
+- `POSIX_BOOT_TEST=1` now also forks a child that redirects fd 1 to a pipe, checks that `u_puts` lands in the pipe, then verifies `isatty`, TCGETS/TCSETS and the 80x25 window size
+
+### Still open
+- libc and ncurses are not ported yet, so nano cannot be compiled as upstream source. The next step is choosing the C library base (musl, newlib/libgloss, or a compact in-tree libc) and then building ncurses on top of the tty/termios ABI from this build
+
 ## 0.7.1 「Yuanshuo」 build 12
 
 ### POSIX pipes and descriptors

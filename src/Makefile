@@ -218,6 +218,7 @@ C_SRCS := kernel/main.c \
           kernel/proc/process_fork.c \
           kernel/proc/zxe_loader.c \
           kernel/proc/syscall.c \
+          kernel/proc/tty.c \
           kernel/proc/io_syscall.c \
           kernel/proc/dev.c \
           kernel/proc/fsrpc.c \

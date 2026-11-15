@@ -26,6 +26,7 @@
 #include <string.h>
 #include <thread.h>
 #include <timer.h>
+#include <tty.h>
 #include <types.h>
 #include <vfs.h>
 
@@ -107,6 +108,7 @@
 #define SYS_EXEC            73
 #define SYS_PIPE            74
 #define SYS_DUP2            75
+#define SYS_IOCTL           76
 
 #define BLK_SECTOR_BYTES 512u
 #define BLK_MAX_SECTORS  8u
@@ -163,6 +165,10 @@ static long syscall_write(struct process *process, u64 descriptor, u64 buffer,
 {
     if (descriptor >= ZFD_BASE)
         return sys_ipc_write(process, descriptor, buffer, length);
+    /* dup2 onto 0/1/2 redirects stdio to the descriptor installed there. */
+    if (descriptor < 3 && process->stdio[descriptor] >= 0)
+        return sys_ipc_write(process, (u64)process->stdio[descriptor], buffer,
+                             length);
     if (descriptor != 1 && descriptor != 2)
         return -1;
     if (length > 65536)
@@ -186,11 +192,76 @@ static long syscall_read(struct process *process, u64 descriptor, u64 buffer,
 {
     if (descriptor >= ZFD_BASE)
         return sys_ipc_read(process, descriptor, buffer, length);
+    if (descriptor < 3 && process->stdio[descriptor] >= 0)
+        return sys_ipc_read(process, (u64)process->stdio[descriptor], buffer,
+                            length);
     if (length > 0x100000)
         length = 0x100000;
     if (user_range_ok(process, buffer, length) != 1)
         return -1;
+    if (descriptor == 0)
+        return tty_read(process, (void *)(uintptr_t)buffer, length, 0);
     return vfs_read((int)descriptor, (void *)(uintptr_t)buffer, length);
+}
+
+/* POSIX close: fd 0..2 release a dup2 redirect and fall back to the console;
+ * zfd numbers close their object; the rest still use the VFS table. */
+static long syscall_close(struct process *process, u64 descriptor)
+{
+    if (descriptor < 3) {
+        if (process->stdio[descriptor] >= 0) {
+            zfd_close(process, process->stdio[descriptor]);
+            process->stdio[descriptor] = -1;
+        }
+        return 0;
+    }
+    if (descriptor >= ZFD_BASE)
+        return sys_ipc_close(process, descriptor);
+    return vfs_close((int)descriptor);
+}
+
+/* dup2 onto 0/1/2 duplicates the source into a private zfd number so both
+ * numbers stay independently closable, exactly like POSIX. */
+static long syscall_dup2(struct process *process, int oldfd, int newfd)
+{
+    if (newfd < 3) {
+        int source = oldfd;
+        if (source < 3) {
+            source = process->stdio[source];
+            if (source < 0)
+                return -1;
+        } else if (source < ZFD_BASE) {
+            return -1;
+        }
+        int duplicate = zfd_dup(process, source, ZFD_BASE);
+        if (duplicate < 0)
+            return -1;
+        if (process->stdio[newfd] >= 0)
+            zfd_close(process, process->stdio[newfd]);
+        process->stdio[newfd] = duplicate;
+        return newfd;
+    }
+    if (oldfd < 3) {
+        oldfd = process->stdio[oldfd];
+        if (oldfd < 0)
+            return -1;
+    }
+    return zfd_dup2(process, oldfd, newfd);
+}
+
+static long syscall_ioctl(struct process *process, u64 descriptor, u64 request,
+                          u64 argument)
+{
+    int fd = (int)descriptor;
+    if (fd < 0)
+        return -1;
+    if (fd < 3) {
+        /* A redirected stdio number is a pipe/socket, not the terminal. */
+        if (process->stdio[fd] >= 0)
+            return -1;
+        return tty_ioctl(process, fd, request, argument);
+    }
+    return -1;
 }
 
 static long syscall_spawn(struct process *process, u64 path_pointer)
@@ -958,8 +1029,7 @@ void syscall_dispatch(struct interrupt_frame *frame)
         result = syscall_read(process, frame->rdi, frame->rsi, frame->rdx);
         break;
     case SYS_CLOSE:
-        result = frame->rdi >= ZFD_BASE ? sys_ipc_close(process, frame->rdi)
-                                        : vfs_close((int)frame->rdi);
+        result = syscall_close(process, frame->rdi);
         break;
     case SYS_UPTIME:
         result = (long)(timer_ticks() * 1000 / timer_hz());
@@ -981,7 +1051,10 @@ void syscall_dispatch(struct interrupt_frame *frame)
         result = syscall_pipe(process, frame->rdi);
         break;
     case SYS_DUP2:
-        result = zfd_dup2(process, (int)frame->rdi, (int)frame->rsi);
+        result = syscall_dup2(process, (int)frame->rdi, (int)frame->rsi);
+        break;
+    case SYS_IOCTL:
+        result = syscall_ioctl(process, frame->rdi, frame->rsi, frame->rdx);
         break;
     case SYS_PORT_LISTEN:
         result = syscall_port_listen(process, frame->rdi);

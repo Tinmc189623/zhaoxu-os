@@ -24,6 +24,7 @@
 #include <string.h>
 #include <thread.h>
 #include <timer.h>
+#include <tty.h>
 #include <types.h>
 #include <vfs.h>
 #include <version.h>
@@ -107,6 +108,7 @@ void kernel_main(struct boot_info *boot)
     cpu_init();
     timer_init(1000);
     process_init();
+    tty_init();
 
     kprintf("[boot] higher-half kernel at 0x%llx (phys 0x%llx, %llu KiB)\n",
             g_boot.kernel_virt_base, g_boot.kernel_phys_base,
