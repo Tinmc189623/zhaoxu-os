@@ -2,6 +2,35 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 · build 7
+
+### Installer
+- The graphical installer is now a short Windows-style flow: it scans the block devices, keeps only blank or previously installed Zhaoxu targets, auto-selects a single disk, and asks for one confirmation before writing. GPT is the default; MBR is behind the advanced toggle
+- Target parsing now matches the real `sys_disks()` column layout (`Idx Port Size MiB Label Role Model`). The previous parser read the label as the role, so a valid blank disk was reported as missing
+- The window is tall enough for the select screen, so the install button is no longer clipped by the title bar, and the completed/failed screens show the full UTF-8 warning text
+- Installation errors reach the UI through `SYS_INSTALL_ERROR` (68); the failed screen prints the kernel's actual reason instead of a generic message
+- Verification: the ISO was booted with a blank 256 MiB disk, installed through real mouse clicks (select, confirm, start), and the target disk then booted to the Aqua Desktop Environment. GPT was checked end to end
+
+### Installer correctness and hardening
+- A UEFI install now writes both `EFI/BOOT/BOOTX64.EFI` and `EFI/BOOT/OSLDRX64.EFI` to the ESP. Without the second-stage loader, ZhaoxuBootMgr stopped at `cannot read OSLDRX64.efi` on the installed disk
+- `fat32_make_esp()` takes the osloader blob, verifies both files after writing, and installs now fail early if either embedded loader is missing
+- The kernel rejects target disks above 2 TiB, root partitions outside the 32-bit ext4 range, missing/oversized kernel, loader, font or wallpaper blobs, and a kernel flat image over `0x8F000` bytes
+- An MBR install clears the old backup GPT at the end of the disk, so stale GPT headers cannot make firmware ignore the new MBR
+- The embedded initramfs now carries `/boot/OSLDRX64.EFI`; the kernel flat image remains below the stage-2 staging cap at 563200 bytes
+
+### Desktop protocol
+- `ADE_TEXT_MAX` grows from 32 to 160 bytes. CJK glyphs take three bytes, so ordinary installer warnings were cut mid-codepoint and rendered as replacement boxes
+- `ade_text` truncates on a UTF-8 boundary; `IPC_MSG_MAX` grows from 64 to 256 so the larger text command still fits one port message
+
+### OpenGL
+- Ported a software OpenGL 1.1 immediate-mode subset under `src/user/lib/opengl`: column-major matrix stacks, translate/rotate/scale, ortho/frustum projection, `glBegin/glEnd` for points, lines, triangles, strips, fans and quads, near-plane clipping, perspective divide, flat and Gouraud shading, 16-bit depth test (`LESS`/`LEQUAL`/`ALWAYS`/`NEVER`), front-face culling and `glReadPixels`
+- `make out/gl_test.zxe` builds an off-screen regression that checks clear, quad and triangle rasterization, Gouraud interpolation, depth ordering in both draw orders, CCW culling, matrix push/pop, perspective projection and RGBA readback
+- `GL_BOOT_TEST=1` (with `out/data.img` attached) prints `[gl ] quad PASS` … `[gl ] OpenGL PASS` and `[gl ] GL_TEST exit 0`; the same regression passes natively on the host and in QEMU
+- This is a GL 1.1 command subset, not full OpenGL: lighting, textures, display lists, evaluators, extensions and shaders are not implemented, and the desktop still renders through the ZOS raster path. Rules 37/38 remain release blockers for a fully compliant build
+
+### Tooling
+- `tools/screenshot.rb` gains `SMOKE_BOOT=iso-install` (CD plus one blank target), `SHOT_NO_SHELL` for graphical boots, `SHOT_SERIAL` to persist the serial log, and byte-wise PPM header parsing that survives whitespace bytes inside pixel data and Windows text-mode pipes
+
 ## 0.7.1 「Yuanshuo」 · build 6
 
 ### Fixes

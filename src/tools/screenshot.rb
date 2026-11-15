@@ -27,11 +27,13 @@ TIMEOUT = (ENV["SMOKE_TIMEOUT"] || 180).to_i
 DELAY = (ARGV[0] || 2.0).to_f
 SHOT = ARGV[1] || "out/desk.png"
 
+# q35 exposes six single-unit IDE ports; ide.2/ide.3 collide with ide.1 on
+# some QEMU builds, so put the installer extras on ide.4/ide.5.
 installer_disks = [
   "-drive if=none,id=zsrc,format=raw,file=out/efi.img",
-  "-device ide-hd,drive=zsrc,bus=ide.2",
+  "-device ide-hd,drive=zsrc,bus=ide.4",
   "-drive if=none,id=zdst,format=raw,file=out/target.img",
-  "-device ide-hd,drive=zdst,bus=ide.3",
+  "-device ide-hd,drive=zdst,bus=ide.5",
 ]
 boot = ENV["SMOKE_BOOT"] || "esp"
 # Rule 11: ISO images are named zhaoxu-os_x86-64_{version}_{build}_ld.iso.
@@ -58,13 +60,27 @@ drives = case boot
            ]
          when "iso-nodata"
            [iso_drive]
+         when "iso-data"
+           [
+             iso_drive,
+             "-drive if=none,id=zdata,format=raw,file=out/data.img",
+             "-device ide-hd,drive=zdata,bus=ide.1",
+           ]
+         when "iso-install"
+           # A blank target on ide.1 and no ZHAOXUDATA volume, so the graphical
+           # installer opens instead of exiting early.
+           [
+             iso_drive,
+             "-drive if=none,id=zdst,format=raw,file=out/target.img",
+             "-device ide-hd,drive=zdst,bus=ide.1",
+           ]
          when "installed"
            [
              "-drive if=none,id=zdst,format=raw,file=out/target.img",
              "-device ide-hd,drive=zdst,bus=ide.0",
            ]
          else
-           abort "SMOKE_BOOT must be esp, iso, iso-nodata or installed"
+           abort "SMOKE_BOOT must be esp, iso, iso-nodata, iso-data, iso-install or installed"
          end
 
 inner = +"cd \"#{ROOT}\" || exit 1\n"
@@ -82,11 +98,20 @@ qemu = [
 inner << qemu.map { |l| "  #{l} \\\\" }.join("\n").sub(/ \\\\\z/, "") << "\n"
 
 def ppm_to_png(ppm)
-  magic, rest = ppm.split(/\s+/, 2)
+  # Scan the four header tokens byte-wise.  String#split(/\s+/) can consume
+  # pixel bytes that happen to be whitespace (0x0A/0x0D/0x20) on some hosts.
+  index = 0
+  tokens = []
+  while tokens.length < 4
+    index += 1 while ppm.getbyte(index) && ppm.getbyte(index) <= 32
+    start = index
+    index += 1 while ppm.getbyte(index) && ppm.getbyte(index) > 32
+    tokens << ppm.byteslice(start, index - start)
+  end
+  index += 1
+  magic, width_s, height_s, maxval_s = tokens
+  pixels = ppm.byteslice(index, ppm.bytesize - index)
   abort "bad ppm magic #{magic.inspect}" unless magic == "P6"
-  width_s, rest = rest.split(/\s+/, 2)
-  height_s, rest = rest.split(/\s+/, 2)
-  maxval_s, pixels = rest.split(/\s+/, 2)
   width = width_s.to_i
   height = height_s.to_i
   abort "bad ppm header" unless maxval_s.to_i == 255 && !pixels.nil?
@@ -129,11 +154,19 @@ Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout,
         begin
           chunk = io.read_nonblock(4096)
           out << chunk if chunk
-        rescue Errno::EAGAIN, Errno::EAGAINWaitReadable, EOFError
+        rescue Errno::EAGAIN, EOFError
         end
       end
     end
     unless prompt_seen
+      # A graphical boot never reaches the 8sh prompt.  SHOT_NO_SHELL keeps
+      # the delayed screendump useful for the desktop and the installer.
+      if ENV["SHOT_NO_SHELL"] == "1"
+        prompt_seen = true
+        desktop_sent = true
+        desktop_at = Time.now
+        next
+      end
       prompt_seen = out.include?("zhaoxu>")
       next
     end
@@ -183,6 +216,7 @@ Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout,
     warn "monitor connection failed: #{e.message}"
   end
   sleep 0.5
+  File.binwrite(ENV["SHOT_SERIAL"], out) if ENV["SHOT_SERIAL"]
   begin
     waiter.kill("KILL")
   rescue StandardError
@@ -193,7 +227,7 @@ system("wsl", "-d", DISTRO, "--", "pkill", "-f", "qemu-system-x86_64",
        out: File::NULL, err: File::NULL)
 
 ppm, = Open3.capture2("wsl", "-d", DISTRO, "--", "bash", "-lc",
-                      "cat \"#{ROOT}/out/desk.ppm\"")
+                      "cat \"#{ROOT}/out/desk.ppm\"", binmode: true)
 ppm = ppm.b
 abort "no screendump produced\n#{out[-2000..]}" if ppm.empty?
 

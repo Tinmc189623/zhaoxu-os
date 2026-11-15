@@ -3,7 +3,9 @@
 
 #include <types.h>
 
-#define IPC_MSG_MAX 64
+/* One control message may carry a UTF-8 text command; 64 bytes only held
+ * ten CJK glyphs, which truncated desktop labels. */
+#define IPC_MSG_MAX 256
 #define IPC_QUEUE_DEPTH 128
 #define IPC_NAME_MAX 32
 

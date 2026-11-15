@@ -5,12 +5,33 @@
 
 #include "../userlib.h"
 
+/* Return the largest UTF-8 prefix of `source` that fits in `limit` bytes, so
+ * a truncated text command never ends on a partial multi-byte codepoint. */
+static int utf8_prefix_length(const char *source, int limit)
+{
+    int index = 0;
+    while (source[index]) {
+        unsigned char lead = (unsigned char)source[index];
+        int length = 1;
+        if ((lead & 0xE0) == 0xC0)
+            length = 2;
+        else if ((lead & 0xF0) == 0xE0)
+            length = 3;
+        else if ((lead & 0xF8) == 0xF0)
+            length = 4;
+        if (index + length > limit)
+            break;
+        index += length;
+    }
+    return index;
+}
+
 static void copy_text(char *destination, const char *source)
 {
-    int i = 0;
-    for (; i + 1 < ADE_TEXT_MAX && source[i]; i++)
+    int length = utf8_prefix_length(source, ADE_TEXT_MAX - 1);
+    for (int i = 0; i < length; i++)
         destination[i] = source[i];
-    destination[i] = 0;
+    destination[length] = 0;
 }
 
 static int send_message(long channel, struct ade_message *message)

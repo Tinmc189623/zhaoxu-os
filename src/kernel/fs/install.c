@@ -32,6 +32,16 @@
 #define ESP_MAX_SECTORS 131072u        /* 64 MiB */
 #define ESP_MIN_SECTORS 70000u         /* FAT32 needs >= 65525 clusters */
 #define EXT4_MIN_SECTORS 32768u        /* room for kernel + CJK font */
+/* The legacy BIOS stage 2 stages the flat kernel into the low buffer below
+ * the EBDA; keep this in sync with MAX_KERNEL_BYTES in bios_stage2.asm and
+ * tools/kernel-flat.rb. */
+#define KERNEL_FLAT_MAX_BYTES 0x8F000u
+#define KERNEL_MAX_BYTES (64u * 1024u * 1024u)
+#define LOADER_MAX_BYTES (16u * 1024u * 1024u)
+#define FONT_MAX_BYTES (32u * 1024u * 1024u)
+#define WALLPAPER_MAX_BYTES (32u * 1024u * 1024u)
+/* The ext4/FAT writers and the MBR/GPT fields use 32-bit sector counts. */
+#define MAX_DISK_SECTORS 0xFFFFFFFFULL
 #define GPT_HEADER_LBA 1u
 #define GPT_ENTRIES_LBA 2u
 #define GPT_ENTRY_COUNT 128u
@@ -506,6 +516,10 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     }
 
     u64 total = block_disk_sectors(target_disk);
+    if (total == 0 || total > MAX_DISK_SECTORS) {
+        set_error("disk size is not supported (max 2 TiB)");
+        return -1;
+    }
     u64 usable = total - INSTALL_PARTITION_LBA -
                  (gpt ? GPT_BACKUP_SECTORS : 0);
     if (usable < ESP_MIN_SECTORS + EXT4_MIN_SECTORS) {
@@ -515,7 +529,12 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     u32 esp_sectors = ESP_MAX_SECTORS;
     if ((u64)esp_sectors > usable - EXT4_MIN_SECTORS)
         esp_sectors = (u32)(usable - EXT4_MIN_SECTORS);
-    u32 root_sectors = (u32)(usable - esp_sectors);
+    u64 root_sectors_wide = usable - esp_sectors;
+    if (root_sectors_wide > 0xFFFFFFFFULL) {
+        set_error("root partition exceeds the ext4 sector range");
+        return -1;
+    }
+    u32 root_sectors = (u32)root_sectors_wide;
     u64 root_lba = INSTALL_PARTITION_LBA + esp_sectors;
     kprintf("[install] esp %u sectors, ext4 root %u sectors @ %llu "
             "(target %llu sectors, %s)\n",
@@ -525,26 +544,37 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     const struct boot_info *bi = boot_get_info();
     const u8 *kernel = (const u8 *)(uintptr_t)bi->kernel_phys_base;
     u64 kernel_bytes = bi->kernel_size;
-    if (!kernel || kernel_bytes == 0) {
-        set_error("running kernel image is unavailable");
+    if (!kernel || kernel_bytes == 0 || kernel_bytes > KERNEL_MAX_BYTES) {
+        set_error("running kernel image is unavailable or too large");
+        return -1;
+    }
+    if (kernel_bytes > KERNEL_FLAT_MAX_BYTES) {
+        set_error("kernel too large for the legacy BIOS loader");
         return -1;
     }
     u64 kernel_sectors = blob_sectors(kernel, kernel + kernel_bytes);
-    if (kernel_sectors > 0x380) {
+    if (kernel_sectors > KERNEL_FLAT_MAX_BYTES / SECTOR_SIZE) {
         set_error("kernel too large for the legacy BIOS loader");
         return -1;
     }
 
     u8 *loader = NULL;
     u64 loader_bytes = 0;
+    u8 *osldr = NULL;
+    u64 osldr_bytes = 0;
     u8 *kernel_file = NULL;
     u64 kernel_file_size = 0;
     u8 *font_copy = NULL;
     int fs_dirty = 0;
 
     if (vfs_read_all("/boot/BOOTX64.EFI", &loader, &loader_bytes) != 0 ||
-        !loader || !loader_bytes) {
-        set_error("embedded BOOTX64.EFI is missing");
+        !loader || !loader_bytes || loader_bytes > LOADER_MAX_BYTES) {
+        set_error("embedded BOOTX64.EFI is missing or too large");
+        goto fail;
+    }
+    if (vfs_read_all("/boot/OSLDRX64.EFI", &osldr, &osldr_bytes) != 0 ||
+        !osldr || !osldr_bytes || osldr_bytes > LOADER_MAX_BYTES) {
+        set_error("embedded OSLDRX64.EFI is missing or too large");
         goto fail;
     }
 
@@ -564,7 +594,7 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     }
 
     kernel_file = build_kernel_elf(kernel, kernel_bytes, &kernel_file_size);
-    if (!kernel_file) {
+    if (!kernel_file || kernel_file_size > KERNEL_MAX_BYTES) {
         set_error("cannot build the kernel ELF image");
         goto fail;
     }
@@ -572,6 +602,10 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     const struct boot_info *info = boot_get_info();
     const u8 *font = (const u8 *)(uintptr_t)info->font_phys;
     u64 font_size = info->font_size;
+    if (font && font_size > FONT_MAX_BYTES) {
+        set_error("boot font image is too large");
+        goto fail;
+    }
     if (!font || font_size < 13) {
         static const char *const font_candidates[] = {
             "/mnt/MiSans-Regular.ttf", "/mnt/MiSansGlobal-Regular.ttf",
@@ -637,6 +671,10 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     }
     const u8 *wallpaper = (const u8 *)(uintptr_t)info->wallpaper_phys;
     u64 wallpaper_size = info->wallpaper_size;
+    if (wallpaper && wallpaper_size > WALLPAPER_MAX_BYTES) {
+        set_error("boot wallpaper image is too large");
+        goto fail;
+    }
     if (wallpaper && wallpaper_size >= 1920u * 1080u * 3u) {
         for (u64 offset = 0; offset < wallpaper_size;) {
             u32 chunk = (u32)(wallpaper_size - offset);
@@ -679,6 +717,12 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
         set_error("failed to write the MBR");
         goto fail;
     }
+    /* An MBR install must not leave an old backup GPT at the end of the
+     * disk; some firmware would then prefer the stale GPT over the new MBR. */
+    if (!gpt && zero_gap(target_disk, total - GPT_BACKUP_SECTORS, total) != 0) {
+        set_error("failed to clear the old GPT backup");
+        goto fail;
+    }
     step++;
     if (progress)
         progress(step, steps);
@@ -707,7 +751,7 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
         progress(step, steps);
 
     if (fat32_make_esp(target_disk, INSTALL_PARTITION_LBA, esp_sectors, loader,
-                       loader_bytes) != 0) {
+                       loader_bytes, osldr, osldr_bytes) != 0) {
         set_error("failed to build the FAT32 ESP");
         goto fail;
     }
@@ -746,6 +790,7 @@ int install_run(int target_disk, int gpt, void (*progress)(u32 done, u32 total))
     g_error[0] = 0;
     kfree(font_copy);
     kfree(kernel_file);
+    kfree(osldr);
     kfree(loader);
     return 0;
 
@@ -754,6 +799,7 @@ fail:
         fs_call_sync();
     kfree(font_copy);
     kfree(kernel_file);
+    kfree(osldr);
     kfree(loader);
     return -1;
 }

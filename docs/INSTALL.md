@@ -1,6 +1,6 @@
 # Zhaoxu OS Installation Guide
 
-Applies to Zhaoxu OS 0.6.0 "Yuanshuo", kernel Yuanshuo 0.6.0. The installation medium is one ISO that boots under UEFI and Legacy BIOS. After installation the target disk holds a FAT32 ESP and an ext4 root volume; the GPT layout also carries a BIOS boot partition, and the kernel lives in ext4.
+Applies to Zhaoxu OS 0.7.1 "Yuanshuo", kernel Yuanshuo 0.7.1. The installation medium is one ISO that boots under UEFI and Legacy BIOS. After installation the target disk holds a FAT32 ESP and an ext4 root volume; the GPT layout also carries a BIOS boot partition, and the kernel lives in ext4.
 
 This document covers three paths: physical hardware, virtual machines, and graphics-free environments. Before you start, read "Check before installing"; its limits decide whether a given machine can install at all.
 
@@ -30,12 +30,12 @@ A few points need stating up front:
 
 ### The target disk is overwritten entirely
 
-The installer does not let you choose a partition. It scans every AHCI disk, picks one that is "blank or already has a Zhaoxu layout", and rewrites from LBA 0: MBR/GPT, stage1/stage2, ESP, and ext4 root are all rebuilt.
+The installer chooses the whole disk, never a partition. It scans every AHCI disk, keeps only disks that are blank or already carry a Zhaoxu layout, and rewrites from LBA 0: MBR/GPT, stage1/stage2, ESP, and ext4 root are all rebuilt. **You must confirm once in the GUI before anything is written.**
 
 This means:
 
 - Existing Windows, Linux, and data partitions on the target disk disappear with it.
-- With more than one blank disk, the installer picks the lowest index by default; the GUI has no "disk 0 / disk 1" selector. Unplug unrelated blank disks before installing, or run `disks` first.
+- The window lists up to four targets. It preselects the first one; click another row to switch. If more than four qualify, disconnect the extra disks so the list is unambiguous.
 - Target detection looks only at the partition table in the first sector, not at filesystem contents. Blank disks, MBR disks whose first partition starts at LBA 2048 with type 0xEF/0x0C/0x0E, and protective MBRs carrying the `ZSLBA` marker all become `target` candidates. Some Linux or Windows disks whose ESP happens to be the first partition starting at LBA 2048 also qualify as reinstall targets. If unsure, unplug the disk or check with `disks` in `8sh`.
 - A disk that already holds Zhaoxu OS is recognized as a reinstall target; reinstalling wipes the old system just the same.
 
@@ -170,9 +170,15 @@ When booting from the ISO with a blank target disk, the window appears automatic
 
 ### Check the target disk
 
-The installer window title is "Install Zhaoxu OS", and the body reads "Single ISO installation, no extra media" and "Installation writes the single blank target disk". The window has no disk list and no control for "select disk N".
+The window header reads "安装 Zhaoxu OS" ("Install Zhaoxu OS") and the subtitle "单 ISO 安装，无需额外介质" ("single ISO installation, no extra media"). The target list shows one row per eligible disk:
 
-To confirm disk roles, use `8sh` in a graphics-free environment:
+```text
+磁盘 1  256 MB  QEMU HARDDISK
+```
+
+`磁盘 N` is the zero-based disk index plus one, followed by capacity and model. The first row is selected automatically. Click another row to change the destination; with more than four eligible disks the window asks you to disconnect the extras.
+
+To confirm disk roles from a shell, use `8sh` in a graphics-free environment:
 
 ```text
 8sh$ disks
@@ -184,19 +190,32 @@ Role meanings:
 
 - `target`: a blank disk, a legacy Zhaoxu layout whose first partition starts at LBA 2048 with type 0xEF/0x0C/0x0E, or a Zhaoxu GPT with the `ZSLBA` marker. Eligible for installation.
 - `media`: an ESP labeled `ZHAOXUEFI`. The installer never selects it.
-- `data`: a data disk labeled `ZHAOXUDATA`. The installer never selects it.
+- `data`: a data disk labeled `ZHAOXUDATA` or `ZHAOXUROOT`. The installer never selects it.
 - `other`: another partition table or filesystem. The installer never selects it.
 
 ### Choose MBR or GPT
 
-The window highlights GPT by default. The two buttons are "Install using MBR" and "Install using GPT".
-
-Clicking starts writing immediately, with no second confirmation. Before your finger leaves the mouse, make sure the target disk holds nothing you want to keep.
+GPT is the default and the row reads "自动 · GPT（推荐）". Click "高级选项" ("Advanced") to reveal the layout toggle, then click "切换为 MBR" ("Switch to MBR") if the machine only boots Legacy BIOS. The row then reads "自动 · MBR（兼容）".
 
 | Layout | Use case | What is written |
 | --- | --- | --- |
 | MBR | Legacy BIOS boot | stage1 at LBA0, stage2 at LBA1, FAT32 ESP from LBA2048 (64 MiB max), ext4 root after it |
-| GPT | UEFI boot | protective MBR, GPT header and partition table at LBA1/2, stage2 from LBA34 (occupying the GPT BIOS boot area), FAT32 ESP from LBA2048 (64 MiB max), ext4 root after it, backup GPT at the end of the disk |
+| GPT | UEFI boot (also boots under Legacy BIOS) | protective MBR, GPT header and partition table at LBA1/2, stage2 from LBA34 (occupying the GPT BIOS boot area), FAT32 ESP from LBA2048 (64 MiB max), ext4 root after it, backup GPT at the end of the disk |
+
+### Confirm, then install
+
+Clicking "安装 Zhaoxu OS" does not write anything yet. It opens a confirmation screen showing the selected disk, the layout and a red warning that the disk will be erased. Click "开始安装" ("Start installation") to begin, or "返回" ("Back") to change the selection. This second click is the point of no return.
+
+During the write the window shows "正在安装 Zhaoxu OS" with a bar and a busy cursor. The `SYS_INSTALL` call is synchronous, so the bar is an activity indicator rather than a per-sector percentage. Actual time depends on disk speed: a SATA SSD takes seconds, while virtual and spinning disks take tens of seconds. Do not power off or remove the ISO.
+
+On success the window turns green and reads:
+
+```text
+Zhaoxu OS 已安装到目标磁盘。
+请取出 ISO，然后从目标磁盘启动。
+```
+
+Click "关闭安装程序" ("Close installer") and reboot. On failure the window turns red, says "系统没有写入目标磁盘。" ("the system did not write the target disk") and prints the kernel's actual reason, for example a missing target disk or a failed FAT32 verify. Click "返回" to rescan the disks and try again.
 
 Neither layout places the kernel in the ESP or in boot sectors. The kernel exists only on the ext4 root:
 
@@ -205,23 +224,7 @@ Neither layout places the kernel in the ESP or in boot sectors. The kernel exist
 - `/MiSans.ttf`: OpenType Chinese/Latin font (MiSans, with MiSans Global and Inter as the other supported faces).
 - `/WALLPAPER.RAW`: raw frame of the default wallpaper.
 
-The ESP label is `ZHAOXUEFI`, its type is FAT32, and it holds only the UEFI boot files under `EFI/BOOT/`. The ext4 root label is `ZHAOXUROOT`.
-
-### Let it finish
-
-The interface shows no progress bar during the write; only the status text changes from "Click a button to start the installation" to installing. Actual time depends on disk speed: most SATA SSDs take a few seconds to a dozen, while spinning disks and virtual disks take longer.
-
-On success the window shows:
-
-```text
-安装完成，请重启并从目标盘启动
-```
-
-On failure it shows:
-
-```text
-安装失败：请确认存在空白目标盘
-```
+The ESP label is `ZHAOXUEFI`, its type is FAT32, and it holds both UEFI stages under `EFI/BOOT/`: `BOOTX64.EFI` (ZhaoxuBootMgr) and `OSLDRX64.EFI` (the kernel loader). The ext4 root label is `ZHAOXUROOT`.
 
 The matching success log on serial is:
 
@@ -234,7 +237,7 @@ The matching success log on serial is:
 [install] complete
 ```
 
-Wait for `[install] complete` before cutting power. If it does not appear, troubleshoot per section 9 instead of clicking the button repeatedly.
+The user client also prints `[install] complete` on the serial console. Wait for it before cutting power. If it does not appear, troubleshoot per section 9 instead of clicking the button repeatedly.
 
 ### Before rebooting
 
@@ -276,52 +279,15 @@ Boot complete. Starting Aqua Desktop Environment.
 
 `/` is still initramfs, and the ext4 root is mounted at `/mnt`. System programs start from initramfs, while fonts, wallpaper, and installation assets are read from `/mnt`. The installed desktop shows the wallpaper and Chinese automatically, with no further dependency on the ISO.
 
-### Known issue after UEFI installation
+### Fixed: UEFI installs missing the second stage
 
-The 0.6.0 installer, when writing the ESP, copies only `EFI/BOOT/BOOTX64.EFI` and does not write the second-stage loader `EFI/BOOT/OSLDRX64.efi` alongside it. The result: installation completes and Legacy BIOS boots normally, but a UEFI reboot stops at:
+Before build 7 the installer copied only `EFI/BOOT/BOOTX64.EFI` into the ESP, so a UEFI reboot of an installed disk stopped at:
 
 ```text
 BootMgr: cannot read OSLDRX64.efi
 ```
 
-The ISO itself contains the file; copy it in.
-
-On Windows, use `diskpart` to assign a temporary drive letter to the ESP:
-
-```text
-diskpart
-list disk
-select disk N
-list partition
-select partition M
-assign letter=S
-exit
-```
-
-Mount the ISO in Explorer and copy `EFI\BOOT\OSLDRX64.efi` to `S:\EFI\BOOT\`. Then remove the drive letter:
-
-```text
-diskpart
-select disk N
-select partition M
-remove letter=S
-exit
-```
-
-On Linux:
-
-```bash
-lsblk -f
-sudo mkdir -p /mnt/zhaoxu-esp
-sudo mount /dev/sdX1 /mnt/zhaoxu-esp
-sudo cp /media/$USER/ZHAOXU_OS/EFI/BOOT/OSLDRX64.efi /mnt/zhaoxu-esp/EFI/BOOT/
-sync
-sudo umount /mnt/zhaoxu-esp
-```
-
-Replace `/dev/sdX1` with the FAT32 partition labeled `ZHAOXUEFI`, usually 64 MiB. Boot again after adding the file; `BootMgr: zhaoxu.cfg missing, using defaults` is normal output, and it falls back to the default path to find `OSLDRX64.efi`.
-
-If you only need a quick run, Legacy BIOS installation is unaffected by this issue.
+Build 7 writes `EFI/BOOT/OSLDRX64.EFI` as part of `fat32_make_esp()` and verifies both files before reporting success. If you installed with an older build, reinstall with build 7 or attach the disk to another system and copy `EFI/BOOT/OSLDRX64.efi` from the ISO into the ESP. `BootMgr: zhaoxu.cfg missing, using defaults` is normal output; ZhaoxuBootMgr then falls back to the default `OSLDRX64.efi` path.
 
 ---
 
@@ -345,7 +311,7 @@ ruby tools/run.rb --display gtk run-install-bios
 
 `--display gtk` is required; the default `-display none` shows no window, and the install button cannot be clicked.
 
-In Aqua Desktop Environment click "Install using GPT" or "Install using MBR", wait for "Installation complete. Reboot and boot from the target disk", then close QEMU. Boot with only the target disk attached.
+In Aqua Desktop Environment keep the default GPT row (or use 高级选项 to switch to MBR), click "安装 Zhaoxu OS", then "开始安装" on the confirmation screen. Wait for the green "安装完成" screen, close QEMU, and boot with only the target disk attached.
 
 UEFI:
 
@@ -377,7 +343,7 @@ qemu-system-x86_64 -M q35 -m 512 -smp 4 \
 4. Enabling EFI in system settings means a UEFI install; leaving it off means a Legacy BIOS install. Disable Secure Boot under EFI mode.
 5. Start the virtual machine, install, power it off, remove the ISO from the optical drive, then start it again.
 
-VirtualBox emulates PS/2 keyboard and mouse by default, so the installer window is clickable. A UEFI install still needs `OSLDRX64.efi` added per section 6.
+VirtualBox emulates PS/2 keyboard and mouse by default, so the installer window is clickable. Build 7 writes both UEFI stages into the ESP, so no manual copy is needed.
 
 ### VMware Workstation
 
@@ -454,15 +420,15 @@ If the target disk is present but the window did not open automatically, a data 
 
 ### The install button does nothing, or the window disappears
 
-The installer is a separate process, `/bin/apps/install.zxe`. A closed window does not come back on its own; click "File" in the menu bar to reopen it. After a failed install the window shows red text, "Installation failed: confirm a blank target disk exists", and serial prints the specific reason.
+The installer is a separate process, `/bin/apps/install.zxe`. A closed window does not come back on its own; click "File" in the menu bar to reopen it. After a failed install the window turns red, says "系统没有写入目标磁盘。" and shows the kernel's reason (for example a missing target or a failed FAT32 verify); the same reason is available through `SYS_INSTALL_ERROR`.
 
 ### Stuck at `BootMgr: cannot read OSLDRX64.efi`
 
-A known issue after UEFI installation; add `OSLDRX64.efi` to the ESP per section 6. Legacy BIOS never takes this path.
+Build 7 writes `EFI/BOOT/OSLDRX64.EFI` as part of the install and verifies it, so this should not happen on a fresh installation. If it does, the ESP is damaged or the disk was installed by an older build; reinstall with build 7 (or copy the file from the ISO, as described in section 6). Legacy BIOS never takes this path.
 
 ### Stuck after `BootMgr: zhaoxu.cfg missing`
 
-That line is not an error by itself; the next line is what matters. If it is followed by `cannot read OSLDRX64.efi`, it is still the missing-file problem above. If it is followed by `starting OSLDRX64.efi`, the boot manager has handed over control.
+That line is not an error by itself; the next line is what matters. If it is followed by `cannot read OSLDRX64.efi`, the ESP is missing the second stage (see above). If it is followed by `starting OSLDRX64.efi`, the boot manager has handed over control.
 
 ### UEFI boot goes straight to firmware setup or a black screen
 
@@ -524,7 +490,7 @@ After installation the target disk should have two visible partitions. The GPT l
 | Partition | Filesystem | Label | Contents |
 | --- | --- | --- | --- |
 | BIOS boot (GPT only), from LBA34 | none | none | stage2 boot code |
-| ESP, from LBA 2048, 64 MiB max | FAT32 | `ZHAOXUEFI` | `EFI/BOOT/BOOTX64.EFI`, plus `EFI/BOOT/OSLDRX64.efi` added manually when needed |
+| ESP, from LBA 2048, 64 MiB max | FAT32 | `ZHAOXUEFI` | `EFI/BOOT/BOOTX64.EFI` and `EFI/BOOT/OSLDRX64.EFI` |
 | ext4 root, after the ESP up to the backup GPT | ext4 | `ZHAOXUROOT` | `/KERNEL.ELF`, `/KERNEL.BIN`, `/MiSans.ttf`, `/WALLPAPER.RAW` |
 
 On a Linux host you can inspect it like this:

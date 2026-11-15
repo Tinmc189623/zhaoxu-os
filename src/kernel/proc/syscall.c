@@ -97,6 +97,7 @@
 #define SYS_EPOLL_CREATE1   65
 #define SYS_EPOLL_CTL       66
 #define SYS_EPOLL_WAIT      67
+#define SYS_INSTALL_ERROR   68
 
 #define BLK_SECTOR_BYTES 512u
 #define BLK_MAX_SECTORS  8u
@@ -430,6 +431,26 @@ static long syscall_install(u64 target, u64 gpt)
         return -4;
     }
     return 0;
+}
+
+/* Copy the installer's last diagnostic to user memory, including its NUL. */
+static long syscall_install_error(struct process *process, u64 buffer,
+                                  u64 capacity)
+{
+    if (!process || capacity == 0 || capacity > 256)
+        return -1;
+    const char *error = install_last_error();
+    usize length = strlen(error);
+    if (length + 1 > capacity)
+        length = (usize)capacity - 1;
+    if (user_range_ok(process, buffer, length + 1) != 1)
+        return -1;
+    if (length && process_user_write(process, buffer, error, length) != 0)
+        return -1;
+    char terminator = 0;
+    if (process_user_write(process, buffer + length, &terminator, 1) != 0)
+        return -1;
+    return (long)length;
 }
 
 static long syscall_write_file(struct process *process, u64 path_pointer,
@@ -932,6 +953,9 @@ void syscall_dispatch(struct interrupt_frame *frame)
     case SYS_EPOLL_WAIT:
         result = sys_ipc_epoll_wait(process, frame->rdi, frame->rsi,
                                     frame->rdx, frame->r10);
+        break;
+    case SYS_INSTALL_ERROR:
+        result = syscall_install_error(process, frame->rdi, frame->rsi);
         break;
     default:
         result = -1;

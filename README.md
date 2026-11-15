@@ -10,7 +10,7 @@
 
 [🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) · [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) · [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) · [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
-**Current version: 0.7.1 「Yuanshuo」 · kernel 0.7.1 · build 6** · version history in [CHANGELOG.md](CHANGELOG.md)
+**Current version: 0.7.1 「Yuanshuo」 · kernel 0.7.1 · build 7** · version history in [CHANGELOG.md](CHANGELOG.md)
 
 </div>
 
@@ -38,6 +38,10 @@
 - M6: stock libwayland 1.23.1 client core ported into Ring3 with the upstream `wayland-client.c`, `wayland-util.c`, `connection.c` and generated core/xdg-shell bindings; libffi 3.4.6 supplies the x86_64 SysV `ffi_call` path, and `user/lib/wayland/compat.c` supplies libc, errno, pthread and socket entry points. `/data/WLSTOCK.ZXE` binds `wl_compositor`/`wl_shm`, submits a 320x240 shm frame through SCM_RIGHTS, and exits 0
 - Fonts: the non-OpenType WenQuanYi fallback is gone. Boot, Aqua Desktop Environment, the installer, the ISO and the FAT data image use only MiSans, MiSans Global and Inter (OpenType); the installer writes `/MiSans.ttf` and the boot loader prefers `install/MiSans.ttf`
 - FreeType 2.13.3 is vendored under `third_party/freetype` and backs the Ring3 desktop font adapter. `make out/ft_test.zxe` loads the boot font and rasterizes U+4E2D; `FT_BOOT_TEST=1` with `out/data.img` prints `[ft] FreeType PASS` and exits 0
+- Installer: the graphical flow is now Windows-like. It finds blank or previous Zhaoxu disks, auto-selects a single target, asks for one confirmation, defaults to GPT and keeps MBR behind an advanced toggle. `SYS_INSTALL_ERROR` (68) puts the kernel's real failure reason on screen. The UEFI install writes both `BOOTX64.EFI` and `OSLDRX64.EFI` into the ESP; a blank 256 MiB disk was installed through real mouse clicks and then booted to Aqua Desktop Environment
+- Installer hardening: targets over 2 TiB, root partitions outside the ext4 32-bit range, oversized kernel/loader/font/wallpaper blobs and a flat kernel above `0x8F000` bytes are rejected. An MBR install also clears the stale backup GPT at the end of the disk
+- OpenGL: a software **OpenGL 1.1 immediate-mode subset** lives in `src/user/lib/opengl`. It has matrix stacks, ortho/frustum projections, `glBegin/glEnd` points/lines/triangles/strips/fans/quads, near-plane clipping, perspective divide, flat and Gouraud colours, a 16-bit depth test, CCW culling and `glReadPixels`. `GL_BOOT_TEST=1` runs the full regression and prints `[gl ] OpenGL PASS`. It is not full OpenGL: lighting, textures, display lists, evaluators, extensions and shaders are absent, and rules 37/38 remain release blockers
+- Desktop protocol: `ADE_TEXT_MAX` grows to 160 bytes with UTF-8-safe truncation and `IPC_MSG_MAX` to 256, so long Chinese warnings are no longer cut mid-codepoint
 
 <table>
 <tr>
@@ -371,7 +375,7 @@ Zhaoxu OS/
 - 🧱 Compatibility: no general POSIX/libc layer, the syscall interface is ZOS API 1.0; ZXE v1 loads dependencies from `/lib` by filename and has no ELF dynamic linker. Wayland now includes the stock libwayland 1.23.1 client core plus a small libc/pthread/socket compatibility layer; unmodified stock applications such as `weston-terminal` still need the remaining libc and shm_open surface
 - 🌐 Networking: no TCP/IP stack; AF_UNIX stream sockets, poll, eventfd, timerfd, epoll, SCM_RIGHTS, and memfd exist for Wayland and the M0/M5 transport
 - 🔌 Peripherals: input is a PS/2 keyboard/mouse and COM1; storage covers AHCI/IDE/NVMe/SDHCI/USB MSC; HDA, e1000, I2C/SPI, and temperature sensors are present; no USB HID and no full network stack
-- 🖼️ Graphics: M1 virtio-gpu 2D KMS scanout and double-buffered flip; composition is still software rasterization; the M2/M3 Wayland core and xdg-shell/seat work; M6 ships the stock libwayland client core and a verified shm frame submission through SCM_RIGHTS; M4 virgl contexts and 3D resources can be created and attached, but virglrenderer in QEMU on Windows does not register 2D/3D scanout resources (`SET_SCANOUT` returns `0x1203`), so GPU composition and linux-dmabuf remain pending. There is no Vulkan loader/ICD and no OpenGL port yet; rules 37/38 are known release blockers; no multi-monitor
+- 🖼️ Graphics: M1 virtio-gpu 2D KMS scanout and double-buffered flip; composition is still software rasterization; the M2/M3 Wayland core and xdg-shell/seat work; M6 ships the stock libwayland client core and a verified shm frame submission through SCM_RIGHTS; M4 virgl contexts and 3D resources can be created and attached, but virglrenderer in QEMU on Windows does not register 2D/3D scanout resources (`SET_SCANOUT` returns `0x1203`), so GPU composition and linux-dmabuf remain pending. A software OpenGL 1.1 immediate-mode subset exists for classic demos, but there is no Vulkan loader/ICD and no complete OpenGL implementation; rules 37/38 are known release blockers; no multi-monitor
 - ⚡ Power: ACPI is used for shutdown/reboot only; no sleep or hibernate
 - 🛡️ Boot: the boot loader is unsigned, so machines with Secure Boot enabled must turn Secure Boot off first or sign the loader themselves
 - ⏱️ Time: RTC local time only; no NTP or time zone handling

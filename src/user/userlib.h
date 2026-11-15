@@ -74,6 +74,7 @@ typedef unsigned long long u64;
 #define SYS_EPOLL_CREATE1   65
 #define SYS_EPOLL_CTL       66
 #define SYS_EPOLL_WAIT      67
+#define SYS_INSTALL_ERROR   68
 
 #define AF_UNIX      1
 #define SOCK_STREAM  1
@@ -573,6 +574,11 @@ static inline long sys_epoll_wait(int epfd, struct zos_epoll_event *events,
                                   int max_events, int timeout)
 {
     return syscall4(SYS_EPOLL_WAIT, epfd, (long)events, max_events, timeout);
+}
+
+static inline long sys_install_error(char *buffer, unsigned long capacity)
+{
+    return syscall3(SYS_INSTALL_ERROR, (long)buffer, (long)capacity, 0);
 }
 
 void u_puts(const char *text);

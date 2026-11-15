@@ -13,6 +13,7 @@ logs/
 
 .trae/
 .vscode/
+docs/articles/
 
 # Fonts fetched at build time (MiSans licence forbids redistribution)
 src/initramfs/data/MiSans-Regular.ttf

@@ -221,6 +221,20 @@ void kernel_main(struct boot_info *boot)
         hlt();
 #endif
 
+#if GL_BOOT_TEST == 1
+    kprintf("[gl ] running /mnt/GL_TEST.ZXE\n");
+    u64 gl_pid = process_spawn("/mnt/GL_TEST.ZXE", 0, NULL);
+    if (gl_pid) {
+        int gl_status = -1;
+        process_wait(gl_pid, &gl_status);
+        kprintf("[gl ] GL_TEST exit %d\n", gl_status);
+    } else {
+        kprintf("[gl ] GL_TEST spawn failed\n");
+    }
+    for (;;)
+        hlt();
+#endif
+
 #if WLSTOCK_BOOT_TEST == 1
     kprintf("[wlstock] starting /bin/wayland\n");
     u64 wlstock_server = process_spawn("/bin/wayland", 0, NULL);

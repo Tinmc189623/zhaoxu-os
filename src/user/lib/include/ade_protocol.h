@@ -4,7 +4,10 @@
 #include <types.h>
 
 #define ADE_PORT_NAME "ade"
-#define ADE_TEXT_MAX 32
+/* Bytes in one text command, including the terminator.  CJK glyphs take
+ * three bytes each, so 32 bytes clipped ordinary installer warnings in the
+ * middle of a codepoint and rendered a replacement box. */
+#define ADE_TEXT_MAX 160
 
 #define ADE_TEXT_CENTER 1u
 #define ADE_TEXT_RIGHT  2u
