@@ -793,9 +793,6 @@ RAMFS_FILES += $(patsubst initramfs/%,$(RAMFS)/%,$(CURSOR_THEME_FILES))
 TERMINFO_FILES := $(wildcard initramfs/usr/share/terminfo/*/*)
 RAMFS_FILES += $(patsubst initramfs/%,$(RAMFS)/%,$(TERMINFO_FILES))
 
-LOGO_FILES := $(wildcard initramfs/usr/share/logo/*)
-RAMFS_FILES += $(patsubst initramfs/%,$(RAMFS)/%,$(LOGO_FILES))
-
 ifeq ($(NLIBC_BOOT_TEST),1)
 RAMFS_FILES += $(RAMFS)/data/NLIB_HELLO.ZXE $(RAMFS)/data/NCURSES_HELLO.ZXE
 endif
@@ -805,10 +802,6 @@ $(RAMFS)/usr/share/cursors/%: initramfs/usr/share/cursors/%
 	cp $< $@
 
 $(RAMFS)/usr/share/terminfo/%: initramfs/usr/share/terminfo/%
-	@mkdir -p $(dir $@)
-	cp $< $@
-
-$(RAMFS)/usr/share/logo/%: initramfs/usr/share/logo/%
 	@mkdir -p $(dir $@)
 	cp $< $@
 
