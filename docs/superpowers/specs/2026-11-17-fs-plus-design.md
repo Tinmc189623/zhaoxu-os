@@ -88,7 +88,7 @@ role suffix (for example `ZHAOXUROOT`), but the file-system name itself stays
 ## 3. Volume Layout
 
 All offsets are in 4096-byte FS+ blocks. A block number is 64-bit on disk; v1
-caps usable volumes at 2^48 blocks (1 ZiB) and rejects larger values instead of
+caps usable volumes at 2^48 blocks (1 EiB) and rejects larger values instead of
 truncating them.
 
 ```
@@ -666,7 +666,7 @@ always checksummed regardless of `DATA_CSUM`.
 | case | case-sensitive, byte-exact |
 | max name | 255 bytes |
 | max file size | 2^63-1 bytes, bounded in practice by volume size |
-| max volume | 2^48 blocks (1 ZiB) enforced by v1 |
+| max volume | 2^48 blocks (1 EiB) enforced by v1 |
 | max symlink target | 4095 bytes |
 | max hard links | 2^32-1 |
 | max reference count | 2^32-1 per block |
