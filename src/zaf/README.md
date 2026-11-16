@@ -18,7 +18,7 @@ src/zaf/theme      Aqua tokens (colors/metrics; Z3 expands into a theme engine)
 src/zaf/gfx        painter: the only wrapper over the ZOS rendering API
 src/zaf/core       rectangles and bounded damage regions (no system dependencies, host-testable)
         │
-render.c           ZOS API 1.0 software rendering (the same copy in kernel and Ring3)
+render.c           Z64 1.0 software rendering (the same copy in kernel and Ring3)
 ```
 
 `zaf_gfx.h` / `zaf_gfx_soft.c` (the Z0 portable rasterizer and fps demo) are not part of this chain:
