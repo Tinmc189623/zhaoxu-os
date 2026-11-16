@@ -4,7 +4,7 @@
 
 ### Yuanshuo, Aqua Desktop Environment, x86_64
 
-<kbd>🧩 Microkernel</kbd> <kbd>🧵 Ring 3 user mode</kbd> <kbd>💾 FAT32 + ext4</kbd> <kbd>💿 UEFI + Legacy BIOS</kbd> <kbd>🧬 MBR + GPT(ISO)</kbd> <kbd>🎨 Aqua</kbd>
+<kbd>🧩 Microkernel</kbd> <kbd>🧵 Ring 3 user mode</kbd> <kbd>💾 FAT32 + ext4</kbd> <kbd>💿 UEFI + Legacy BIOS</kbd> <kbd>🧬 MBR + GPT</kbd> <kbd>🎨 Aqua</kbd>
 
 **C** kernel, **Limine** UEFI/BIOS boot, **GAS** low-level assembly, **Ada** drivers, **C++20** applications, **Ruby** toolchain
 
@@ -16,387 +16,185 @@
 
 ---
 
-> 🧭 **In one sentence**: Zhaoxu OS is a microkernel operating system for x86_64. The boot manager **Limine** supports both UEFI and legacy BIOS; **Yuanshuo** is the microkernel written in C; drivers are written in **Ada + C** and run in ring 3; the shell **8sh** and the **Aqua Desktop Environment** desktop also live in ring 3, and the UI is composited by **Desktop Window Compositor**; the VFS spans ext4, UBIFS, tmpfs, initramfs, procfs, sysfs, debugfs, efivarfs, ramfs, rootfs, overlayfs, ecryptfs, vfat, NTFS, ISO 9660/CDFS, UDF, and exFAT; the executable format is **ZXE v1**.
+> 🧭 **In one sentence**: Zhaoxu OS is an x86_64 microkernel operating system. **Limine** boots it on UEFI and legacy BIOS, **Yuanshuo** is the C kernel, drivers and the **Aqua Desktop Environment** desktop run in ring 3, the compositor is **Desktop Window Compositor** and the window manager is **Desktop Window Manager**. Applications are **ZXE v1** executables using the **Z64 1.0** system API.
 
 ---
 
-## ✨ What's in 0.7.1
+## ✨ What this build does
 
-### 🚀 0.7.1 fixes and improvements
-- Color: fixed the Limine framebuffer format mapping that swapped R and B, so blue window chrome, buttons and the installer header now render blue instead of orange. The convention (0 = swap, 1 = native BGRX) is documented in AGENTS.md
-- Process control: `SYS_FORK` (72) and `SYS_EXEC` (73) bring POSIX fork/exec to Ring3. `fork()` copies the caller's pages and zfd descriptors; the child resumes after `int 0x80` with `rax=0`. `exec()` loads a ZXE/ELF image into a fresh address space, switches CR3, releases the old pages and rewrites the interrupt frame. `FE_BOOT_TEST=1` forks, reaps the child (status 7), then execs `HELLO.ZXE`. `SYS_PIPE` (74) adds a 64 KiB blocking pipe shared by two zfd descriptors, and `SYS_DUP2` (75) installs a descriptor at an exact number or redirects fd 0/1/2; `SYS_IOCTL` (76) exposes TCGETS/TCSETS/TIOCGWINSZ/FIONREAD on a tty-like 0/1/2. stdout redirection changes where `u_puts` writes without touching the caller, and `POSIX_BOOT_TEST=1` covers a pipe across fork, EOF after the writer closes, dup2, stdio redirection, and termios/window size
-- C library: newlib 4.6 is built PIC for x86_64-elf by `tools/newlib.rb`, with `user/lib/posix/libgloss.c` and `crt0.S` supplying the ZOS syscall stubs and `main(argc, argv, envp)` startup. `NLIBC_BOOT_TEST=1` runs a real printf/malloc program inside Zhaoxu OS; - ncurses 6.5 now builds against newlib and runs in Zhaoxu OS: a real `initscr/printw/refresh/endwin` program reports `ncurses hello: 80x25 ok`, using the `zhaoxu` terminfo entry and the tty/termios layer. VFS `lseek` and `SYS_STAT` (77) were added for the terminfo reader. nano is the next step; gnulib's signal headers still need a newlib-compatible overlay
-- The pre-Limine boot manager and its Ruby helpers are archived under `archive/boot-legacy/`; nothing there is built or installed, which keeps the tree free of two competing boot paths
-- The Makefile is the only build entry point and Ruby handles auxiliary scripts only; Windows runs `make` inside WSL2 by default
-- Window content is inset and the title bar avoids the rounded corners, fixing content that bled over the window radius; initial windows sit side by side
-- The live ISO uses the rule 33 wallpaper directly, and the menu bar is translucent
-- `version.cfg` is the single version source and carries a `build` number
-- Default QEMU memory is raised to 2 GiB; PMM has been verified managing 8 GiB (64 GiB ceiling)
-- The kernel-embedded initramfs is zlib-compressed, bringing the legacy BIOS `KERNEL.BIN` back under the 448 KiB limit
-- The ISO layout now ships `boot/zhaoxu/fonts/unicode.pf2`, `casper/vga.ko`, `install/MiSans.ttf`, and `install/Inter.otf`; the UEFI live ISO prefers MiSans
-- Fixed `sendmsg` control-message length wraparound; memfd and the kernel heap are capped and grown dynamically at 1/4 of available memory
-- M1: new Ring3 `/bin/display` KMS service (modern virtio-pci, 2D scanout, double-buffered flip)
-- M2: new `/bin/wayland` and `/bin/wldemo`; Wayland wire/object/wl_shm plus SCM_RIGHTS frame submission, composited onto the KMS scanout, verified in QEMU
-- M3: xdg-shell configure/ack, wl_seat/wl_pointer, wl_keyboard keymap/enter, and server-side title bar/close/drag are implemented; in M4, virgl contexts, 3D resource creation, and `CTX_ATTACH_RESOURCE` work, but virglrenderer in QEMU on Windows does not register scanout resources, so GPU composition and dmabuf remain pending
-- M5: kernel `eventfd`, `timerfd`, and `epoll` (syscalls 61–67) provide the event-loop primitives stock libwayland needs; `/data/M5_TEST.ZXE` verifies counters, expirations, readiness, and timeouts on real hardware emulation
-- M6: stock libwayland 1.23.1 client core ported into Ring3 with the upstream `wayland-client.c`, `wayland-util.c`, `connection.c` and generated core/xdg-shell bindings; libffi 3.4.6 supplies the x86_64 SysV `ffi_call` path, and `user/lib/wayland/compat.c` supplies libc, errno, pthread and socket entry points. `/data/WLSTOCK.ZXE` binds `wl_compositor`/`wl_shm`, submits a 320x240 shm frame through SCM_RIGHTS, and exits 0
-- Fonts: the non-OpenType WenQuanYi fallback is gone. Boot, Aqua Desktop Environment, the installer, the ISO and the FAT data image use only MiSans, MiSans Global and Inter (OpenType); the installer writes `/MiSans.ttf` and the boot loader prefers `install/MiSans.ttf`
-- FreeType 2.13.3 is vendored under `third_party/freetype` and backs the Ring3 desktop font adapter. `make out/ft_test.zxe` loads the boot font and rasterizes U+4E2D; `FT_BOOT_TEST=1` with `out/data.img` prints `[ft] FreeType PASS` and exits 0
-- Installer: the graphical flow is Windows-like. It finds blank or previous Zhaoxu disks (a disk carrying Limine's boot sector counts as a previous install), auto-selects a single target, asks for one confirmation, defaults to GPT and keeps MBR behind an advanced toggle. The write runs in a worker child; the UI paints real **written stage N / 7** progress (8 with a data partition) from a shared page. A refresh button rescans disks, failures show the kernel's actual reason through `SYS_INSTALL_ERROR` (68), and the done screen offers "立即重启" through `SYS_REBOOT` (69). The install writes Limine's BIOS boot sector/stage 2 and the ESP files `EFI/BOOT/BOOTX64.EFI`, `EFI/BOOT/limine.conf`, `boot/limine/limine-bios.sys`, `KERNEL.ELF`, `KERNEL.BIN`, `MiSans.ttf` and `WALL.RGB`; Limine 12 has no ext4 driver, so every file it must read lives on the FAT32 ESP. A blank 256 MiB disk was installed through real mouse clicks and then booted to Aqua Desktop Environment under both UEFI and SeaBIOS
-- Installer hardening: targets over 2 TiB, root partitions outside the ext4 32-bit range and oversized kernel/loader/font/wallpaper blobs are rejected. An MBR install also clears the stale backup GPT at the end of the disk
-- Custom partitioning: the installer's "自定义分区" screen cycles the FAT32 ESP through 64/128/256 MiB and adds an optional 64/128/256 MiB FAT32 `ZHAOXUDATA` data partition; the ext4 system partition takes the rest. `SYS_INSTALL_CONFIG` (71) carries the layout to the kernel, which writes the third MBR/GPT entry, formats the data volume and verifies its label. The installed system mounts the data partition at `/media/<n>`
-- Cursor and flicker: the pointer is no longer drawn into the system-RAM back buffer. The compositor keeps the back buffer cursor-free, erases the old pointer with one blit and composites the new pointer directly onto the framebuffer; the DWM loop runs at 250 Hz instead of 1 kHz. Button text is centred with server-side UTF-8 measurement rather than byte counts
-- Fixed the GPT/partition scanner rejecting any volume whose start sector exceeded its own length, which hid late data partitions from `/media` probing
-- OpenGL: a software **OpenGL 1.1 immediate-mode implementation** lives in `src/user/lib/opengl`. Matrix stacks, ortho/frustum projections, all `glBegin/glEnd` primitives, near-plane clipping, perspective divide, flat and Gouraud colours, a 16-bit depth test, CCW culling, `glReadPixels`, RGBA textures with nearest/bilinear filtering, `GL_LIGHT0..7` per-vertex lighting and materials, alpha blending, alpha test and scissor clipping all work. `GL_BOOT_TEST=1` prints `[gl ] OpenGL PASS`. Display lists, evaluators, fog, selection/feedback, extensions and shaders are still absent
-- Vulkan: a **software Vulkan 1.0 ICD** lives in `src/user/lib/vulkan`, with the Khronos headers under `third_party/vulkan-headers`. It implements instance/device/queue creation, host-visible memory, buffers, RGBA8 images, render passes, framebuffers, graphics pipelines, command buffers, fences, a real SPIR-V 1.0 interpreter and a CPU triangle rasterizer. `VK_BOOT_TEST=1` creates a real pipeline, renders a triangle into a 64x64 image, maps it back and prints `[vk ] Vulkan PASS`. There is no WSI/swapchain, descriptor sets/UBOs, compute, depth/stencil, MSAA, semaphores or GPU path yet, and the desktop still uses the ZOS raster renderer, so rules 37/38 remain open
-- Desktop protocol: `ADE_TEXT_MAX` grows to 160 bytes with UTF-8-safe truncation and `IPC_MSG_MAX` to 256, so long Chinese warnings are no longer cut mid-codepoint
+### Boot and install
 
-<table>
-<tr>
-<td width="50%" valign="top">
+- Limine 12.10.0 boots the kernel on both UEFI and legacy BIOS from one hybrid ISO. Stage 1, stage 2, the EFI loader and the installed ESP are all written by the installer.
+- The graphical installer scans disks, recognises a blank disk or a previous Zhaoxu install, auto-selects one target and asks for a single confirmation. GPT is the default; MBR is behind the advanced toggle.
+- Custom partitioning adjusts the FAT32 ESP and an optional FAT32 `ZHAOXUDATA` partition; the ext4 root takes the rest.
+- The ESP carries Limine, `KERNEL.ELF`, `KERNEL.BIN`, `MiSans.ttf` and `WALL.RGB`, because Limine 12 reads FAT and ISO9660 but not ext4. The ext4 `ZHAOXUROOT` volume carries the installed file system with no boot files.
+- Installs were verified end to end on a blank 256 MiB disk in both GPT and MBR layouts, then booted under OVMF and SeaBIOS.
 
-### 🗂️ File system matrix
-- New read-only **NTFS** (MFT, runlist, $INDEX_ROOT/$INDEX_ALLOCATION), **exFAT** (NoFatChain/FAT, ValidDataLength), **ISO 9660/CDFS** (Joliet + Rock Ridge + multi-extent), **UDF** (AVDP/VDS/ICB/FID), and **UBIFS** (UBI attach, node CRC, zlib decompression)
-- The standalone **vfat** driver covers FAT12/16/32 and VFAT long names
-- **rootfs** is now a writable root with an initramfs lower layer and ramfs copy-up; **overlayfs** supports writes and `.wh.` whiteouts; new **ramfs** and **ecryptfs** (AES-256-CBC)
-- After boot, MBR/GPT/EBR are scanned and recognizable volumes are mounted under `/media/<n>`
+### Kernel and ABI
 
-</td>
-<td width="50%" valign="top">
+- Yuanshuo owns CPU, memory, scheduling, IPC, VFS core and the page tables. Every hardware driver lives in Ring 3 `/bin/drivers`; the kernel contains no driver or desktop code.
+- User images load in `[1 TiB, 1 TiB + 1 GiB)` at a random 64 KiB-aligned base with W^X enforced: code is RX, rodata is R, data and zero-fill are RW.
+- Z64 1.0 syscalls use `int 0x80` with `rax`, `rdi`, `rsi`, `rdx`, `r10`. Numbers 0–77 cover files, processes, IPC, block I/O, install, fork/exec, pipes, `dup2`, `ioctl` and `stat`.
+- `fork()` copies the caller's pages and descriptor table and resumes the child after the syscall with `rax=0`; `exec()` loads a new image into a fresh address space and rewrites the interrupt frame.
 
-### 💽 Storage and bus drivers
-- Ring3 **NVMe** (admin/I/O queues, PRP, identify) and **SDHCI** (CMD0/8/ACMD41/2/3/9/7/16, PIO reads and writes)
-- The **IDE** PIIX4 driver joins `/bin/drivers` and forms the block device pool together with AHCI and USB MSC
-- **DesignWare I2C**, **PCH SPI**, and **LM75/TMP102** temperature sensors; `/sys/class/thermal/thermal_zone0/temp`
-- USB **OHCI/EHCI** root port reset and controller initialization, alongside the existing **xHCI** storage stack
+### POSIX and ports
 
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
+- newlib 4.6 is built PIC for x86_64-elf and linked through the ZOS libgloss layer: `fork`, `exec`, `pipe`, `dup2`, stdio redirection, tty/termios, `stat`, `lseek` and directory streams.
+- ncurses 6.5 builds against that layer and the `zhaoxu` terminfo entry; a real `initscr/printw/refresh/endwin` program reports `ncurses hello: 80x25 ok`.
+- nano 8.4 compiles against newlib and ncurses, using upstream gnulib. It is not yet relinked as a ZXE PIE or started inside the system.
 
-### 🧠 Kernel platform layer
-- Explicit **MMU/page-table driver**: four-level walk, 1 GiB/2 MiB huge-page splitting, map/unmap/protect/translate
-- **HPET** ACPI table parsing and 64-bit counter; APIC Timer, PIT, and ARM **SysTick** backends
-- A unified interrupt controller frontend for APIC/PIC; the ARM **GICv3** driver lives in `kernel/arch/arm64`
-- The device header grows to 16 disks and shares temperature sensor state
+### Desktop and graphics
 
-</td>
-<td width="50%" valign="top">
+- Aqua Desktop Environment runs as the Ring 3 display server. Window chrome, Dock, menu bar, wallpaper, damage-only composition and the cursor live in separate files.
+- The framebuffer path was fixed to keep BGRX native; blue window chrome stays blue instead of being swapped to orange.
+- A software OpenGL 1.1 subset (matrices, primitives, depth, textures, lighting, blending, scissor, `glReadPixels`) and a software Vulkan 1.0 ICD (SPIR-V interpreter, CPU rasterizer) are present in `src/user/lib`.
+- The desktop itself still renders through the ZOS software raster path; Vulkan is not the default compositor backend yet, and the Vulkan ICD has no WSI/swapchain, descriptors/UBOs, compute or depth.
 
-### 🎨 Desktop and multimedia
-- **Desktop Window Compositor** owns the back buffer, damage submission, and hardware cursor on its own; DWM handles window policy only
-- **Intel HDA** audio output path (CORB/RIRB, DAC→pin, 48 kHz/16-bit stereo)
-- **Intel 8254x/82574L** NIC driver (DMA rings, EEPROM MAC, transmit and receive)
-- Legacy virtio-gpu **3D** path: virgl context, 3D resources, and SUBMIT_3D
+### Wayland
 
-</td>
-</tr>
-</table>
+- Desktop Window Compositor speaks Wayland. Kernel eventfd, timerfd and epoll back the event loop, and the stock libwayland 1.23.1 client core runs with an SCM_RIGHTS `wl_shm` frame in the regression client.
+- The Ring 3 KMS service (`/bin/display`), GBM buffer allocation and dmabuf sharing are the next milestones.
 
 ---
 
-## 📸 Screenshots
-
-> The ten images below were captured from the framebuffer by `tools/screenshot.rb` after a real boot under QEMU + OVMF at **1920×1080**; the newest four are stored at 1600×900 to keep the repository small. They are not drawn mock-ups. The shell, editor, disk-list and font-test screens come from 0.5.0 and earlier (kept to show hardware and font behavior); the desktop, application and installer screenshots are from the current build.
+## 📷 Screenshots
 
 <table>
-<tr>
-<td width="50%" align="center">
-<img src="docs/shot-shell.png" width="100%" alt="8sh neofetch">
-<br><b>🖥️ 8sh</b><br>
-<sub>neofetch: kernel summary and language breakdown</sub>
-</td>
-<td width="50%" align="center">
-<img src="docs/shot-files.png" width="100%" alt="Reading files from FAT32">
-<br><b>💾 FAT32 data disk</b><br>
-<sub><code>ls /mnt</code> and <code>cat</code>; AHCI → FAT32 → VFS → syscall</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" align="center">
-<img src="docs/shot-run.png" width="100%" alt="Running .zxe and ELF">
-<br><b>🧵 Ring 3 programs</b><br>
-<sub>The same hello program run as <code>.zxe</code> and as ELF64, exit code 7</sub>
-</td>
-<td width="50%" align="center">
-<img src="docs/shot-editor.png" width="100%" alt="In-system compiler">
-<br><b>🛠️ In-system development</b><br>
-<sub>The in-system editor from an earlier release: edit, then run the .zxe in ring 3</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" align="center">
-<img src="docs/shot-disks.png" width="100%" alt="Disk roles">
-<br><b>🗄️ Disks and roles</b><br>
-<sub><code>disks</code> from an earlier release: ZHAOXUDATA data partition / ZHAOXUEFI ESP / blank target disk</sub>
-</td>
-<td width="50%" align="center">
-<img src="docs/shot-install.png" width="100%" alt="Installer">
-<br><b>📥 Installer</b><br>
-<sub>Target disk list, automatic or custom layout, one confirmation, real stage progress, reboot action</sub>
-</td>
-</tr>
 <tr>
 <td width="50%" align="center">
 <img src="docs/shot-desktop.png" width="100%" alt="Aqua desktop">
-<br><b>🎨 Aqua Desktop Environment Aqua</b><br>
-<sub>Menu bar, welcome window, calculator, Dock and the compositor cursor on a real 1920×1080 boot</sub>
+<br><b>🎨 Aqua Desktop Environment</b><br>
+<sub>Menu bar, welcome window, calculator, Dock and the compositor cursor at 1920×1080</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/shot-desktop-apps.png" width="100%" alt="Desktop applications">
-<br><b>🧮 Native desktop applications</b><br>
-<sub>Welcome and calculator ADE clients next to the completed graphical installer; TrueType Chinese typesetting</sub>
+<img src="docs/shot-desktop-apps.png" width="100%" alt="Installed system">
+<br><b>🧮 Applications and installer</b><br>
+<sub>Welcome and calculator clients next to the completed graphical installer; TrueType Chinese text</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" align="center">
-<img src="docs/shot-desktop-install.png" width="100%" alt="Graphical installer">
-<br><b>💿 Graphical installer custom partitions</b><br>
-<sub>Adjustable EFI and optional FAT32 ZHAOXUDATA data partition; the ext4 system partition follows automatically</sub>
+<img src="docs/shot-install.png" width="100%" alt="Installer target selection">
+<br><b>📥 Installer</b><br>
+<sub>Target disk list, automatic or custom layout, one confirmation and real stage progress</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/shot-fonttest.png" width="100%" alt="TrueType glyphs">
-<br><b>🔤 TrueType glyphs</b><br>
-<sub>TrueType glyph rasterization: 20×23 bitmap, 24 px em (command output from an earlier release)</sub>
+<img src="docs/shot-desktop-install.png" width="100%" alt="Installer custom partitions">
+<br><b>💿 Custom partitions</b><br>
+<sub>FAT32 ESP size and the optional ZHAOXUDATA data partition; ext4 takes the rest</sub>
 </td>
 </tr>
 </table>
 
 ---
 
-## 🧠 Architecture
+## 🚀 Build and run
 
-**Microkernel structure**: `kernel.elf` contains only the CPU/memory/scheduling/IPC/VFS core, with no drivers or applications; AHCI, IDE, NVMe, SDHCI, USB MSC, PS/2, mouse, RTC, serial, HDA, e1000, and the I2C/SPI/temperature sensors are owned exclusively by Ring 3 `/bin/drivers`, virtio-gpu by `/bin/display`; Aqua Desktop Environment, 8sh, `/bin/wayland`, and every application are Ring 3 programs as well (rule 9).
-
-<table>
-<tr><th>Layer</th><th>Language</th><th>Implementation</th></tr>
-<tr><td>UEFI boot</td><td>🧩 Limine</td><td><code>third_party/limine</code>: Limine <code>BOOTX64.EFI</code> loads <code>kernel.elf</code> with the Limine protocol; <code>kernel/boot/limine_boot.c</code> builds the identity map and <code>boot_info</code></td></tr>
-<tr><td>Legacy BIOS boot</td><td>⚙️ Limine</td><td>Limine BIOS stage 1 + <code>limine-bios.sys</code>; the same Limine protocol entry and kernel boot bridge</td></tr>
-<tr><td>Kernel</td><td>🔧 C</td><td><code>kernel/</code>: GDT/TSS, IDT, PMM/VMM, heap, processes, VFS; no drivers</td></tr>
-<tr><td>File systems</td><td>💾 C (kernel + Ring3)</td><td>initramfs/rootfs/overlayfs/ramfs/ecryptfs, FAT32/vfat, ext4 (<code>fs/ext4</code> + <code>/bin/ext4fs</code>), read-only NTFS/exFAT/ISO 9660/CDFS/UDF/UBIFS</td></tr>
-<tr><td>Low-level assembly</td><td>🧱 GAS</td><td>Entry, ISR stubs, user-mode switch, kernel image embedding</td></tr>
-<tr><td>Drivers</td><td>✨ Ada + C, Ring3</td><td><code>/bin/drivers</code>: AHCI/IDE/NVMe/SDHCI/USB MSC, PS/2/mouse, RTC, UART, HDA, e1000, I2C/SPI, temperature; <code>/bin/display</code>: virtio-gpu 2D scanout</td></tr>
-<tr><td>Shell / desktop / applications</td><td>🚀 C + C++20</td><td><code>apps/csh/</code> (8sh), <code>apps/ADE/</code> (C++20), <code>apps/display/</code> (KMS), <code>apps/wayland/</code> (Wayland core), <code>apps/ext4fs/</code>, and standalone clients under <code>user/</code></td></tr>
-<tr><td>Graphics framework</td><td>🎨 C + C++20</td><td>Desktop Window Compositor + Desktop Window Manager; M1 KMS, M2 wl_shm compositing, M3 xdg-shell/seat; <code>zaf/</code> is still the Z0 rasterizer</td></tr>
-<tr><td>User programs</td><td>🧵 C</td><td><code>user/</code>: `init`, `hello`, `wldemo`, and other ZXE images; linked at <code>0x10000000000</code> (1 TiB), running in ring 3</td></tr>
-<tr><td>Toolchain</td><td>💎 Make + Ruby</td><td>The Makefile is the build entry point; the Ruby under <code>tools/</code> only handles ELF→.zxe, Limine modules, smoke tests, screenshots, version sync, and ISO metadata</td></tr>
-</table>
-
-**Memory layout**
-
-```
-0xffffffff80000000  kernel virtual base (higher half)
-0xffffffff80f00000  kernel stack top
-0xffffffff90000000  kernel heap
-0x00010000000000    ring 3 program load base (1 TiB)
-0x00010100000000    ring 3 user stack top (32 pages)
-```
-
-**Syscall ABI**: `int 0x80`, `rax` = call number, `rdi/rsi/rdx/r10` = arguments; user pointers are validated page by page against the process address space.
-
-| # | Call | # | Call |
-| :---: | --- | :---: | --- |
-| 0 | `exit` | 1 | `write` |
-| 2 | `getpid` | 3 | `open` |
-| 4 | `read` | 5 | `close` |
-| 6 | `uptime` | 7 | `spawn` |
-| 8 | `wait` | 9–14 | named port `listen/connect/accept/send/recv/close` |
-| 15–18 | shared memory `create/map/unmap/close` | 19 | `fb_map` |
-| 20 | `mouse` | 21 | `key` |
-| 22 | `sleep` | 23 | `cpus` |
-| 24 | `rtc` | 25 | `read_path` |
-| 26–27 | `port_try_accept/recv` | 28 | `serial_write` |
-| 29 | `readdir` | 30 | `disks` |
-| 31 | `install` | 32 | `write_file` |
-| 33 | `unlink` | 34 | `data_volume` |
-| 35 | `dev_alloc_page` | 36 | `boot_font` |
-| 37 | `spawn_arg` | 38–42 | block I/O `blk_count/info/read/write/flush` |
-| 43 | `socket` | 44 | `bind` |
-| 45 | `listen` | 46 | `accept` |
-| 47 | `connect` | 48 | `sendmsg` |
-| 49 | `recvmsg` | 50 | `poll` |
-| 51 | `memfd_create` | 52 | `ftruncate` |
-| 53 | `lseek` | 54 | `mmap` |
-| 55 | `munmap` | 56 | `fcntl` |
-| 57 | `socketpair` | 58 | `boot_wallpaper` |
-| 59 | `memfd_phys` | 60 | `map_phys` |
-| 61 | `eventfd` | 62 | `timerfd_create` |
-| 63 | `timerfd_settime` | 64 | `timerfd_gettime` |
-| 65 | `epoll_create1` | 66 | `epoll_ctl` |
-| 67 | `epoll_wait` | | |
-
-The full definitions live in `kernel/proc/syscall.c` and `user/userlib.h`, and the two must stay in sync. 59/60 are granted only to the kernel-started `/bin/display` (`display_cap`); user processes cannot read the physical address of a scanout page or map a device BAR.
-
----
-
-## 🚀 Boot flow
-
-**UEFI path**
-
-1. Firmware loads Limine's `EFI/BOOT/BOOTX64.EFI`.
-2. Limine reads `EFI/BOOT/limine.conf` (or `boot/limine/limine.conf`), loads `kernel.elf`, the flat `KERNEL.BIN` installer image, `MiSans.ttf` and `WALL.RGB` as modules, and enters the Limine boot protocol.
-3. `kernel/boot/limine_boot.c` converts the memory map, framebuffer, RSDP, executable address and modules into `struct boot_info`, installs a 64 GiB identity map over Limine's HHDM tables, maps the reserved kernel stack window, and switches to the kernel stack.
-4. The kernel continues at `0xffffffff80000000` with the familiar `kernel_main` entry.
-
-**Legacy BIOS path**
-
-1. SeaBIOS loads Limine's stage 1 from the El Torito image (or the boot sector written to an installed MBR/GPT disk).
-2. Stage 1 loads Limine stage 2 from the post-MBR gap or the GPT BIOS boot partition; stage 2 reads `boot/limine/limine-bios.sys` and `limine.conf` from the ESP.
-3. Limine then takes the same path as UEFI: kernel and modules loaded, Limine protocol entry, identity-map bootstrap, `kernel_main`.
-
-**Common kernel path**
-
-5. GDT/IDT/PIC → PMM/VMM/heap → CPUID/ACPI/RTC → VFS → fonts; block devices come from Ring3 driver services.
-6. Mount the initramfs (`/`) and the data volume (`/mnt`): FAT32 volume label `ZHAOXUDATA`; after installation the ext4 root is forwarded through the VFS to the `/bin/ext4fs` service.
-7. `/bin/init` runs automatically in ring 3; with a GOP framebuffer the system starts **Aqua Desktop Environment**, without one it enters **8sh**.
-
----
-
-## 💻 8sh commands
-
-<table>
-<tr><th>Command</th><th>Description</th><th>Command</th><th>Description</th></tr>
-<tr><td><code>help</code></td><td>Command list</td><td><code>neofetch</code></td><td>System summary</td></tr>
-<tr><td><code>version</code></td><td>OS and kernel versions</td><td><code>uname</code></td><td>System identity</td></tr>
-<tr><td><code>echo</code></td><td>Print text</td><td><code>uptime</code></td><td>Running time</td></tr>
-<tr><td><code>ls [path]</code></td><td>List a directory</td><td><code>cat &lt;path&gt;</code></td><td>Print file contents</td></tr>
-<tr><td><code>write &lt;path&gt; &lt;text&gt;</code></td><td>Create/overwrite an /mnt file</td><td><code>rm &lt;path&gt;</code></td><td>Delete an /mnt file</td></tr>
-<tr><td><code>run &lt;path&gt;</code></td><td>Run a .zxe / ELF64 in ring 3</td><td><code>cpus</code></td><td>Online CPU count</td></tr>
-<tr><td><code>pid</code></td><td>8sh process ID</td><td><code>disks</code></td><td>Disks and install roles</td></tr>
-<tr><td><code>install</code></td><td>Install to a blank target disk (MBR/GPT)</td><td><code>exit</code></td><td>Leave the shell</td></tr>
-</table>
-
-Line editing supports backspace and `Ctrl+C` to cancel the current line.
-
----
-
-## 🧬 Executable format: ZXE v1
-
-```text
-zhaoxu> run /data/HELLO.ZXE
-hello from ring 3
-[zxe] exit code 7
-```
-
-- 32-byte header + 40-byte segment table + raw data; segment permissions enforce W^X (CODE=RX, RODATA=R, DATA/ZERO=RW)
-- The load base is chosen randomly, 64 KiB-aligned, inside `[0x10000000000, +1 GiB)` (ASLR, up to 64 attempts)
-- Dependencies load companion libraries from `/lib` by plain filename; `tools/zxe-fixture-lib.rb` generates test shared libraries
-- `tools/zxe-pack.rb` converts ELF64 into `.zxe`; `tools/zxe-check.rb` validates the structure
-- The entry point is `int user_main(long *stack)`; the user stack is fixed at `0x10100000000` (32 pages)
-- The legacy ELF64 compatibility path remains, and the loader dispatches on the magic number
-
----
-
-## 📦 Build and run
-
-The build must support four hosts: **native Linux, native macOS, native Windows (MSYS2/MinGW), and WSL2**. **The build system is the Makefile**; Ruby handles only auxiliary scripts (ELF→ZXE, version sync, ISO metadata, smoke tests/screenshots) and optional host probing. On Windows, prefer WSL2 and run `make` inside it.
+The build system is the Makefile under `src/`. WSL2 is the preferred host on Windows.
 
 ```bash
 cd src
-make -j4                         # build everything (Linux/macOS/WSL)
-make iso                         # produce out/zhaoxu-os_x86-64_{os_version}_{build}_ld.iso (UEFI + BIOS)
-make run-iso                     # UEFI CD boot (no data disk attached)
-make out/wlstock.zxe             # stock libwayland client regression binary
-make out/ft_test.zxe             # FreeType regression binary
-make host-test                   # host-detection unit test
-ruby tools/build.rb --check      # auxiliary: tool matrix and install hints
+make -j4                 # kernel, ring 3 programs and the initramfs
+make iso                 # out/zhaoxu-os_x86-64_{version}_{build}_ld.iso
+make run-iso             # UEFI boot in QEMU
+make run-bios            # SeaBIOS boot in QEMU
+make host-test           # Ruby host-detection tests
 ```
 
-```powershell
-# Windows (PowerShell 7+): forwards to WSL2 and runs make there by default; native MSYS2 only with -HostMode native
-./src/build.ps1                  # WSL2 make all
-./src/build.ps1 -Check           # tool matrix (Ruby-assisted probing)
-./src/run.ps1 -Display gtk       # WSL2 QEMU graphical window
-```
+A clean ISO build needs `xorriso`, `mtools`, `dosfstools`, `qemu`, OVMF and
+SeaBIOS firmware, and `ffmpeg` for the wallpaper conversion. The C kernel
+needs a freestanding x86_64 toolchain, `ld.lld` and `objcopy`; the Ring 3
+drivers are written in Ada and need a GNAT with Ada 2022 support.
 
-For installation on real hardware and in virtual machines, see [docs/INSTALL.md](docs/INSTALL.md) ([Word version](docs/INSTALL.docx)).
-
-**Dependencies**: run `ruby tools/build.rb --check` for an item-by-item check. Linux/WSL needs `gcc`, `g++`, `gcc-14`+`gnat-14`, `ld.lld`, `objcopy`, `clang`, `lld-link`, `qemu-system-x86_64`, OVMF, `mkfs.vfat`, `mtools`, `tar`, `xorriso`, and `squashfs-tools`; macOS uses `llvm`, `lld`, `qemu`, `xorriso`, `mtools`, `dosfstools`, and `squashfs` from Homebrew; native Windows uses the matching MSYS2 packages plus Ruby. Ada drivers need an x86_64-elf GNAT (set with `ADA=`), and FASM must be the host build (set with `FASM=`; on Windows you can also drop it at `src/tools/fasm.exe`).
-
-**Verification tools** (Ruby):
+The newlib/ncurses/nano ports are separate, cached builds:
 
 ```bash
-ruby tools/smoke.rb <marker> [commands]     # headless smoke test that sends 8sh commands one by one
-ruby tools/screenshot.rb 3.0 out/shot.png   # boot for real and capture the framebuffer
-SMOKE_BOOT=iso-install ruby tools/smoke.rb ... # ISO + blank target disk install test
-SMOKE_BOOT=installed ruby tools/smoke.rb ...   # boot from the installed target disk
+ruby tools/newlib.rb       # PIC newlib 4.6 under $HOME/newlib
+ruby tools/posix-ports.rb  # compiles the support library, ncurses and nano
 ```
+
+`tools/build.rb` is a convenience wrapper; it is not the build system. All
+repository scripts are Ruby, per the project rules.
+
+### Try the installer
+
+```bash
+make run-install         # ISO plus a blank 256 MiB target image, GPT by default
+make run-install-bios    # same target, MBR path
+```
+
+The target disk is erased from LBA 0. Use a disposable image or a disk you do
+not need.
 
 ---
 
-## 🗂️ Repository layout
+## 🏗️ Architecture
 
-```
-Zhaoxu OS/
-├── README.md                 current release notes (history in CHANGELOG.md)
-├── CHANGELOG.md              full version history
-├── LICENSE                   Apache License 2.0
-├── THIRD_PARTY_NOTICES.md    third-party code and font notices
-├── version.cfg               single source of versions (os_version + kernel_version + build, synced by make version)
-├── docs/                     screenshots and architecture/ZAF design docs
-└── src/
-    ├── Makefile              four-host build rules (Linux/macOS/Windows/WSL)
-    ├── third_party/limine/   Limine binaries, headers and host deploy tool
-    ├── boot/
-    │   ├── limine.conf       ISO/installed Limine menu and module list
-    │   └── fonts/            boot-time unicode.pf2 (Inter + grub-mkfont)
-    ├── kernel/
-    │   ├── boot/limine_boot.c Limine protocol → boot_info and identity map
-    │   ├── arch/x86_64/      entry, GDT/TSS, ISRs, PIC, ring 3 switch
-    │   ├── int/              IDT and exceptions/IRQs/syscalls
-    │   ├── drivers/          timing and ACPI/AHCI glue (hardware drivers live in Ring3)
-    │   ├── fs/               initramfs, FAT32, VFS, installer
-    │   ├── proc/             ZXE/ELF64 loading and syscalls, fd table
-    │   ├── ipc/              named ports, shared memory, AF_UNIX, memfd, eventfd, timerfd, epoll
-    │   ├── crypto/           AES, SHA-256
-    │   ├── mem/              PMM, VMM, MMU, growable heap
-    │   ├── lib/              strings, printf, UTF-8 console, inflate
-    │   ├── font/             8x8 bitmap + TrueType glyf rasterizer
-    │   └── include/          shared kernel headers
-    ├── fs/ext4/              OS-independent ext4 core (mount/directory/read/write/allocate/format)
-    ├── zaf/                  Zhaoxu Aqua Framework (Z0 raster interface)
-    ├── drivers/              Ada/SPARK drivers (AHCI, IDE, NVMe, SDHCI, USB MSC/xHCI, PS/2, mouse, serial)
-    ├── apps/                 8sh, Aqua Desktop Environment, display KMS, wayland core, ext4fs, Ring3 driver C glue
-    ├── user/                 ring 3 programs, Wayland/ADE clients, wl_demo, user library
-    │   └── lib/wayland/      stock libwayland compatibility layer and regression client
-    │   └── lib/freetype/    FreeType configuration, shims and regression client
-    ├── third_party/wayland/  libwayland 1.23.1 client core and generated protocols
-    ├── third_party/libffi/   libffi 3.4.6 x86_64 SysV ffi_call subset
-    ├── third_party/freetype/ FreeType 2.13.3 (TrueType, CFF, smooth rasterizer)
-    ├── initramfs/            ramfs initial contents, data disk assets and cursor themes
-    ├── tests/                host tests (ext4, build host detection)
-    ├── tools/                Makefile build entry; Ruby helpers: zxe-pack, iso-*, smoke, screenshot, version
-    └── out/                  build products (kernel.elf, ISO)
-```
+**Boot chain.** `Limine → kernel.elf → vga.ko`. `kernel/boot/limine_boot.c`
+implements the Limine protocol, installs the 64 GiB identity map over Limine's
+HHDM tables, maps the BSS boot stack, and converts the memory map, framebuffer,
+RSDP, executable address and modules into `struct boot_info`.
+
+**Microkernel boundary.** `kernel/` owns CPU, memory, scheduling, IPC and VFS.
+AHCI, PS/2, RTC, serial and the framebuffer are driven by Ring 3 services
+through four shared pages. `/bin/ext4fs` is the only process holding the trusted
+block capability; `/bin/display` alone receives scanout and BAR mappings.
+
+**Storage.** `/` is the initramfs-backed rootfs; `/mnt` is the FAT32
+`ZHAOXUDATA` volume or the embedded data mirror. The installer formats the ESP
+and the optional data volume itself and delegates the ext4 root to the Ring 3
+ext4 service.
+
+**Desktop.** Clients speak the ADE protocol over a named port. Desktop Window
+Manager owns z-order, focus, dragging and damage; Desktop Window Compositor
+keeps the system-RAM back buffer and presents damaged rectangles. All drawing
+replays through `kernel/gfx/render.c`, shared with the kernel and Ring 3.
+
+**User executables.** ZXE v1 is a PIE packed by `tools/zxe-pack.rb`. Dependencies
+load from `/lib` by plain filename; there is no ELF dynamic linker. The kernel
+and user code are freestanding: no libc in the kernel, no SSE outside the
+font code.
 
 ---
 
-## ⚠️ Current limits
+## ⚠️ Known gaps
 
-- 🧵 Processes and threads: at most 16 processes and 32 threads; preemptive SMP scheduling and `spawn/wait` exist, but there is no `fork/exec`, signals, COW, or swapping
-- 🧠 Memory: no demand paging, user pages are mapped all at once at load time; the user stack is fixed at 32 pages; the kernel heap grows on demand up to 1/4 of available memory, memfd is capped at 64 MiB per object and 1/4 in total, and the PMM bitmap tops out at 64 GiB
-- 💾 File systems: FAT32/vfat is writable (8.3 short names, 16 MiB per file) and ext4 is writable (Ring3 service, 8 MiB per RPC); NTFS/exFAT/ISO 9660/CDFS/UDF/UBIFS are read-only; initramfs/rootfs/overlayfs/ramfs/ecryptfs are also included
-- 🔐 Permissions: no multi-user support, file ownership, or Unix permission bits; all user processes run with the same privileges
-- 🧱 Compatibility: no general POSIX/libc layer, the syscall interface is Z64 1.0; ZXE v1 loads dependencies from `/lib` by filename and has no ELF dynamic linker. Wayland now includes the stock libwayland 1.23.1 client core plus a small libc/pthread/socket compatibility layer; unmodified stock applications such as `weston-terminal` still need the remaining libc and shm_open surface
-- 🌐 Networking: no TCP/IP stack; AF_UNIX stream sockets, poll, eventfd, timerfd, epoll, SCM_RIGHTS, and memfd exist for Wayland and the M0/M5 transport
-- 🔌 Peripherals: input is a PS/2 keyboard/mouse and COM1; storage covers AHCI/IDE/NVMe/SDHCI/USB MSC; HDA, e1000, I2C/SPI, and temperature sensors are present; no USB HID and no full network stack
-- 🖼️ Graphics: M1 virtio-gpu 2D KMS scanout and double-buffered flip; composition is still software rasterization; the M2/M3 Wayland core and xdg-shell/seat work; M6 ships the stock libwayland client core and a verified shm frame submission through SCM_RIGHTS; M4 virgl contexts and 3D resources can be created and attached, but virglrenderer in QEMU on Windows does not register 2D/3D scanout resources (`SET_SCANOUT` returns `0x1203`), so GPU composition and linux-dmabuf remain pending. A software OpenGL 1.1 immediate-mode implementation and a software Vulkan 1.0 ICD exist for offscreen rendering, but neither has WSI/swapchain integration, the Vulkan ICD lacks descriptor sets/UBOs/compute/depth, and the desktop still renders through the ZOS raster path; rules 37/38 are known release blockers; no multi-monitor
-- ⚡ Power: ACPI is used for shutdown/reboot only; no sleep or hibernate
-- 🛡️ Boot: the boot loader is unsigned, so machines with Secure Boot enabled must turn Secure Boot off first or sign the loader themselves
-- ⏱️ Time: RTC local time only; no NTP or time zone handling
+- 8sh is the current shell; the project rules require bash, and porting bash is
+  on the roadmap. New shell features are not being added to 8sh.
+- toybox and the full Unix command set are not ported yet.
+- nano compiles but is not ZXE-linked or runnable inside the system yet.
+- Vulkan is not the default renderer; the ICD lacks WSI, descriptors/UBOs,
+  compute and depth. OpenGL 1.1 is a subset, not a complete implementation.
+- There is no network stack, audio, USB HID or user-account separation.
+- The kernel and user images are unsigned; Secure Boot must be off. See
+  [SECURITY.md](SECURITY.md) for the threat model and known hardening gaps.
+
+---
+
+## 📚 Documentation
+
+| Document | What it covers |
+| --- | --- |
+| [RULES.md](RULES.md) | The project rules that override everything else |
+| [AGENTS.md](AGENTS.md) | Detailed invariants and the validation checklist |
+| [docs/INSTALL.md](docs/INSTALL.md) | Installation, first boot and troubleshooting |
+| [ROADMAP.md](ROADMAP.md) | What is being built next |
+| [SECURITY.md](SECURITY.md) | Reporting vulnerabilities and the security model |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Build, test and pull-request rules |
+| [CHANGELOG.md](CHANGELOG.md) | Full release history |
+| [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) | Vendored components and font licenses |
 
 ---
 
 ## 📜 License
 
-This project is licensed under the [Apache License 2.0](LICENSE). Third-party component and font notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+This project is licensed under the [Apache License 2.0](LICENSE). Third-party
+component and font notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 <div align="center">
 
-**Zhaoxu OS, Yuanshuo**. Built with C / FASM / GAS / Ada / C++
+**Zhaoxu OS, Yuanshuo**. Built with C / GAS / Ada / C++ / Ruby.
 
 Copyright © 2026 Nexsteaduser. All Rights Reserved. Email: admin@nexsteaduser.com
 
 </div>
-
