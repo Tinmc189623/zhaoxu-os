@@ -367,7 +367,7 @@ split never has to remap logical file blocks.
 | Offset | Size | Field | Meaning |
 |---:|---:|---|---|
 | 0x00 | 4 | `dn_magic` | `"DIR1"` |
-| 0x04 | 2 | `dn_level` | 0 = leaf, 1..4 = index |
+| 0x04 | 2 | `dn_level` | 0 = leaf, 1..8 = index |
 | 0x06 | 2 | `dn_entries` | entry count |
 | 0x08 | 4 | `dn_checksum` | CRC32C |
 | 0x0C | 4 | reserved | zero |
@@ -400,9 +400,10 @@ An index entry is the first key of its child, and the key is the full pair
 `(di_name_hash, di_name)`; separators are strictly increasing. This makes a
 split inside a run of equal hashes unambiguous: the promoted separator carries
 the name, so lookup never has to guess which side of a hash collision it needs.
-The child pointer must be a valid directory node one level lower. Directory node
-checksums cover the block with the checksum field zeroed and are seeded with the
-directory inode number and node block number.
+The child pointer must be a valid directory node one level lower. Every child
+has the parent’s level minus one, and the root level is capped at 8. Directory
+node checksums cover the block with the checksum field zeroed and are seeded
+with the directory inode number and node block number.
 
 ### 6.2 Names
 
