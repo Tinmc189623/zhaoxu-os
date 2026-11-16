@@ -55,12 +55,14 @@ end
 
 def build_support
   FileUtils.mkdir_p(SUPPORT)
-  %w[libgloss].each do |name|
-    run([WRAPPER, "-c", "#{REPO}/user/lib/posix/#{name}.c",
-         "-o", "#{SUPPORT}/#{name}.o"])
+  names = %w[libgloss posix_termios posix_signal posix_account posix_path
+             posix_dirent posix_rlimit posix_time].freeze
+  objects = names.map do |name|
+    object = File.join(SUPPORT, "#{name}.o")
+    run([WRAPPER, "-c", "#{REPO}/user/lib/posix/#{name}.c", "-o", object])
+    object
   end
-  run(%w[llvm-ar-21 rcs] + [File.join(SUPPORT, "libgloss.a")] +
-      %w[libgloss.o].map { |o| File.join(SUPPORT, o) })
+  run(["llvm-ar-21", "rcs", File.join(SUPPORT, "libgloss.a")] + objects)
 end
 
 def fetch(url, target)

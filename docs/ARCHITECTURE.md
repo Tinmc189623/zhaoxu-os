@@ -19,7 +19,7 @@ Ring3 services                      Ring3 applications
       │                                    │
       └──────── named ports + shared memory ────────┘
                           │
-                 ZOS API 1.0 system calls
+                 Z64 1.0 system calls
                           │
 Yuanshuo: address spaces, processes, IPC, IRQ/MMIO grants, framebuffer mapping
 ```
@@ -47,7 +47,7 @@ Yuanshuo: address spaces, processes, IPC, IRQ/MMIO grants, framebuffer mapping
 - `src/apps/csh/` is the Ring3 Shell: `main.c` (REPL), `builtins.c`, `files.c`,
   `run.c`, `install.c`, `io.c`; each file handles one class of command.
 - Application clients live in `src/user/` (such as `welcome_client.c` and `calc_client.c`), build into standalone
-  `.zxe` files, depend only on ZOS API and the client SDK, and do not include Aqua Desktop Environment internal headers.
+  `.zxe` files, depend only on Z64 and the client SDK, and do not include Aqua Desktop Environment internal headers.
 - Fonts (MiSans, MiSans Global, Inter) belong to the system: `libzos` loads them from `/mnt`,
   and neither Aqua Desktop Environment nor applications bundle font files.
 - Desktop Window Manager composites through the system rendering interface; it neither touches framebuffer pixels

@@ -2,7 +2,7 @@
  * Zhaoxu OS - ring 3 compatibility layer for the ADE display server.
  *
  * Kernel-facing helpers used by the shared desktop sources (console input,
- * mouse, clock, RTC, printf) are mapped onto ZOS API system calls here.
+ * mouse, clock, RTC, printf) are mapped onto Z64 system calls here.
  */
 #include <stdarg.h>
 #include <console.h>
