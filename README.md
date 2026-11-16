@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="docs/logo.svg" width="96" height="96" alt="Zhaoxu OS logo">
-
 # 🖥️ Zhaoxu OS
 
 ### Yuanshuo, Aqua Desktop Environment, x86_64
