@@ -1,7 +1,7 @@
 # FS+ — Native Copy-on-Write File System Design
 
 Date: 2026-11-17
-Status: Core implementation design, subordinate to `2026-11-17-fs-plus-target.md`; it does not yet map every target gate
+Status: Implementation design covering the target gates, subordinate to `2026-11-17-fs-plus-target.md`
 File system name: `FS+` (exact spelling; see §1.4)
 
 ## 1. Scope and Requirements
@@ -32,9 +32,9 @@ the ESP keeps `BOOTX64.EFI`, `limine.conf`, `KERNEL.ELF`, `KERNEL.BIN`,
 `MiSans.ttf` and `WALL.RGB`. ext4 remains fully supported by `/bin/ext4fs` and
 is the compatibility fallback while FS+ matures.
 
-The target document is authoritative. This document is the core implementation
-design and does not yet map every target gate; the unmapped gates are blockers,
-not accepted omissions.
+The target document is authoritative. Every gate in it has a design section
+below; this document is not evidence that a gate passes. Tests and measurements
+decide conformance.
 
 ### 1.2 Required implementation capabilities
 
@@ -222,7 +222,9 @@ A node is one 4096-byte block:
 | 0x00C | 4 | `node_checksum` | CRC32C of the whole block with this field zeroed |
 | 0x010 | 8 | `node_generation` | transaction generation that created the node |
 | 0x018 | 8 | `node_owner` | object owner id |
-| 0x020 | 4048 | items | packed item records |
+| 0x020 | 4 | `node_key_id` | encryption key id; 0 for a plaintext node |
+| 0x024 | 4 | reserved | zero |
+| 0x028 | 4040 | items | packed item records |
 | 0xFF0 | 16 | `node_tag` | AES-GCM-SIV tag for an encrypted FS node; zero otherwise |
 
 Item record:
@@ -237,9 +239,9 @@ Item record:
 | ... | variable | value | tree-specific value |
 
 Items are packed without padding. `node_free` must equal the bytes not covered
-by the 32-byte header, the item records and the 16-byte trailer. Index items
-store the first key of a
-child and a 16-byte value `{u64 child_block, u8 child_level, 7 reserved}`.
+by the 40-byte header, the item records and the 16-byte trailer. Index items
+store the first key of a child and a 16-byte value
+`{u64 child_block, u8 child_level, 7 reserved}`.
 Separator keys are strictly increasing. The root level is capped at 8.
 
 Node checksums are seeded with the volume UUID and `node_owner`. A node is
@@ -253,8 +255,9 @@ checksum is invalid.
 | 0 | root tree |
 | 2 | root metadata tree |
 | 3 | AG tree |
-| 4 | quota tree when present |
-| 5 | key tree when present |
+| 4 | quota tree |
+| 5 | key tree |
+| 6 | device tree |
 | 16+ | FS tree roots; `ri_tree_id` |
 | 2^63 + ag_id*4 + 0 | AG free-space tree |
 | 2^63 + ag_id*4 + 1 | AG reference-count tree |
@@ -292,8 +295,8 @@ The fixed header is 96 bytes; the value length is `96 + ri_name_len`.
 |---:|---:|---|---|
 | 0x00 | 8 | `ri_block` | root node block, 0 if empty |
 | 0x08 | 1 | `ri_level` | root level |
-| 0x09 | 1 | `ri_key_kind` | 1 FS, 2 META, 3 AG, 4 QUOTA, 5 KEY |
-| 0x0A | 2 | `ri_flags` | 1 subvolume, 2 snapshot, 4 read-only, 8 default, 16 clone, 32 deleting |
+| 0x09 | 1 | `ri_key_kind` | 1 FS, 2 META, 3 AG, 4 QUOTA, 5 KEY, 6 DEVICE |
+| 0x0A | 2 | `ri_flags` | 1 subvolume, 2 snapshot, 4 read-only, 8 default, 16 clone, 32 deleting, 64 pinned |
 | 0x0C | 4 | reserved | zero |
 | 0x10 | 8 | `ri_generation` | transaction that produced this root item |
 | 0x18 | 8 | `ri_next_inode` | next inode for this writable FS tree |
@@ -329,23 +332,31 @@ Flags:
 | Root id | Content | Key | Value |
 |---:|---|---|---|
 | 1 | default subvolume FS tree | FS key (§6.1) | inode, directory, extent or xattr item |
-| 2 | root metadata tree | 8-byte `meta_id` | `u64 next_root_id`, `u64 next_ag_id`, `u64 flags` |
+| 2 | root metadata tree | 8-byte `meta_id` | `u64 next_root_id`, `u64 next_ag_id`, `u64 next_group_id`, `u64 flags` |
 | 3 | AG tree | `u32 ag_id` | 96-byte AG descriptor (§7.1) |
 | 4 | quota tree | `u64 root_id` | quota limits and usage |
 | 5 | key tree | `u32 key_id` | wrapped key material |
-| 6–15 | reserved | — | the current implementation rejects these root ids |
+| 6 | device tree | `u32 group_id` | device group and redundancy profile (§7.4) |
+| 7–15 | reserved | — | the current implementation rejects these root ids |
 | 16+ | extra subvolume, snapshot or clone root | FS key (§6.1) | inode, directory, extent or xattr item |
 
 The default subvolume is root id 1, named `default`, with
 `ri_tree_id == 1`. Extra roots start at root id 16; the root metadata’s
-`next_root_id` is initialized to 16 and `next_ag_id` to `sb_ag_count`. Root ids
-are retired, never reused.
+`next_root_id` is initialized to 16, `next_ag_id` to `sb_ag_count`, and
+`next_group_id` to 1 after mkfs creates group 0. Root ids are retired, never
+reused.
 
-Global roots 2–5 have `ri_name_len == 0`, zero UUIDs, zero inode counters and
+Global roots 2–6 have `ri_name_len == 0`, zero UUIDs, zero inode counters and
 zero flags. Their `ri_tree_id` equals the root id and their `ri_tree_version` is
 zero. The AG tree’s per-AG trees use the AG owner ids from §4.2, not root ids. A
 root name is 1..255 bytes with no `0x00` or `/`; names are unique across live
 roots and compared bytewise.
+
+Retention records live in the root metadata tree under `meta_id = 2`. Each
+record names a root id, a maximum snapshot count, a maximum age and the pin
+flag. The pruning worker deletes only unpinned snapshots that exceed the policy,
+using the O(1) snapshot delete path. Pinned snapshots are never pruned
+automatically; deleting one requires an explicit request.
 
 A snapshot copies the source root block, level, `ri_tree_id`,
 `ri_tree_version`, `ri_next_inode`, key id and compression policy, sets
@@ -392,7 +403,7 @@ UTF-8. The forbidden bytes are `0x00` and `/`; length is 1..255 bytes.
 
 ### 6.2 Inode item
 
-Fixed header 96 bytes plus `fi_inline_len` bytes of inline data.
+Fixed header 100 bytes plus `fi_inline_len` bytes of inline data.
 
 | Offset | Size | Field | Meaning |
 |---:|---:|---|---|
@@ -413,15 +424,22 @@ Fixed header 96 bytes plus `fi_inline_len` bytes of inline data.
 | 0x48 | 8 | `fi_btime_sec` | creation time, UTC seconds |
 | 0x50 | 8 | `fi_generation` | inode generation |
 | 0x58 | 4 | `fi_data_flags` | zero in the current format |
-| 0x5C | 2 | `fi_inline_len` | inline data bytes, 0..256 |
-| 0x5E | 2 | reserved | zero |
-| 0x60 | variable | `fi_inline` | inline file data |
+| 0x5C | 4 | `fi_key_id` | 0 inherits the root key, otherwise a key-tree id |
+| 0x60 | 2 | `fi_inline_len` | inline data bytes, 0..256 |
+| 0x62 | 2 | reserved | zero |
+| 0x64 | variable | `fi_inline` | inline file data |
 
 A regular file with `fi_size <= 256` and inline flag set stores data in the
 inode item. Symbolic link targets up to 256 bytes are inline; longer targets use
 extents. Directories have no inline data and no extent items. An encrypted
 subvolume disables inline data: small files use one-block extents so every data
 byte is encrypted and checksummed consistently.
+
+`fi_key_id == 0` inherits the root’s key. A nonzero value selects a per-file key
+from the key tree. Reflink, hard links and cross-root operations require the same
+effective key id; a mismatch returns EXDEV. A snapshot or clone copies the key id;
+key rotation rewraps the root key and assigns a new key id to new writes while old
+extents remain readable through their recorded key id.
 
 Inode numbers are unique per writable root lineage and never reused. A retired
 number is not reassigned. Writable clones that diverge may allocate the same
@@ -437,7 +455,7 @@ Directory `fi_size` is the live entry count, a stat hint recomputed by fsck.
 
 ### 6.4 Extent item
 
-Extent value is 32 bytes:
+Extent value is 40 bytes:
 
 | Offset | Size | Field | Meaning |
 |---:|---:|---|---|
@@ -447,11 +465,16 @@ Extent value is 32 bytes:
 | 0x10 | 4 | `ex_flags` | bit 0 unwritten, 1 compressed, 2 encrypted, 3 reflink-shared |
 | 0x14 | 1 | `ex_compression` | 0 none, 1 LZ4, 2 ZSTD |
 | 0x15 | 3 | reserved | zero |
-| 0x18 | 8 | `ex_generation` | transaction that created the mapping |
+| 0x18 | 4 | `ex_key_id` | 0 inherits the inode/root key; otherwise a key-tree id |
+| 0x1C | 4 | reserved | zero |
+| 0x20 | 8 | `ex_generation` | transaction that created the mapping |
 
 The key offset is the logical block. Extents for an inode are sorted,
 non-overlapping, and never cross an AG boundary. A hole is absent; reads return
-zeros. An unwritten extent reads zero until written. For an uncompressed
+zeros. An unwritten extent reads zero until written. Every encrypted extent
+records the key id used for its blocks; reflink requires the same effective key
+id, and key rotation writes new extents with the new id while old extents remain
+readable with their recorded id. For an uncompressed
 extent, `ex_logical_len == ex_physical_len`. A compressed extent stores
 `ex_physical_len` blocks and expands to `ex_logical_len` blocks; its data
 checksum covers the stored blocks. `ex_physical + ex_physical_len` must not
@@ -506,7 +529,7 @@ The AG tree key is `u32 ag_id`; the value is a 96-byte descriptor:
 |---:|---:|---|---|
 | 0x00 | 8 | `ad_start` | first block |
 | 0x08 | 4 | `ad_blocks` | usable blocks |
-| 0x0C | 4 | `ad_flags` | zero in the current format |
+| 0x0C | 4 | `ad_device_group` | device group id (§7.4) |
 | 0x10 | 8 | `ad_free_root` | free-space tree root |
 | 0x18 | 1 | `ad_free_level` | root level |
 | 0x19 | 7 | reserved | zero |
@@ -565,9 +588,94 @@ slot. Allocation parallelism therefore survives while the final root switch
 stays atomic.
 
 Online growth appends a new AG descriptor and adjusts the superblock AG count.
-No existing tree is rewritten. Offline shrink works by evacuating an AG,
-updating references, and removing its descriptor; FS+ does not claim online
-shrink.
+No existing tree is rewritten. Shrink is offline: evacuate an AG, update
+references, verify, then remove its descriptor. Online shrink is outside the
+target.
+
+### 7.4 Device groups and redundancy
+
+A volume is a set of block devices. The device tree is root id 6, keyed by
+`u32 group_id`. A group descriptor has a 32-byte header followed by 24-byte
+device entries:
+
+| Offset | Size | Field | Meaning |
+|---:|---:|---|---|
+| 0x00 | 1 | `dg_profile` | 1 single, 2 mirror, 3 erasure |
+| 0x01 | 1 | `dg_data_disks` | data devices |
+| 0x02 | 1 | `dg_parity_disks` | parity devices, zero for single/mirror |
+| 0x03 | 1 | reserved | zero |
+| 0x04 | 4 | `dg_stripe_blocks` | stripe unit in 4 KiB blocks |
+| 0x08 | 2 | `dg_device_count` | total device entries |
+| 0x0A | 2 | reserved | zero |
+| 0x0C | 4 | `dg_generation` | descriptor generation |
+| 0x10 | 4 | `dg_checksum` | CRC32C of the descriptor |
+| 0x14 | 12 | reserved | zero |
+| 0x20 | variable | devices | 24-byte entries |
+
+A device entry is `{u32 device_id, u32 flags, u64 block_offset,
+u64 block_count}`. Device ids index the service’s block capabilities; the
+service holds one capability per device. Group 0 is created by mkfs and owns the
+metadata AGs. A volume with more than one device gives group 0 a mirror or
+erasure profile by default; a single-device volume uses profile 1.
+
+AG descriptors name their group through `ad_device_group`. A physical block in
+an AG is resolved through that group:
+
+- **Single:** virtual block `B` maps to `device[0].block_offset + (B - AG.start)`.
+- **Mirror:** each device entry holds a full copy at the same relative offset.
+  Writes go to every copy; reads choose a verified copy; scrub compares copies.
+- **Erasure:** the group has `D` data devices and `P` parity devices, with a
+  stripe unit of S blocks. For virtual block `B`:
+  `stripe = B / (D*S)`, `within = B % (D*S)`,
+  `data_device = within / S`, `chunk = stripe*S + (within % S)`, physical
+  offset `device.block_offset + chunk`. Parity chunks are generated with
+  Reed-Solomon over GF(2^8) and stored on the parity devices at the same stripe
+  positions. The AG’s virtual block count already excludes parity overhead, so
+  the free-space tree never allocates a hidden parity block.
+
+Superblock slots 0 and 1 are replicated raw at the same offsets on every member
+device, outside the group mapping. Mount reads every reachable copy, validates
+each independently and chooses the highest valid generation. A commit writes the
+new superblock to every reachable member, flushes all of them, and succeeds only
+when at least one complete copy is durable; missing copies put the device group
+in degraded mode and are rebuilt by scrub.
+
+Device membership is mutable through replacement, not arbitrary pooling. A
+replacement device with sufficient geometry joins the group as `REBUILDING`;
+the service copies mirror copies or reconstructs erasure chunks onto it,
+verifies checksums, then atomically updates the device tree and clears the
+failed entry. A failed device is marked `MISSING`, never silently removed. A
+group with no redundancy mounts read-only until the replacement completes.
+
+New capacity is added by creating a new device group with its own AGs; old AGs
+keep their original group. An AG that uses a removed device is evacuated into
+AGs of a new group before the old descriptor is removed. This supports disk
+replacement and capacity growth without pretending that arbitrary device pools
+are part of the format.
+
+### 7.5 Self-healing
+
+Every read verifies the block checksum and, on an encrypted volume, the
+authentication tag. A failed mirror copy is retried on another copy; an erasure
+block is reconstructed from the surviving data and parity chunks. A successful
+read repair rewrites the bad copy and records a health event.
+
+`scrub.fs+` walks the committed root tree and every retained tree version:
+
+1. Reads every metadata node and validates checksum, owner, level and item
+   bounds.
+2. Reads every data block, verifies CRC and authentication tags, compares mirror
+   copies and checks erasure parity.
+3. Reconstructs a bad data or parity chunk from the group.
+4. Rewrites the repaired chunk to the failing device, or marks the device
+   degraded when it cannot be written.
+5. Records per-device, per-AG and per-block health counters.
+
+A group with no remaining redundancy mounts read-only. A group with surviving
+redundancy mounts read-write in degraded mode; new writes continue to all
+reachable members and scrub rebuilds missing copies. `fs+ health` reports device
+state, scrub progress, repaired blocks and degraded groups. A device that
+disappears is not silently removed from the group.
 
 ## 8. Snapshots, Clones and Epoch Reclamation
 
@@ -734,6 +842,71 @@ transaction remains referenced by the old root and is not free in the old AG
 free-space tree. Checksums catch bit rot; they are not a substitute for the
 commit ordering.
 
+### 9.4 Update transactions
+
+The update manager opens a session on the default writable root. Beginning a
+session creates a read-only snapshot of the current version, pins it, and opens
+one logical transaction that can span many file operations. Package writes,
+removals and metadata changes accumulate under that session.
+
+`UPDATE_COMMIT` publishes one FS+ generation and marks the previous snapshot as
+the rollback state. `UPDATE_ABORT` discards the working version and keeps the
+pre-update state. A crash before commit follows the normal CoW rule: the old
+root stays bootable. A crash after commit leaves the new state and the pinned
+rollback state.
+
+The session records the update id, package manifest hash and boot selector in
+the root metadata tree. The boot selector is written to two redundant FAT32
+files, `FS+BOOT0.CFG` and `FS+BOOT1.CFG`, on the ESP because Limine cannot read
+FS+. Each copy contains the volume UUID, root id, tree version, generation and
+checksum. A selector update is atomic at the FAT directory level; one copy
+remains readable if the other is torn.
+
+`FACTORY_RESET` creates a fresh empty default root, moves the `DEFAULT` flag to
+it, and tombstones every other root. It does not overwrite the disk and does not
+restore an image; unreachable blocks are reclaimed through the normal epoch and
+tombstone paths.
+
+### 9.5 Boot selection and rollback
+
+The ESP keeps Limine, `KERNEL.ELF`, `KERNEL.BIN`, fonts and wallpaper. Each FS+
+state is identified by root id, tree version and UUID, not by a kernel copy.
+
+`limine.conf` contains at least these entries:
+
+- `FS+ current`: boots the normal kernel with `fs+.state=current`;
+- `FS+ previous`: boots the same kernel with `fs+.state=previous`;
+- `FS+ recovery`: boots the initramfs with `fs+.state=recovery`,
+  `fs+.readonly=1`.
+
+The initramfs reads the boot selector from the two FAT32 selector copies,
+chooses the matching root version, starts `/bin/fs+`, mounts the state read-only
+and verifies it. If verification fails, it falls back to the other selector copy
+and then to the previous state. A writable boot mounts and pivots only after the
+service reports READY.
+
+An explicit rollback selects a retained snapshot as the next current state,
+pins it, and writes the selector. It does not copy the file tree, does not
+restore from an image and does not overwrite the failed state. The failed state
+remains available for diagnosis.
+
+### 9.6 Version diff, send and receive
+
+`VERSION_DIFF` walks two root versions and classifies extents and metadata as
+unchanged, added, removed or modified. Because both roots share immutable
+blocks, unchanged blocks are skipped by physical identity; the diff is
+O(changed extents plus tree height).
+
+`SEND` serializes the diff as a stream of records: root metadata, inode and
+directory changes, extent mappings, data blocks, checksums and device topology.
+`RECEIVE` writes the stream into a new root version and verifies every checksum
+before publishing. The stream is self-describing and versioned; an unknown
+record type aborts the receive without touching the current root.
+
+`fs+ send` and `fs+ receive` use the same RPC operations as the version manager.
+An incremental stream can recreate a bootable state on another FS+ volume
+without copying unchanged data.
+
 ## 10. Allocation, Checksums, Compression and Security
 
 ### 10.1 Per-AG allocation
@@ -776,12 +949,33 @@ with the block’s checksum record.
 
 FS tree node payloads for an encrypted root are encrypted as well, so directory
 names, inode fields, extent maps and xattr values are not plaintext on disk. The
-node header remains plaintext for owner, level, generation and checksum
+node header remains plaintext for owner, level, generation, key id and checksum
 validation; the item area is ciphertext and the authentication tag lives in
 `node_tag`. Root, AG, free-space, refcount, checksum and dead trees stay
 plaintext because they contain no user names or file contents. Encrypted roots
 disable inline data. Snapshots and clones inherit the key id; cross-root reflink
 and cross-root hard links are rejected.
+
+`node_key_id` and `ex_key_id` let key rotation proceed without a stop-the-world
+rewrite: new metadata nodes and extents use the new key, while old nodes and
+extents remain readable through their recorded key id until background
+re-encryption replaces them.
+
+The volume master key is sealed to the TPM with PCR values that include the
+FS+ service measurement and the Secure Boot state. The key tree stores
+subvolume- and file-level keys wrapped by the master key; only unwrapped keys
+live in service memory. Unlocking is required before an encrypted root can be
+mounted.
+
+Key rotation is online: the service rewraps the affected keys, assigns a new
+key id to new writes, and re-encrypts old extents in the background while
+leaving them readable through their recorded key id. It does not stop the volume
+or require a full-volume rewrite.
+
+A TPM NV counter records the highest committed generation checkpoint. Mount
+refuses a state older than the counter unless an explicit recovery token is
+present, which is the anti-rollback gate. The same measurement can be included
+in a Secure Boot attestation quote.
 
 `fsck.fs+` can validate structure and ciphertext checksums without a key; deep
 metadata repair needs the unlocked key. Key loss means data loss; there is no
@@ -790,18 +984,21 @@ recovery key in the current format.
 ### 10.5 Quotas
 
 Quotas are controlled by the `QUOTA` feature bit. The quota tree stores per-root
-block and inode limits and usage. Snapshot and reflink sharing is charged to the owning
-root by logical bytes; exact shared-space accounting is a later refinement.
-Quota checks run before the transaction publishes, so a rejected write leaves
-the old generation intact.
+logical-byte and inode limits plus current usage. Logical bytes are the sum of
+`fi_size` for regular files and inline data; shared physical extents are global
+volume usage and are not double-charged to snapshots or clones. A hard quota is
+checked before the transaction publishes, so a rejected write leaves the old
+generation intact. Soft limits emit a health event and a warning, never a silent
+truncation.
 
 ### 10.6 Scrubbing and growth
 
 `scrub.fs+` walks every tree and data block, verifies checksums, reference
-counts, dead intervals and AG free-space accounting. It runs online against a
-snapshot of the current root. Online growth appends an AG and updates the AG
-tree and superblock. Offline shrink evacuates an AG, rewrites references and
-removes the descriptor.
+counts, dead intervals, AG free-space accounting, mirror copies and erasure
+parity. It reconstructs and rewrites bad chunks when redundancy survives, runs
+online against a snapshot of the current root, and records device health.
+Online growth appends an AG and updates the AG tree and superblock. Offline
+shrink evacuates an AG, rewrites references and removes the descriptor.
 
 ## 11. POSIX Semantics
 
@@ -809,6 +1006,11 @@ removes the descriptor.
 |---|---|
 | File types | regular, directory, symlink, char, block, FIFO, socket |
 | Permissions | mode, uid and gid stored; enforcement follows the system account model |
+| ACL | POSIX ACLs stored as `system.posix_acl_*` xattrs and enforced when the account model is active |
+| Quotas | per-root logical-byte and inode limits, soft warnings and hard rejection |
+| fallocate | unwritten extents with quota reservation; no data copy |
+| fiemap | returns logical-to-physical extent maps, including shared and compressed extents |
+| O_DIRECT | bypasses the page cache, verifies checksums and requires block alignment |
 | Timestamps | atime, mtime, ctime, btime with second and nanosecond fields |
 | Hard links | non-directories, same root only; cross-root EXDEV |
 | Symlinks | target <=256 bytes inline, longer in extents; readlink never follows |
@@ -857,8 +1059,13 @@ Required operations beyond the current `struct fs_rpc`:
 | `SNAPSHOT_CREATE` / `SNAPSHOT_DELETE` | O(1) read-only snapshot roots |
 | `CLONE_CREATE` | writable clone from a snapshot or root |
 | `MOUNT_ROOT` | mount a named subvolume, snapshot or clone |
+| `UPDATE_BEGIN` / `UPDATE_COMMIT` / `UPDATE_ABORT` | OS update session |
+| `FACTORY_RESET` | create a fresh default state and tombstone old roots without overwriting the disk |
+| `VERSION_DIFF` / `SEND` / `RECEIVE` | incremental state transport |
+| `MMAP_WINDOW` / `MMAP_REVOKE` | page-cache mapping and revocation |
+| `FALLOCATE` / `FIEMAP` / `DIRECT_IO` | allocation and mapping controls |
 | `GROW` / `SHRINK` | append or evacuate AGs |
-| `SCRUB` | start online verification |
+| `SCRUB` / `HEALTH` | online verification and device health |
 | `FORMAT` | create a new FS+ volume |
 
 The service uses one worker thread per active AG for allocation and tree
@@ -866,38 +1073,63 @@ preparation, with a serialized commit thread. The AG count of workers is capped
 by a configuration value; allocation parallelism does not require one kernel
 thread per AG.
 
-File mmap is a required ABI extension. The service
-maintains a per-file page cache and exposes read-only pages through a
-shared-memory capability; write faults are forwarded to the service as CoW
-writes. M7 delivers read-only `MAP_SHARED`; writable shared mappings are blocked
-until the page-cache fault path has its own crash and revocation tests.
+File mmap is a required ABI extension. The service maintains a per-file page
+cache keyed by root id and inode. The VFS asks the service for a page window and
+the kernel maps it through a shared-memory capability:
 
-The service receives a per-volume block capability from the VFS. Only the VFS
-mints it; it is scoped to the partition range, cannot be widened, and cannot be
-delegated. `/bin/ext4fs` moves to the same capability model. The service must
-flush at commit points; a driver that cannot flush forces read-only mounting.
+- `MAP_SHARED` read-only maps the verified page cache directly; a checksum error
+  fails the map.
+- `MAP_PRIVATE` maps a CoW copy. A write fault creates a private page; writeback
+  never reaches the file.
+- A writable shared mapping is delivered only after the fault path, revocation
+  and crash tests pass. It uses a service-owned dirty page and a writeback queue;
+  unmount or root deletion revokes the mapping before freeing the inode.
 
-Mount startup order: start `/bin/fs+`, `PROBE` and mount FS+; if it fails, try
-`/bin/ext4fs`; if that fails, use the kernel FAT32 path and the `/data` mirror.
-The default subvolume mounts at `/mnt`; `SUBVOL_LIST` and `MOUNT_ROOT` expose
-other roots. Snapshots mount read-only. The ESP is never mounted through FS+.
+The page cache is bounded and reclaimable. Pages are dropped on snapshot
+deletion only after every mapping is revoked. `fsync` drains dirty pages before
+the root commit.
+
+The service receives one block capability per member device from the VFS. Only
+the VFS mints them; each is scoped to that device’s partition range, cannot be
+widened, and cannot be delegated. `/bin/ext4fs` moves to the same capability
+model. The service must flush every member at commit points; a driver that
+cannot flush forces read-only mounting for that group.
+
+Mount startup order: start `/bin/fs+`, `PROBE` the selected state, verify the
+root version and mount FS+; if it fails, try `/bin/ext4fs` as a fallback root at
+`/mnt`; if that fails, use the kernel FAT32 path and the `/data` mirror. The
+default FS+ subvolume becomes `/` after READY; `SUBVOL_LIST` and `MOUNT_ROOT`
+expose other roots. Snapshots mount read-only. The ESP is never mounted through
+FS+.
 
 The installer formats the ESP as FAT32 and the root partition as FS+, then
 writes the boot payload to the ESP. The FS+ `FORMAT` operation creates the
-superblock slots, AG 0, the root tree, the default subvolume, the AG tree and
-the initial per-AG trees. Limine keeps loading everything from the ESP.
+superblock slots, AG 0, the root tree, the default subvolume, the AG tree, the
+device tree and the initial per-AG trees. Limine keeps loading everything from
+the ESP.
+
+`fs+import` reads an ext4 volume through `/bin/ext4fs` or a FAT32 volume through
+the FAT service and writes a new FS+ root while preserving modes, owners, times
+and supported xattrs. `fs+export` performs the reverse into ext4 where the
+target supports POSIX metadata; FAT32 export records what the format can carry
+and reports the rest. The migration never overwrites the source volume.
 
 ## 13. Tools
 
 | Tool | Role |
 |---|---|
 | `src/fs/fs+/` | core: superblocks, AGs, B+tree, FS tree, refcount/dead/checksum trees, epoch reclaimer, checker |
-| `src/apps/fs+/` | Ring 3 service: RPC, block capability, AG workers, commit, reclaimer |
-| `mkfs.fs+` | Ring 3 and host-buildable formatter |
+| `src/apps/fs+/` | Ring 3 service: RPC, device capabilities, AG workers, commit, reclaimer, TPM/key handling, page cache |
+| `mkfs.fs+` | Ring 3 and host-buildable formatter, device groups and redundancy profiles |
 | `fsck.fs+` | offline checker and repair tool |
-| `scrub.fs+` | online checksum, tree and AG verifier |
+| `scrub.fs+` | online checksum, parity, tree and AG verifier and repair |
 | `fs+resize` | online grow and offline shrink |
 | `fs+clone` | snapshot, clone and reflink front end |
+| `fs+status` | version graph, AG state, free/reclaimable space, workers and reclaimer |
+| `fs+diff` / `fs+send` / `fs+receive` | version diff and incremental transport |
+| `fs+health` | device, AG, degraded-group and scrub health |
+| `fs+update` | update transaction, rollback selector and boot-state management |
+| `fs+import` / `fs+export` | ext4/FAT32 tree migration preserving modes, owners and xattrs where the source supports them |
 | `src/tools/fs+-test.rb` | Ruby host matrix |
 | `src/tools/fs+-fault.rb` | Ruby crash and reclaimer fault injection |
 
@@ -907,17 +1139,23 @@ implementation is allowed.
 
 `fsck.fs+` order:
 
-1. Validate both superblocks, AG geometry and the AG tree.
+1. Validate every reachable superblock copy, AG geometry, the AG tree and the
+   device tree; verify that every AG’s device group has enough members for its
+   profile.
 2. Walk the root tree and every root version; validate node checksums, owner,
    level, key order and item bounds.
-3. Validate root ids, names, UUIDs, tree versions, snapshot and clone flags;
-   resume or complete any `DELETING` root tombstone walk.
-4. Walk each FS tree version: inodes, directories, links, extents and xattrs.
-5. Validate reflink counts, dead intervals and data checksums.
+3. Validate root ids, names, UUIDs, tree versions, snapshot and clone flags,
+   update selectors and TPM anti-rollback state; resume or complete any
+   `DELETING` root tombstone walk.
+4. Walk each FS tree version: inodes, directories, links, extents, xattrs,
+   encryption key ids and ACL records.
+5. Validate reflink counts, dead intervals, data checksums, mirror copies and
+   erasure parity; reconstruct what redundancy can recover.
 6. Rebuild each AG’s free-space, reference-count, checksum and dead trees from
    reachable roots, valid reflink references and the permanent AG 0 metadata
    reserve.
-7. Recompute free hints, quota usage and directory entry counts.
+7. Recompute free hints, quota usage, directory entry counts and device health
+   records.
 8. Publish the repair through a normal CoW commit; never patch a live tree.
 
 Repair never writes when it cannot prove the metadata it replaces is safe. A
@@ -943,8 +1181,17 @@ snapshot or clone root is never silently converted or deleted.
   leaves the interval.
 - AGs: concurrent writers on different AGs, per-AG ENOSPC, online grow, offline
   shrink evacuation.
-- Compression and security: LZ4/ZSTD round trips, encrypted extent read/write,
-  quota rejection, scrub detection of a flipped data byte.
+- Devices: single, two-way mirror, 4+2 erasure; one device removed during read,
+  write and scrub; degraded mount; replacement rebuild; parity reconstruction;
+  a group with no remaining redundancy mounts read-only.
+- Versioning: update begin/commit/abort, rollback selector, previous-state boot,
+  diff/send/receive round trip, one million snapshot version index.
+- Security: LZ4/ZSTD round trips, encrypted data and FS node payloads, per-file
+  key ids, key rotation, TPM seal/unseal, anti-rollback refusal, ACL enforcement.
+- POSIX: mmap read-only and private, writable shared fault tests, fallocate,
+  fiemap, O_DIRECT alignment, quotas.
+- Performance: run the target benchmark matrix on the published hardware and
+  raw device; a miss of any gate blocks release.
 - After every scenario `fsck.fs+ -n` and `scrub.fs+ -n` must be clean.
 
 ### 14.2 Crash and reclaimer fault injection
@@ -960,6 +1207,10 @@ snapshot or clone root is never silently converted or deleted.
   then delete it and prove the reclaimer frees exactly the blocks it should.
 - Corrupt a reflink count, a dead interval, an AG free extent and a data
   checksum; each must fail closed or be repaired.
+- Tear one mirror copy or one erasure chunk; reads must succeed from redundancy,
+  scrub must rebuild the missing chunk and the volume must not lose the commit.
+- Crash during update commit, selector write and rollback; the boot selector and
+  root generation must agree, or the previous selector must remain valid.
 
 ### 14.3 QEMU
 
@@ -970,9 +1221,14 @@ snapshot or clone root is never silently converted or deleted.
 5. Delete snapshots and clones; verify reclaimer frees shared blocks and the
    source remains readable.
 6. Kill QEMU during a write and during snapshot creation; remount old or new.
-7. Verify `nm out/kernel.elf` has no FS+ symbols and no undefined symbols.
-8. Replace the FS+ root with ext4; the ext4 fallback still mounts and writes.
-9. Verify the ESP contains only FAT32 boot files and no FS+ metadata.
+7. Attach two disks, format a mirrored FS+ volume, remove one disk, verify
+   degraded read and scrub rebuild; repeat with a 4+2 erasure volume.
+8. Run an update, reboot into the previous state through the selector, then roll
+   forward; verify no file copy and no data loss.
+9. Run mmap read-only, MAP_PRIVATE and writable shared fault tests.
+10. Verify `nm out/kernel.elf` has no FS+ symbols and no undefined symbols.
+11. Replace the FS+ root with ext4; the ext4 fallback still mounts and writes.
+12. Verify the ESP contains only FAT32 boot files and no FS+ metadata.
 
 ## 15. Milestones
 
@@ -987,16 +1243,20 @@ snapshot or clone root is never silently converted or deleted.
 
 ### M1 — Read-only
 
-- Slot selection, AG tree, root tree, FS tree lookup, directory listing, inline
-  files, extents, checksums, snapshots and clones enumerated read-only.
-- Acceptance: read tests pass; malformed images fail closed.
+- Slot selection, AG tree, device tree, root tree, FS tree lookup, directory
+  listing, inline files, extents, checksums, snapshots and clones enumerated
+  read-only.
+- Acceptance: read tests pass; malformed images and impossible device groups fail
+  closed.
 
 ### M2 — CoW, AG allocation and commit
 
 - Per-AG free-space allocation, path copying, splits, data CoW, directory
-  operations, per-AG locks, serialized root commit, dual-slot durability.
+  operations, per-AG locks, serialized root commit, dual-slot durability,
+  single/mirror/erasure block I/O and degraded read.
 - Acceptance: host write matrix passes; crash injection returns old or new
-  generation; parallel AG preparation has no lost updates.
+  generation; parallel AG preparation has no lost updates; one mirror copy or
+  one erasure chunk can be lost without a read failure.
 
 ### M3 — O(1) snapshots, clones, epoch reclaimer
 
@@ -1022,18 +1282,20 @@ snapshot or clone root is never silently converted or deleted.
 
 ### M6 — Service, installer and compatibility
 
-- `/bin/fs+` RPC, block capability, AG workers, commit thread, installer default,
-  ext4 fallback, subvolume/snapshot/clone mounts.
-- Acceptance: fresh GPT/MBR installs boot; FS+ mounts at `/mnt`; ext4 volumes
-  still mount; ESP intact.
+- `/bin/fs+` RPC, per-device block capabilities, AG workers, commit thread,
+  installer default, ext4 fallback, subvolume/snapshot/clone mounts, update
+  transactions, boot selector and rollback, diff/send/receive.
+- Acceptance: fresh GPT/MBR installs boot; FS+ becomes `/`; ext4 volumes still
+  mount as fallback; ESP intact; an update can boot current, previous and
+  recovery states without copying the file tree.
 
 ### M7 — Operations and tuning
 
 - Online grow, offline shrink, scrub, TRIM, quota limits, allocation locality,
-  reclaimer tuning, read-only file mmap, performance against ext4 and XFS
-  benchmarks.
-- Acceptance: growth/shrink/scrub/mmap pass; throughput and snapshot latency
-  meet published targets; no crash-test regression.
+  reclaimer tuning, mirror/erasure rebuild, `fs+ health`, read-only and private
+  mmap, writable shared mmap, performance against ext4 and XFS benchmarks.
+- Acceptance: growth/shrink/scrub/rebuild/mmap pass; throughput and snapshot
+  latency meet published targets; no crash-test regression.
 
 ## 16. Risks and Mitigations
 
@@ -1048,6 +1310,10 @@ snapshot or clone root is never silently converted or deleted.
 | Writable-root delete is expensive | `DELETING` tombstone walk runs in the background; snapshots stay O(1) and the root refuses new opens |
 | Compression/encryption complexity | Release blocked until M5 round-trip, key-rotation and fault tests pass; unsupported readers stay read-only |
 | Encryption key loss | Documented as data loss; no recovery key in the current format |
+| Device failure during commit | Superblock copies are written to every reachable member; commit requires one complete durable copy; degraded groups rebuild through scrub |
+| Erasure partial-stripe writes | Read-modify-write parity with checksum verification; full-stripe allocation preferred; fault tests cover torn chunks |
+| TPM unavailable or PCR mismatch | Volume refuses unlock; recovery token path is explicit and audited; no silent fallback to plaintext |
+| Update selector and root disagree | Two ESP selector copies with checksums; boot falls back to previous state; test tears either copy |
 | Online shrink corrupts references | Offline shrink only; evacuate, rewrite, verify, then remove the AG |
 | Ring 3 service holds the block capability | Capability scoped to one partition; cannot be widened or delegated |
 | 64-bit arithmetic overflow | Checked helpers against `sb_total_blocks`, AG bounds and 2^48 |
@@ -1072,12 +1338,11 @@ snapshot or clone root is never silently converted or deleted.
 7. **No journal.** Crash consistency is immutable trees plus two superblock slots.
 8. **ext4 remains the fallback.** FS+ does not remove `/bin/ext4fs`, and FAT32
    remains the ESP format because Limine cannot read FS+.
-9. **Root pivot later.** FS+ mounts at `/mnt` in the first implementation;
-   pivoting `/` is a separate recovery-reviewed project.
-10. **No deduplication or distributed pools.** Local mirror/erasure profiles are
-    a self-healing target gate. This design revision
-    covers the single-device core; the multi-device mapping is an open blocker
-    until the target document’s repair gates are designed and tested.
+9. **FS+ is the root state.** The initramfs verifies the selected FS+ state and
+   pivots `/` to it. ext4 and FAT32 remain fallback paths, not the target root.
+10. **Local redundancy is designed in.** Mirror and erasure groups are part of
+    the volume format and block layer. Deduplication, distributed pools and
+    online device add/remove are not part of this design.
 
 ---
 
