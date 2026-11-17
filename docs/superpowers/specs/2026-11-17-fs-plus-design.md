@@ -1,37 +1,50 @@
 # FS+ — Native Copy-on-Write File System Design
 
 Date: 2026-11-17
-Status: Design target
-File system name: `FS+` (exact spelling; see §1.5)
+Status: Core implementation design, subordinate to `2026-11-17-fs-plus-target.md`; it does not yet map every target gate
+File system name: `FS+` (exact spelling; see §1.4)
 
-## 1. Scope and Targets
+## 1. Scope and Requirements
 
 ### 1.1 What FS+ is
 
-FS+ is the native file system of Zhaoxu OS. It is a 64-bit copy-on-write
-B+tree file system, implemented in Ring 3 as `/bin/fs+`, with a design target
-that competes with APFS, XFS and ext4 on their own strengths instead of
-collecting their missing features as the current scope.
+FS+ is the versioned state layer of Zhaoxu OS. It makes the operating system’s
+state a first-class object that can be snapshotted, cloned, verified, repaired,
+encrypted and booted without copying the file tree. The implementation is a
+64-bit copy-on-write B+tree in Ring 3 as `/bin/fs+`.
 
-- APFS strengths: O(1) root-sharing snapshots, writable clones, extent
-  reflinks, space sharing, data integrity.
-- XFS strengths: allocation groups, parallel allocation, online growth,
-  reflink, project quotas and a serious offline checker.
-- ext4 strengths: POSIX surface, mature repair tooling, broad compatibility,
-  online growth and predictable recovery.
-- FS+ additions: data checksums, Ring 3 isolation, per-volume capability, and
-  a native version-epoch reclaimer that does not need per-block snapshot
-  reference counts.
+The design driver is not parity with APFS, XFS or ext4. Those file systems are
+the floor, not the goal. FS+ must also provide:
+
+- an atomic system-update transaction with a bootable previous state;
+- online self-healing from mirrored or erasure-coded profiles;
+- encryption of file data and FS metadata, with TPM-sealed keys;
+- a Ring 3 service that can crash and restart without taking down the kernel;
+- version diff, send and receive as native operations.
+
+APFS, XFS and ext4 contribute baseline mechanisms: root-sharing snapshots,
+allocation groups, reflink, POSIX repair and compatibility. FS+ combines those
+mechanisms into the OS state model; copying their feature list alone is not a
+design.
 
 FS+ never appears in the boot chain. Limine reads FAT32 and ISO9660 only, so
 the ESP keeps `BOOTX64.EFI`, `limine.conf`, `KERNEL.ELF`, `KERNEL.BIN`,
 `MiSans.ttf` and `WALL.RGB`. ext4 remains fully supported by `/bin/ext4fs` and
 is the compatibility fallback while FS+ matures.
 
-### 1.2 Non-negotiable targets
+The target document is authoritative. This document is the core implementation
+design and does not yet map every target gate; the unmapped gates are blockers,
+not accepted omissions.
 
-| Capability | Target |
+### 1.2 Required implementation capabilities
+
+| Capability | Requirement |
 |---|---|
+| OS state versioning | every update commits as a FS+ generation; previous generations stay bootable |
+| Version transport | native diff, send and receive between FS+ volumes |
+| Self-healing | mirror and erasure profiles with online scrub and repair |
+| Metadata security | encrypted FS tree payloads, TPM-sealed keys and anti-rollback |
+| Service containment | `/bin/fs+` crash or restart returns EIO, never panics the kernel |
 | Snapshot creation | O(1): copy one root item, no tree walk, no per-block refcount update |
 | Snapshot deletion | O(1) metadata removal; reclamation is asynchronous and bounded per AG |
 | Writable clone | O(1): share the source tree version, then CoW independently |
@@ -44,13 +57,13 @@ is the compatibility fallback while FS+ matures.
 | Subvolumes | Writable roots with independent inode counters; no nesting |
 | Snapshots | Read-only roots sharing a version; deletion does not walk the tree |
 
-### 1.3 Honest boundary
+### 1.3 Conformance gates
 
-Compression, encryption and quotas are designed as feature-gated extensions in
-this document, but they are not claimed as implemented until their milestones
-pass. A volume that sets an unsupported read-only-compatible feature mounts
-read-only; an unsupported incompat feature refuses mount. FS+ does not claim
-deduplication, RAID, device pools or distributed operation.
+The target document defines the release gates. This design only describes how to
+meet them. Compression, encryption and quotas use on-disk feature bits so a
+volume can be rejected or mounted read-only when support is absent, but the
+features themselves are release blockers. An unsupported incompatible feature
+refuses mount. A missing gate is an open blocker, not a completed design choice.
 
 ### 1.4 Naming rule
 
@@ -104,7 +117,7 @@ minimum metadata.
 
 The root tree is a global B+tree named by the superblock. It names the default
 subvolume, extra subvolume and snapshot roots, the root metadata tree, the AG
-tree and the optional quota and key trees. Each AG descriptor in the AG tree
+tree, the quota tree and the key tree. Each AG descriptor in the AG tree
 names that AG’s free-space, reference-count, checksum and dead-extent trees.
 
 ### 3.1 Superblock
@@ -209,7 +222,8 @@ A node is one 4096-byte block:
 | 0x00C | 4 | `node_checksum` | CRC32C of the whole block with this field zeroed |
 | 0x010 | 8 | `node_generation` | transaction generation that created the node |
 | 0x018 | 8 | `node_owner` | object owner id |
-| 0x020 | 4064 | items | packed item records |
+| 0x020 | 4048 | items | packed item records |
+| 0xFF0 | 16 | `node_tag` | AES-GCM-SIV tag for an encrypted FS node; zero otherwise |
 
 Item record:
 
@@ -223,7 +237,8 @@ Item record:
 | ... | variable | value | tree-specific value |
 
 Items are packed without padding. `node_free` must equal the bytes not covered
-by the 32-byte header and item records. Index items store the first key of a
+by the 32-byte header, the item records and the 16-byte trailer. Index items
+store the first key of a
 child and a 16-byte value `{u64 child_block, u8 child_level, 7 reserved}`.
 Separator keys are strictly increasing. The root level is capped at 8.
 
@@ -316,8 +331,8 @@ Flags:
 | 1 | default subvolume FS tree | FS key (§6.1) | inode, directory, extent or xattr item |
 | 2 | root metadata tree | 8-byte `meta_id` | `u64 next_root_id`, `u64 next_ag_id`, `u64 flags` |
 | 3 | AG tree | `u32 ag_id` | 96-byte AG descriptor (§7.1) |
-| 4 | quota tree, optional | `u64 root_id` | quota limits and usage |
-| 5 | key tree, optional | `u32 key_id` | wrapped key material |
+| 4 | quota tree | `u64 root_id` | quota limits and usage |
+| 5 | key tree | `u32 key_id` | wrapped key material |
 | 6–15 | reserved | — | the current implementation rejects these root ids |
 | 16+ | extra subvolume, snapshot or clone root | FS key (§6.1) | inode, directory, extent or xattr item |
 
@@ -528,7 +543,7 @@ fsck preserves it even though it is not reachable as a normal file.
 |---|---|---|
 | free-space | `u64 start_block` | `u32 length`, `u32 reserved` |
 | reference-count | `u64 physical_start` | `u32 length`, `u32 refcount` |
-| data-checksum | `u64 physical_block` | `u32 crc32c`, `u32 reserved` |
+| data-checksum | `u64 physical_block` | `u32 crc32c`, `u32 flags`, `u8 auth_tag[16]` |
 | dead-extent | `u64 physical_start` | `u32 length`, `u64 tree_id`, `u64 birth`, `u64 death`, `u8 kind`, 7 reserved |
 
 Free extents are sorted, non-overlapping and coalesced. A reference-count item
@@ -594,8 +609,8 @@ reference count and makes snapshot creation and deletion O(1).
 
 The check is conservative inside the interval: a version in `[birth, death)`
 may not actually reach a particular block, but it keeps the block alive. That is
-safe and avoids a full tree walk. Reclamation is deferred and batched, which is
-the same trade-off APFS and other CoW file systems make for instant snapshots.
+safe and avoids a full tree walk. Reclamation is deferred and batched; snapshot
+creation never walks the file tree.
 
 ### 8.3 Dead-extent tracking
 
@@ -719,7 +734,7 @@ transaction remains referenced by the old root and is not free in the old AG
 free-space tree. Checksums catch bit rot; they are not a substitute for the
 commit ordering.
 
-## 10. Allocation, Checksums and Optional Features
+## 10. Allocation, Checksums, Compression and Security
 
 ### 10.1 Per-AG allocation
 
@@ -736,33 +751,46 @@ fails, the transaction aborts.
 
 Every stored file-data block has a per-AG checksum item keyed by physical block.
 Writes compute CRC32C over the full 4096-byte stored block and insert or replace
-the item. Reads verify before returning data. A missing or mismatched checksum
-returns EIO and marks the volume as having an I/O error. Inline data is covered
-by the inode’s node checksum. Metadata nodes are always checksummed.
+the item. For an encrypted block the item also carries the 16-byte AES-GCM-SIV
+authentication tag; unencrypted blocks leave it zero. Reads verify CRC and, when
+encrypted, the tag before returning data. A missing or mismatched check returns
+EIO and marks the volume as having an I/O error. Inline data is covered by the
+inode’s node checksum. Metadata nodes are always checksummed.
 
 ### 10.3 Compression
 
-Compression is feature-gated by `COMPRESS` and a per-root policy. Supported
-algorithms are LZ4 (fast default) and ZSTD (higher ratio, optional). A write
-compresses a full extent; if the stored size is smaller, the extent is marked
-compressed and `ex_physical_len` is smaller than `ex_logical_len`. Partial
-writes decompress, patch and recompress into new blocks. Data checksums cover
-stored bytes. A file that does not benefit stays uncompressed.
+Compression is controlled by the `COMPRESS` feature bit and a per-root policy.
+Supported algorithms are LZ4 (fast default) and ZSTD (higher ratio, selectable).
+A write compresses a full extent; if the stored size is smaller, the extent is
+marked compressed and `ex_physical_len` is smaller than `ex_logical_len`.
+Partial writes decompress, patch and recompress into new blocks. Data checksums
+cover stored bytes. A file that does not benefit stays uncompressed.
 
 ### 10.4 Encryption
 
-Encryption is feature-gated by `ENCRYPT`. A root item carries `ri_key_id`; the
-key tree stores wrapped key material and the service keeps unwrapped keys only
-in memory. Data extents use AES-256-XTS with a per-extent tweak derived from the
-physical block and root UUID; metadata remains checksummed and readable by fsck.
-Encrypted roots disable inline data. Snapshots and clones inherit the key id;
-cross-root reflink and cross-root hard links are rejected. Key loss means data
-loss; there is no recovery key in the current format.
+Encryption is controlled by the `ENCRYPT` feature bit. A root item carries
+`ri_key_id`; the key tree stores wrapped key material and the service keeps
+unwrapped keys only in memory. Data extents use AES-256-GCM-SIV with a nonce
+derived from the physical block and root UUID; the authentication tag is stored
+with the block’s checksum record.
+
+FS tree node payloads for an encrypted root are encrypted as well, so directory
+names, inode fields, extent maps and xattr values are not plaintext on disk. The
+node header remains plaintext for owner, level, generation and checksum
+validation; the item area is ciphertext and the authentication tag lives in
+`node_tag`. Root, AG, free-space, refcount, checksum and dead trees stay
+plaintext because they contain no user names or file contents. Encrypted roots
+disable inline data. Snapshots and clones inherit the key id; cross-root reflink
+and cross-root hard links are rejected.
+
+`fsck.fs+` can validate structure and ciphertext checksums without a key; deep
+metadata repair needs the unlocked key. Key loss means data loss; there is no
+recovery key in the current format.
 
 ### 10.5 Quotas
 
-Quotas are feature-gated by `QUOTA`. The quota tree stores per-root block and
-inode limits and usage. Snapshot and reflink sharing is charged to the owning
+Quotas are controlled by the `QUOTA` feature bit. The quota tree stores per-root
+block and inode limits and usage. Snapshot and reflink sharing is charged to the owning
 root by logical bytes; exact shared-space accounting is a later refinement.
 Quota checks run before the transaction publishes, so a rejected write leaves
 the old generation intact.
@@ -791,7 +819,7 @@ removes the descriptor.
 | reflink | extent clone, same root only; O(extents), no data copy |
 | snapshots | read-only, O(1) create/delete, asynchronous reclamation |
 | clones | writable, O(1) create, independent CoW after first write |
-| mmap | read-only page-cache mapping target in M7; current file I/O goes through VFS read/write |
+| mmap | read-only page-cache mapping is required before target release; current file I/O goes through VFS read/write |
 | case | byte-exact, case-sensitive |
 | max name | 255 bytes |
 | max file | 2^63-1 bytes, bounded by volume |
@@ -838,11 +866,11 @@ preparation, with a serialized commit thread. The AG count of workers is capped
 by a configuration value; allocation parallelism does not require one kernel
 thread per AG.
 
-File mmap is a later ABI extension. The service maintains a per-file page cache
-and exposes read-only pages through a shared-memory capability; write faults are
-forwarded to the service as CoW writes. M7 targets read-only `MAP_SHARED`;
-writable shared mappings are not promised before the page-cache fault path has
-its own crash and revocation tests.
+File mmap is a required ABI extension. The service
+maintains a per-file page cache and exposes read-only pages through a
+shared-memory capability; write faults are forwarded to the service as CoW
+writes. M7 delivers read-only `MAP_SHARED`; writable shared mappings are blocked
+until the page-cache fault path has its own crash and revocation tests.
 
 The service receives a per-volume block capability from the VFS. Only the VFS
 mints it; it is scoped to the partition range, cannot be widened, and cannot be
@@ -915,7 +943,7 @@ snapshot or clone root is never silently converted or deleted.
   leaves the interval.
 - AGs: concurrent writers on different AGs, per-AG ENOSPC, online grow, offline
   shrink evacuation.
-- Optional features: LZ4/ZSTD round trips, encrypted extent read/write,
+- Compression and security: LZ4/ZSTD round trips, encrypted extent read/write,
   quota rejection, scrub detection of a flipped data byte.
 - After every scenario `fsck.fs+ -n` and `scrub.fs+ -n` must be clean.
 
@@ -984,11 +1012,13 @@ snapshot or clone root is never silently converted or deleted.
 - Acceptance: reflink matrix passes; fsck rebuilds all per-AG trees; no shared
   block is freed while a count or live version holds it.
 
-### M5 — Optional features
+### M5 — Compression, encryption and quotas
 
-- LZ4/ZSTD compression, AES-XTS encryption, quotas, key tree and quota tree.
-- Acceptance: feature-gated volumes pass round trips; unsupported readers mount
-  read-only; encryption key loss is documented and tested.
+- LZ4/ZSTD compression, authenticated encryption, quotas, TPM-sealed keys, key
+  tree and quota tree.
+- These are release blockers, not extensions.
+- Acceptance: encrypted and compressed volumes pass round trips; unsupported
+  readers mount read-only; key rotation, TPM sealing and key loss are tested.
 
 ### M6 — Service, installer and compatibility
 
@@ -1016,7 +1046,7 @@ snapshot or clone root is never silently converted or deleted.
 | Two-slot fallback reads freed blocks | Freed blocks are never reused in the same transaction; previous slot is overwritten only after a new commit |
 | Reclaimer causes long stalls | Per-AG workers, batched dead extents, synchronous reclaim only under space pressure |
 | Writable-root delete is expensive | `DELETING` tombstone walk runs in the background; snapshots stay O(1) and the root refuses new opens |
-| Compression/encryption complexity | Feature-gated with read-only fallback; not claimed until M5 tests pass |
+| Compression/encryption complexity | Release blocked until M5 round-trip, key-rotation and fault tests pass; unsupported readers stay read-only |
 | Encryption key loss | Documented as data loss; no recovery key in the current format |
 | Online shrink corrupts references | Offline shrink only; evacuate, rewrite, verify, then remove the AG |
 | Ring 3 service holds the block capability | Capability scoped to one partition; cannot be widened or delegated |
@@ -1036,14 +1066,18 @@ snapshot or clone root is never silently converted or deleted.
    is writable and shares until its first write.
 5. **Data checksums are mandatory.** Metadata checksums are mandatory. A checksum
    failure never returns unverified data.
-6. **Optional features are gated.** Compression, encryption and quotas ship only
-   when their milestones pass; unsupported readers mount read-only.
+6. **Compression, encryption and quotas are release blockers.** Their on-disk
+   feature bits describe volume capability, not permission to ship without them.
+   A release that cannot pass these tests is incomplete, not a reduced edition.
 7. **No journal.** Crash consistency is immutable trees plus two superblock slots.
 8. **ext4 remains the fallback.** FS+ does not remove `/bin/ext4fs`, and FAT32
    remains the ESP format because Limine cannot read FS+.
 9. **Root pivot later.** FS+ mounts at `/mnt` in the first implementation;
    pivoting `/` is a separate recovery-reviewed project.
-10. **No deduplication, RAID or distributed pools.** Those are not FS+ current scope.
+10. **No deduplication or distributed pools.** Local mirror/erasure profiles are
+    a self-healing target gate. This design revision
+    covers the single-device core; the multi-device mapping is an open blocker
+    until the target document’s repair gates are designed and tested.
 
 ---
 
