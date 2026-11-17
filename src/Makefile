@@ -268,7 +268,7 @@ $(HEADLESS_HEADER): FORCE
 
 FORCE:
 
-.PHONY: all clean run iso run-iso run-install run-bios run-install-bios version fonts host-test FORCE
+.PHONY: all clean run iso run-iso run-install run-bios run-install-bios version fonts host-test fs+-test FORCE
 
 # The kernel is built for the ISO and the installer; Limine stays the only
 # boot manager (rules 8/31), and the installed ESP carries the kernel and
@@ -293,6 +293,10 @@ version:
 # Host-detection unit tests (pure Ruby, runs on every supported host).
 host-test:
 	$(RUBY) tests/tools/host_test.rb
+
+# FS+ on-disk format tests (host compiler; not linked into the kernel).
+fs+-test:
+	$(RUBY) tools/fs+-test.rb
 
 # ---- Ring 3 programs -------------------------------------------------
 USER_CFLAGS := $(CROSS) -m64 -std=gnu11 -O2 -ffreestanding -fpie \
