@@ -11,7 +11,7 @@ File system name: `FS+` (exact spelling; see §1.5)
 FS+ is the native file system of Zhaoxu OS. It is a 64-bit copy-on-write
 B+tree file system, implemented in Ring 3 as `/bin/fs+`, with a design target
 that competes with APFS, XFS and ext4 on their own strengths instead of
-collecting their missing features as v1 scope.
+collecting their missing features as the current scope.
 
 - APFS strengths: O(1) root-sharing snapshots, writable clones, extent
   reflinks, space sharing, data integrity.
@@ -81,7 +81,7 @@ the file-system name itself stays `FS+`.
 
 ## 3. Volume Layout
 
-All offsets are in 4096-byte blocks. A block number is 64-bit on disk; v1 caps
+All offsets are in 4096-byte blocks. A block number is 64-bit on disk; the current implementation caps
 usable volumes at 2^48 blocks (1 EiB) and rejects larger values rather than
 truncating them.
 
@@ -163,9 +163,9 @@ Feature bits:
 | ro_compat | 6 | `COMPRESS` | compressed extents are present |
 | ro_compat | 7 | `ENCRYPT` | encrypted extents are present |
 | ro_compat | 8 | `QUOTA` | per-root quota records are present |
-| compat | — | none | v1 defines no compatible-only features |
+| compat | — | none | the current format defines no compatible-only features |
 
-Version 1.0 requires incompat bits 0–5 and sets ro_compat bits 0–5. An unknown
+This format revision requires incompat bits 0–5 and sets ro_compat bits 0–5. An unknown
 incompat bit makes the volume unmountable. An unknown ro_compat bit makes it
 mountable read-only. A reader that does not understand `REFLINK` or `SNAPSHOT`
 must mount read-only; otherwise it could free a block still referenced by
@@ -217,7 +217,7 @@ Item record:
 |---:|---:|---|---|
 | 0x00 | 2 | `item_key_len` | key bytes |
 | 0x02 | 2 | `item_value_len` | value bytes |
-| 0x04 | 2 | `item_flags` | zero in v1 |
+| 0x04 | 2 | `item_flags` | zero in the current format |
 | 0x06 | 2 | reserved | zero |
 | 0x08 | variable | key | tree-specific key |
 | ... | variable | value | tree-specific value |
@@ -246,7 +246,7 @@ checksum is invalid.
 | 2^63 + ag_id*4 + 2 | AG data-checksum tree |
 | 2^63 + ag_id*4 + 3 | AG dead-extent tree |
 
-FS tree ids are below 2^63. AG owner ids fit in 64 bits because v1 caps the
+FS tree ids are below 2^63. AG owner ids fit in 64 bits because the current implementation caps the
 volume at 2^30 AGs. A node whose owner does not match the tree being walked is
 rejected.
 
@@ -318,7 +318,7 @@ Flags:
 | 3 | AG tree | `u32 ag_id` | 96-byte AG descriptor (§7.1) |
 | 4 | quota tree, optional | `u64 root_id` | quota limits and usage |
 | 5 | key tree, optional | `u32 key_id` | wrapped key material |
-| 6–15 | reserved | — | v1 rejects these root ids |
+| 6–15 | reserved | — | the current implementation rejects these root ids |
 | 16+ | extra subvolume, snapshot or clone root | FS key (§6.1) | inode, directory, extent or xattr item |
 
 The default subvolume is root id 1, named `default`, with
@@ -397,7 +397,7 @@ Fixed header 96 bytes plus `fi_inline_len` bytes of inline data.
 | 0x44 | 4 | `fi_btime_nsec` | 0..999999999 |
 | 0x48 | 8 | `fi_btime_sec` | creation time, UTC seconds |
 | 0x50 | 8 | `fi_generation` | inode generation |
-| 0x58 | 4 | `fi_data_flags` | zero in v1 |
+| 0x58 | 4 | `fi_data_flags` | zero in the current format |
 | 0x5C | 2 | `fi_inline_len` | inline data bytes, 0..256 |
 | 0x5E | 2 | reserved | zero |
 | 0x60 | variable | `fi_inline` | inline file data |
@@ -491,7 +491,7 @@ The AG tree key is `u32 ag_id`; the value is a 96-byte descriptor:
 |---:|---:|---|---|
 | 0x00 | 8 | `ad_start` | first block |
 | 0x08 | 4 | `ad_blocks` | usable blocks |
-| 0x0C | 4 | `ad_flags` | zero in v1 |
+| 0x0C | 4 | `ad_flags` | zero in the current format |
 | 0x10 | 8 | `ad_free_root` | free-space tree root |
 | 0x18 | 1 | `ad_free_level` | root level |
 | 0x19 | 7 | reserved | zero |
@@ -757,7 +757,7 @@ in memory. Data extents use AES-256-XTS with a per-extent tweak derived from the
 physical block and root UUID; metadata remains checksummed and readable by fsck.
 Encrypted roots disable inline data. Snapshots and clones inherit the key id;
 cross-root reflink and cross-root hard links are rejected. Key loss means data
-loss; there is no recovery key in v1.
+loss; there is no recovery key in the current format.
 
 ### 10.5 Quotas
 
@@ -791,7 +791,7 @@ removes the descriptor.
 | reflink | extent clone, same root only; O(extents), no data copy |
 | snapshots | read-only, O(1) create/delete, asynchronous reclamation |
 | clones | writable, O(1) create, independent CoW after first write |
-| mmap | read-only page-cache mapping target in M7; v1 file I/O goes through VFS read/write |
+| mmap | read-only page-cache mapping target in M7; current file I/O goes through VFS read/write |
 | case | byte-exact, case-sensitive |
 | max name | 255 bytes |
 | max file | 2^63-1 bytes, bounded by volume |
@@ -1017,7 +1017,7 @@ snapshot or clone root is never silently converted or deleted.
 | Reclaimer causes long stalls | Per-AG workers, batched dead extents, synchronous reclaim only under space pressure |
 | Writable-root delete is expensive | `DELETING` tombstone walk runs in the background; snapshots stay O(1) and the root refuses new opens |
 | Compression/encryption complexity | Feature-gated with read-only fallback; not claimed until M5 tests pass |
-| Encryption key loss | Documented as data loss; no recovery key in v1 |
+| Encryption key loss | Documented as data loss; no recovery key in the current format |
 | Online shrink corrupts references | Offline shrink only; evacuate, rewrite, verify, then remove the AG |
 | Ring 3 service holds the block capability | Capability scoped to one partition; cannot be widened or delegated |
 | 64-bit arithmetic overflow | Checked helpers against `sb_total_blocks`, AG bounds and 2^48 |
@@ -1043,7 +1043,7 @@ snapshot or clone root is never silently converted or deleted.
    remains the ESP format because Limine cannot read FS+.
 9. **Root pivot later.** FS+ mounts at `/mnt` in the first implementation;
    pivoting `/` is a separate recovery-reviewed project.
-10. **No deduplication, RAID or distributed pools.** Those are not FS+ v1 scope.
+10. **No deduplication, RAID or distributed pools.** Those are not FS+ current scope.
 
 ---
 
