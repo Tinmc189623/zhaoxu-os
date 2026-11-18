@@ -545,7 +545,7 @@ int install_run(int target_disk, int gpt, const struct install_layout *layout,
 #if HEADLESS
     /* The installed stage2 and loader are copies of this build, so a
      * headless install produces a headless system: no Aqua Desktop
-     * Environment, 8sh only. */
+     * Environment and no command line. */
     kprintf("[install] warning: headless build; the installed system will "
             "not start Aqua Desktop Environment\n");
 #endif

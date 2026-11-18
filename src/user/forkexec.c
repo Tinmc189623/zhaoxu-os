@@ -3,9 +3,7 @@
  *
  * The parent forks; the child returns 0, prints its pid and exits 7.  The
  * parent reaps it, then execs /data/HELLO.ZXE with argv, which replaces this
- * image.  Run through FE_BOOT_TEST=1, or by hand from 8sh:
- *
- *   run /data/FORKEXEC.ZXE
+ * image.  Run through FE_BOOT_TEST=1.
  */
 #include "userlib.h"
 

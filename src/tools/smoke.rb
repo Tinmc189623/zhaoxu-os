@@ -1,10 +1,8 @@
 #!/usr/bin/env ruby
-# smoke.rb -- boot Zhaoxu OS headless in QEMU (inside WSL), drive the serial
-# shell interactively and assert a marker in the console output.
+# smoke.rb -- boot Zhaoxu OS headless in QEMU (inside WSL) and assert that a
+# marker appears in the serial console output.
 #
-#   usage: ruby tools/smoke.rb <marker> [commands]
-#     commands: newline-separated shell input, literal "\n" allowed;
-#               "shutdown" is always appended automatically.
+#   usage: ruby tools/smoke.rb <marker>
 #   env:   SMOKE_DISTRO SMOKE_ROOT SMOKE_TIMEOUT (seconds, default 180)
 #          SMOKE_FW: uefi (default, OVMF pflash) or bios (SeaBIOS, no pflash)
 #          SMOKE_BOOT: iso (default, CD only, no extra disks)
@@ -12,12 +10,12 @@
 #                      installed (boot out/target.img alone)
 #          bios firmware supports iso, iso-install and installed.
 #
-# Tests boot the ISO only; installation is exercised by `install` in 8sh or
-# by booting the installed target afterwards.
+# The smoke test watches serial output only and does not drive the shell;
+# installation is exercised by the graphical installer or by booting the
+# installed target afterwards.
 #
 # Run from Windows Ruby (WSL has no ruby): it shells out through wsl.exe and
-# feeds one command line at a time once the guest shows a prompt, so the
-# 16-byte UART FIFO never overflows.
+# watches the serial console until the marker shows up or the timeout expires.
 
 require "open3"
 
@@ -28,19 +26,18 @@ ROOT = win_root =~ /\A([A-Za-z]):[\\\/](.*)\z/ ?
        win_root
 TIMEOUT = (ENV["SMOKE_TIMEOUT"] || 180).to_i
 
-marker = ARGV[0] or abort "usage: smoke.rb <marker> [commands]"
-commands = (ARGV[1] || "").gsub('\n', "\n").split("\n").reject(&:empty?)
+marker = ARGV[0] or abort "usage: smoke.rb <marker>"
 
 target_disk = [
   "-drive if=none,id=zdst,format=raw,file=out/target.img",
   "-device ide-hd,drive=zdst,bus=ide.1",
 ]
-# Rule 11: ISO images are named zhaoxu-os_x86-64_{version}_{build}_ld.iso.
+# Rule 11: ISO images are named zhaoxu-os_x86-64_{version}_{build-date}_ld.iso.
 iso_file = Dir[File.join(win_root, "out", "zhaoxu-os_x86-64_*_ld.iso")]
            .max_by { |f| File.mtime(f) }
 iso_drives = [
   "-drive if=none,id=zcd,format=raw,media=cdrom,readonly=on," \
-  "file=out/#{iso_file ? File.basename(iso_file) : "zhaoxu-os_x86-64_0.7.1_6_ld.iso"}",
+  "file=out/#{iso_file ? File.basename(iso_file) : "zhaoxu-os_x86-64_0.7.20_2026-11-16_ld.iso"}",
   "-device ide-cd,drive=zcd,bus=ide.0",
 ]
 boot = ENV["SMOKE_BOOT"] || "iso"
@@ -98,14 +95,10 @@ out = String.new(encoding: Encoding::BINARY)
 $stdout.binmode
 $stderr.binmode
 ok = false
-Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout, stderr, waiter|
-  stdin.binmode
+Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |_stdin, stdout, stderr, waiter|
   stdout.binmode
   stderr.binmode
   deadline = Time.now + TIMEOUT
-  queue = commands + ["shutdown"]
-  sent = 0
-  last_send = Time.now
   eof_count = 0
   loop do
     left = deadline - Time.now
@@ -120,7 +113,7 @@ Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout,
         begin
           chunk = io.read_nonblock(4096)
           out << chunk if chunk
-        rescue Errno::EAGAIN, IO::EAGAINWaitReadable
+        rescue Errno::EAGAIN, Errno::EAGAINWaitReadable
         rescue EOFError
           eof_count += 1
         end
@@ -130,14 +123,7 @@ Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout,
       ok = true
       break
     end
-    break if eof_count >= 2 && sent >= queue.size
-    prompts = out.scan(/8sh\$|edit>/).size
-    if sent < queue.size && prompts > sent && Time.now - last_send > 0.8
-      stdin.write(queue[sent].dup.force_encoding(Encoding::BINARY) + "\n")
-      stdin.flush
-      sent += 1
-      last_send = Time.now
-    end
+    break if eof_count >= 2
   end
   begin
     waiter.kill("KILL")

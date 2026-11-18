@@ -3,7 +3,7 @@
  *
  * Exercises the kernel primitives stock libwayland needs before the library
  * port exists: eventfd counters, timerfd expirations and epoll readiness.
- * Run it from 8sh with `/data/M5_TEST.ZXE`.
+ * M5_BOOT_TEST runs it at boot.
  */
 #include "userlib.h"
 

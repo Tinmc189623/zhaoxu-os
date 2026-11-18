@@ -83,6 +83,8 @@ typedef unsigned long long u64;
 #define SYS_PIPE             74
 #define SYS_DUP2             75
 #define SYS_IOCTL            76
+#define SYS_STAT             77
+#define SYS_GETPPID          78
 
 /* Terminal ABI mirrored from kernel/include/tty.h. */
 struct termios {
@@ -269,6 +271,12 @@ static inline long sys_close(int fd)
 static inline long sys_getpid(void)
 {
     return syscall3(SYS_GETPID, 0, 0, 0);
+}
+
+/* Parent process id recorded when the kernel spawned this process. */
+static inline long sys_getppid(void)
+{
+    return syscall3(SYS_GETPPID, 0, 0, 0);
 }
 
 static inline long sys_uptime(void)

@@ -19,19 +19,15 @@ void about_paint(const struct ade_view *view)
 
     int line = y + ade_ui(110);
     int step = ade_ui(36);
-    ade_text("Zhaoxu OS " ZHAOXU_VERSION " build " ZHAOXU_BUILD " \"" ZHAOXU_CODENAME "\"",
+    ade_text("版本 " ZHAOXU_VERSION " build " ZHAOXU_BUILD " \"" ZHAOXU_CODENAME "\"",
              x + ade_ui(24), line, 0x16293C, 2);
     line += step;
-    ade_text("内核：" ZHAOXU_KERNEL " Kernel " ZHAOXU_KERNEL_VERSION "（微内核）",
-             x + ade_ui(24), line, 0x36495C, 1);
+    ade_text("桌面：Aqua Desktop Environment", x + ade_ui(24), line, 0x36495C, 1);
     line += step;
-    ade_text("桌面：Aqua Desktop Environment；窗口管理器：Desktop Window Manager",
-             x + ade_ui(24), line,
+    ade_text("窗口管理器：Desktop Window Manager", x + ade_ui(24), line,
              0x36495C, 1);
     line += step;
-    ade_text("驱动与应用运行在 Ring 3", x + ade_ui(24), line, 0x36495C, 1);
-    line += step;
-    ade_text(ZOS_API_BANNER, x + ade_ui(24), line, 0x51606F, 1);
+    ade_text("应用接口：" ZOS_API_BANNER, x + ade_ui(24), line, 0x51606F, 1);
 }
 
 struct ade_app g_about = {

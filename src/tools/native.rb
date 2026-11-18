@@ -118,7 +118,6 @@ module ZosNative
 
     def build_userland
       build_ade
-      build_csh
       build_ext4fs
       build_user_program("init", ["user/init.c"], [], "build/init.uelf", "out/init.zxe")
       build_user_program("hello", ["user/hello.c"], [], "build/hello.uelf", "out/hello.zxe")
@@ -202,17 +201,6 @@ module ZosNative
       run([@tools[:ruby], "tools/zxe-pack.rb", "build/aqua.uelf", "out/aqua.zxe"])
     end
 
-    def build_csh
-      objects = []
-      make_var("CSH_SRCS").each do |source|
-        object = "build/csh/" + source.sub(/\.c\z/, ".o")
-        compile(source, object, user_cflags + %w[-Iapps/csh -Iuser -Ikernel/include])
-        objects << object
-      end
-      link_shared(objects, "build/8sh.uelf")
-      run([@tools[:ruby], "tools/zxe-pack.rb", "build/8sh.uelf", "out/8sh.zxe"])
-    end
-
     def build_ext4fs
       objects = []
       make_var("EXT4FS_SRCS").each do |source|
@@ -254,7 +242,6 @@ module ZosNative
       directory(tree, "data/DOCS")
       copy("out/init.zxe", "#{tree}/bin/init")
       copy("out/aqua.zxe", "#{tree}/bin/aqua")
-      copy("out/8sh.zxe", "#{tree}/bin/8sh")
       copy("out/ext4fs.zxe", "#{tree}/bin/ext4fs")
       copy("out/welcome_client.zxe", "#{tree}/bin/apps/welcome.zxe")
       copy("out/calc_client.zxe", "#{tree}/bin/apps/calc.zxe")

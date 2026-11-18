@@ -1,7 +1,7 @@
 /*
  * Zhaoxu OS - in-OS source editor.
  *
- * Keeps a small line buffer in the csh session and drives the
+ * Keeps a small line buffer in the editor session and drives the
  * zcc compiler (apps/zcc.cpp) and the ring 3 loader, so programs can be
  * written, compiled and run entirely on the machine.
  */
@@ -112,7 +112,7 @@ void compile_and_run()
     }
 
     console_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
-    kprintf("zcc: %llu bytes of .zxe, running in ring 3...\n", size);
+    kprintf("zcc: %llu bytes compiled.\n", size);
     console_reset_color();
     int code = process_run_image(image, size, "<zcc>", 0, nullptr);
     kprintf("[zcc] exit code %d\n", code);

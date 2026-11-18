@@ -11,11 +11,13 @@
 #   kernel_cn      = null          optional Chinese kernel name
 #   os_version     = 0.5.0         OS version: README, motd, ISO   (required)
 #   kernel_version = 0.5.0         kernel version: version.h       (required)
-#   build          = 1             monotonically increasing build   (required)
+#   build_date     = "2026-11-16"  build date, YYYY-MM-DD           (required)
 #   codename       = "Yuanshuo"    release codename                (required)
 #
 # Values may be quoted strings, bare numbers, or null.  `#` starts a trailing
 # comment outside quotes.
+
+require "date"
 
 ROOT = File.expand_path("../..", __dir__)
 src = File.join(ROOT, "src")
@@ -58,20 +60,32 @@ if CFG.key?("version") && (!CFG.key?("os_version") || !CFG.key?("kernel_version"
   abort "version.cfg: use 'os_version' and 'kernel_version', not 'version'"
 end
 
+# Reject the retired `build` counter: the schema carries a build date instead.
+if CFG.key?("build") && !CFG.key?("build_date")
+  abort "version.cfg: use 'build_date' (YYYY-MM-DD), not 'build'"
+end
+
 OS_VERSION = required("os_version")
 KERNEL_VERSION = required("kernel_version")
-BUILD = required("build")
+BUILD_DATE = required("build_date")
 CODENAME = required("codename")
 KERNEL = required("kernel")
 NAME = required("name")
 NAME_CN = CFG["name_cn"] || NAME
-KERNEL_CN = CFG["kernel_cn"] || KERNEL
 
 [["os_version", OS_VERSION], ["kernel_version", KERNEL_VERSION]].each do |key, value|
   abort "version.cfg: #{key} '#{value}' is not a dotted version" unless value =~ /\A\d+(\.\d+)+\z/
 end
-abort "version.cfg: build '#{BUILD}' is not a positive integer" unless
-  BUILD =~ /\A[1-9]\d*\z/
+# A build date must be a real calendar day in YYYY-MM-DD form; Date.iso8601
+# rejects month 13 and day 30 in February, the round trip rejects zero padding.
+begin
+  build_day = Date.iso8601(BUILD_DATE)
+rescue ArgumentError
+  abort "version.cfg: build_date '#{BUILD_DATE}' is not a valid date"
+end
+unless BUILD_DATE =~ /\A\d{4}-\d{2}-\d{2}\z/ && build_day.strftime("%Y-%m-%d") == BUILD_DATE
+  abort "version.cfg: build_date '#{BUILD_DATE}' is not YYYY-MM-DD"
+end
 
 def patch(path, pairs)
   text = File.read(path)
@@ -97,28 +111,26 @@ patch(File.join(src, "kernel", "include", "version.h"), [
   [/#define ZHAOXU_KERNEL_VERSION\s+"[^"]*"/,
    "#define ZHAOXU_KERNEL_VERSION  \"#{KERNEL_VERSION}\""],
   [/#define ZHAOXU_BUILD\s+"[^"]*"/,
-   "#define ZHAOXU_BUILD           \"#{BUILD}\""],
+   "#define ZHAOXU_BUILD           \"#{BUILD_DATE}\""],
 ])
 
 patch(File.join(src, "initramfs", "etc", "motd"), [
   [/Welcome to #{Regexp.escape(NAME)} [0-9.]+ "[^"]*"( \([^)]*\))?\./,
-   "Welcome to #{NAME} #{OS_VERSION} \"#{CODENAME}\" " \
-   "(#{KERNEL} kernel #{KERNEL_VERSION}, build #{BUILD})."],
-  [/欢迎使用兆旭操作系统 [0-9.]+（[^）]*）/,
-   "欢迎使用兆旭操作系统 #{OS_VERSION}（#{KERNEL_CN} #{KERNEL_VERSION} 内核，构建 #{BUILD}）"],
+   "Welcome to #{NAME} #{OS_VERSION} \"#{CODENAME}\" (build #{BUILD_DATE})."],
+  [/^欢迎使用[^\n]*? [0-9.]+（[^）]*）/,
+   "欢迎使用 #{NAME_CN} #{OS_VERSION}（构建 #{BUILD_DATE}）"],
 ])
 
 patch(File.join(src, "initramfs", "etc", "version"), [
   [/\A#{Regexp.escape(NAME)}[^\n]*/,
-   "#{NAME} #{OS_VERSION} \"#{CODENAME}\" build #{BUILD}"],
-  [/^Kernel: .*$/,
-   "Kernel: #{KERNEL} #{KERNEL_VERSION}"],
+   "#{NAME} #{OS_VERSION} \"#{CODENAME}\" build #{BUILD_DATE}"],
 ])
 
 patch(File.join(ROOT, "README.md"), [
-  [/\*\*Current version: [0-9.]+ 「[^」]*」, kernel [0-9.]+, build \d+\*\*/,
-   "**Current version: #{OS_VERSION} 「#{CODENAME}」, kernel #{KERNEL_VERSION}, build #{BUILD}**"],
+  [/\*\*Current version: [0-9.]+ 「[^」]*」, kernel [0-9.]+, build [0-9-]+\*\*/,
+   "**Current version: #{OS_VERSION} 「#{CODENAME}」, kernel #{KERNEL_VERSION}, " \
+   "build #{BUILD_DATE}**"],
 ])
 
 puts "version.cfg -> #{NAME} #{OS_VERSION} \"#{CODENAME}\", " \
-     "#{KERNEL} kernel #{KERNEL_VERSION}, build #{BUILD} synchronized"
+     "#{KERNEL} kernel #{KERNEL_VERSION}, build #{BUILD_DATE} synchronized"

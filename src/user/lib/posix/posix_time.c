@@ -4,6 +4,7 @@
  * a fixed zero so callers that only need a monotonic fallback keep working. */
 #include <errno.h>
 #include <sys/time.h>
+#include <sys/times.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -18,7 +19,21 @@ int gettimeofday(struct timeval *time, void *timezone)
     return 0;
 }
 
-/* Process times are not accounted yet. */
+/* Process times are not accounted yet; report a zero clock like gettimeofday. */
+clock_t times(struct tms *buffer)
+{
+    if (!buffer) {
+        errno = EINVAL;
+        return (clock_t)-1;
+    }
+    buffer->tms_utime = 0;
+    buffer->tms_stime = 0;
+    buffer->tms_cutime = 0;
+    buffer->tms_cstime = 0;
+    return 0;
+}
+
+/* newlib's syscall hook keeps the same zero accounting. */
 clock_t _times(void *buffer)
 {
     (void)buffer;

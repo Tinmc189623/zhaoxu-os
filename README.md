@@ -10,7 +10,7 @@
 
 [🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
-**Current version: 0.7.1 「Yuanshuo」, kernel 0.7.1, build 20**. Version history in [CHANGELOG.md](CHANGELOG.md)
+**Current version: 0.7.20 「Yuanshuo」, kernel 0.7.1, build 2026-11-16**. Version history in [CHANGELOG.md](CHANGELOG.md)
 
 </div>
 
@@ -159,9 +159,9 @@ font code.
 
 ## ⚠️ Known gaps
 
-- 8sh is the current shell; the project rules require bash, and porting bash is
-  on the roadmap. New shell features are not being added to 8sh.
-- toybox and the full Unix command set are not ported yet.
+- GNU bash 5.3 is cross-built as `/bin/bash` and starts on a boot without a
+  framebuffer. Job control and asynchronous signal delivery are not implemented
+  yet, and toybox plus the full Unix command set are still pending.
 - nano compiles but is not ZXE-linked or runnable inside the system yet.
 - Vulkan is not the default renderer; the ICD lacks WSI, descriptors/UBOs,
   compute and depth. OpenGL 1.1 is a subset, not a complete implementation.
@@ -188,8 +188,9 @@ font code.
 
 ## 📜 License
 
-This project is licensed under the [Apache License 2.0](LICENSE). Third-party
-component and font notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+This project is licensed under the [GNU General Public License v2.0](LICENSE)
+(GPL-2.0-only, matching the Linux kernel). Third-party component and font
+notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 <div align="center">
 

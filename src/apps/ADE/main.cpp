@@ -200,7 +200,7 @@ extern "C" int user_main(long *stack)
 
     struct zos_fb_info fb;
     if (sys_fb_map(&fb) < 0) {
-        kprintf("[aqua] no framebuffer from kernel\n");
+        kprintf("[aqua] no framebuffer\n");
         return 1;
     }
 
@@ -225,8 +225,7 @@ extern "C" int user_main(long *stack)
 
     ade_setup(g_screen);
     ade_display_init();
-    kprintf("[aqua] Ring3 display server %s (Desktop Window Manager, Aqua), "
-            "%d app(s)\n",
+    kprintf("[aqua] display server %s (Aqua Desktop Environment), %d app(s)\n",
             ZHAOXU_VERSION, g_app_count);
     kprintf("[aqua] %s\n", ZOS_API_BANNER);
     dwm_run();

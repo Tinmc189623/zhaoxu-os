@@ -16,8 +16,8 @@ Include as much of the following as you can:
   hash / release ISO name).
 - Firmware mode (UEFI or Legacy BIOS), machine or QEMU version, and whether
   the problem also reproduces with `make run-iso`.
-- Steps to reproduce, including the exact 8sh command, installer screen, or
-  ZXE program involved.
+- Steps to reproduce, including the exact reproduction steps, installer screen,
+  or ZXE program involved.
 - The serial log (`-serial file:...`) and, for graphics problems, a
   screendump. Remove anything private before sending.
 - The impact you observed: crash, hang, memory disclosure, privilege

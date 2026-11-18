@@ -95,8 +95,7 @@ void ade_menubar_paint(void)
                 1);
 
     char badge[40];
-    ksnprintf(badge, sizeof(badge), "Aqua / Desktop Window Manager / %u CPU",
-              smp_cpu_count());
+    ksnprintf(badge, sizeof(badge), "Aqua / %u CPU", smp_cpu_count());
     int badge_w = render_text_width(badge, 1);
     render_text(badge, screen->width - clock_w - badge_w - ade_ui(52),
                 text_y, 0x51606F, 1);

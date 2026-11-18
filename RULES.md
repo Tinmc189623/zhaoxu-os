@@ -1,10 +1,10 @@
 # 规则
 
-> Copyright (C) 2026 Nexsteaduser. All Rights Reserved. Version: v1.96
+> 这是项目规则，不是可改说明书。
 
 ## 必须遵守
 
-1. 内核名称：`Yuanshuo™`，操作系统名称：`Zhaoxu OS™`，桌面合成器：`Desktop Window Compositor™`（Wayland），Shell：`bash`（严禁自研），桌面：`Aqua Desktop Environment™`（风格：Aqua），窗口管理器：`Desktop Window Manager`，不得改动任何字符，严禁使用`Yuanshuo™ Shell`。
+1. 微内核名称：`Yuanshuo™`，操作系统名称：`Zhaoxu OS™`，桌面合成器：`Desktop Window Compositor™`（Wayland），Shell：`bash`（严禁自研），桌面：`Aqua Desktop Environment™`（风格：Aqua），窗口管理器：`Desktop Window Manager`，不得改动任何字符，严禁使用`Yuanshuo™ Shell`，混合内核名称：`OS_5P`，IO：`IO/287`。
 2. GitHub 仓库：https://github.com/Tinmc189623/zhaoxu-os
 3. 必须深度自定义启动菜单。
 4. Limine 必须使用原样，并完全使用它的功能。 
@@ -12,7 +12,7 @@
 6. 脚本必须完全使用 Ruby 来编写，必须完全使用 AI 来生成代码，**禁止人类编写代码**。
 7. 引导加载器必须支持 UEFI 和 Legacy BIOS 两种启动模式。 
 8. 引导管理器必须得是：`Limine`。
-9. 内核必须得是微内核，用户程序必须得放在 Ring3，内核的二进制必须得是干净的二进制，不允许往里投放什么驱动/应用。
+9. Yuanshuo 内核必须得是微内核，用户程序必须得放在 Ring3，Yuanshuo 内核的二进制必须得是干净的二进制，不允许往 Yuanshuo 里投放什么驱动/应用。
 10. 该操作系统必须遵循 Unix 哲学和使用 Unix 方式。 
 11. iso命名示例：`zhaoxu-os_x86-64_{version}_{build}_ld.iso`。
 12. 不得将所有功能挤在一个文件里，如 `apps/shell.cpp`。
@@ -47,7 +47,7 @@
  - 显示控制器从显存里按行读取像素数据，转换成显示器识别的信号（DP / HDMI /eDP 信号）。
  - 面板收到像素数据，驱动每一个子像素，就在屏幕上看到这个图形了。
 35. **版权声明：**
- - English: `Copyright (C) <YEAR> <NAME>. All Rights Reserved.`
+ - English: `Copyright (C) <YEAR> <name>. All Rights Reserved.`
  - 中文：`©<年> <名> 版权所有`
 36. 必须支持所有unix自带的命令。 
 37. 必须完整移植并使用 Vulkan 作为默认图形渲染 API。
@@ -56,9 +56,11 @@
 40. **色彩渲染支持规范：**
 - 10bit：面向支持HDR的民用显示器，进入Wayland桌面合成器后，硬件达标则启用该色深。
 - 8bit：面向常规SDR显示器，Limine开机菜单与它提供的帧缓冲默认使用此规格；**8bit SDR屏幕同样正常运行Wayland合成器，合成器只是不启用10bit色深能力**。
-41. AI **可**改动本文件。
+41. AI **不可**改动本文件。
 42. 严禁自研一个“第三方”，然后对外宣称：这是第三方而非自研。
 43. **禁止将操作系统名称内核名称内部技术栈等一大堆内容往各个地方上使劲地铺上水印以展示权威性**。
+44. 此操作系统**无中文名**，禁止编造中文名。
+45. 文件系统：`FS+`，禁止改动任何字符，英文名：`FSplus`。
 
 ---
 

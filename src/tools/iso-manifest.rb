@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 # Populate the ISO metadata files required by AGENTS.md.
-# Usage: ruby iso-manifest.rb <iso-root> <os-version> <codename> <kernel> <kernel-version> <build>
+# Usage: ruby iso-manifest.rb <iso-root> <os-version> <codename> <kernel> <kernel-version> <build-date>
 #
 # Writes casper/{manifest,uuid,README.diskdefines}, .disk/{info,README,
 # casper-uuid-generic}, preseed/os.seed, README.html and autorun.inf, then a
@@ -12,9 +12,9 @@ require "fileutils"
 require "securerandom"
 
 unless ARGV.length == 6
-  abort "usage: ruby iso-manifest.rb iso-root os-version codename kernel kernel-version build"
+  abort "usage: ruby iso-manifest.rb iso-root os-version codename kernel kernel-version build-date"
 end
-root, version, codename, kernel, kernel_version, build = ARGV
+root, version, codename, kernel, kernel_version, build_date = ARGV
 # Normalise Windows separators so Dir.glob and the md5 relative names work
 # on every host (the ISO build passes a POSIX path, but direct use may not).
 root = root.tr("\\", "/").sub(%r{/+\z}, "")
@@ -33,7 +33,7 @@ FileUtils.mkdir_p([casper, disk, File.join(root, "preseed")])
 
 write(File.join(casper, "uuid"), "#{uuid}\n")
 write(File.join(casper, "manifest"), <<~EOF)
-  Zhaoxu OS #{version} "#{codename}" build #{build}
+  Zhaoxu OS #{version} "#{codename}" build #{build_date}
   kernel #{kernel} #{kernel_version}
   file          .        <version>
   file          bin      <directory>
@@ -50,7 +50,7 @@ write(File.join(casper, "README.diskdefines"), <<~EOF)
   #define ARCHSUFFIX  amd64
   EOF
 
-write(File.join(disk, "info"), "Zhaoxu OS #{version} \"#{codename}\" build #{build} - Release amd64 (#{kernel} #{kernel_version})\n")
+write(File.join(disk, "info"), "Zhaoxu OS #{version} \"#{codename}\" build #{build_date} - Release amd64 (#{kernel} #{kernel_version})\n")
 write(File.join(disk, "README"), "This disc is a Zhaoxu OS live/install image.\n")
 write(File.join(disk, "casper-uuid-generic"), "#{uuid}\n")
 

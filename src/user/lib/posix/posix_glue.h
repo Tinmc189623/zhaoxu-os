@@ -8,6 +8,9 @@
 #define ZOS_EXIT     0
 #define ZOS_WRITE    1
 #define ZOS_GETPID   2
+#define ZOS_SLEEP    22
+#define ZOS_POLL     50
+#define ZOS_GETPPID  78
 #define ZOS_OPEN     3
 #define ZOS_READ     4
 #define ZOS_CLOSE    5

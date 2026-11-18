@@ -1,11 +1,3 @@
-Zhaoxu OS 0.7.1 "Yuanshuo" build 20
-Kernel: Yuanshuo 0.7.1
-Initramfs: ustar archive embedded in the kernel image
-Root filesystem: rootfs (initramfs ustar)
-Data volume: ext4 or vfat at /mnt (Ring3 storage service)
-Extra mounts: tmpfs at /tmp and /run, procfs at /proc, sysfs at /sys,
-              debugfs at /debug, efivarfs at /sys/firmware/efi/efivars,
-              overlayfs at /merged
-Executable formats: .zxe (native) and ELF64, ring 3
-CJK rendering: OpenType fonts (MiSans, MiSans Global, Inter)
-Syscall ABI: int 0x80, ring 3
+Zhaoxu OS 0.7.20 "Yuanshuo" build 2026-11-16
+Desktop: Aqua Desktop Environment
+Shell: GNU bash 5.3

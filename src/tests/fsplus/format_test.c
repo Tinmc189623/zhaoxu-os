@@ -91,6 +91,6 @@ int main(void)
     if (test_crc32c() != 0 || test_superblock() != 0 || test_node() != 0) {
         return 1;
     }
-    printf("fs+ format test: OK\n");
+    printf("FS+ format test: OK\n");
     return 0;
 }

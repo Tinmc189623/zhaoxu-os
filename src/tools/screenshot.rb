@@ -1,18 +1,17 @@
 #!/usr/bin/env ruby
-# screenshot.rb -- boot Zhaoxu OS headless, run Aqua Desktop Environment, and capture the
-# QEMU framebuffer to a PNG for visual verification.
+# screenshot.rb -- boot Zhaoxu OS headless, wait for Aqua Desktop Environment,
+# and capture the QEMU framebuffer to a PNG for visual verification.
 #
 #   usage: ruby tools/screenshot.rb [seconds-before-shot] [out.png]
 #   env:   SMOKE_DISTRO SMOKE_ROOT SMOKE_BOOT SMOKE_TIMEOUT
-#          SHOT_CMD: shell line that starts the GUI (default "desktop")
 #          SHOT_HMP: newline-separated HMP commands (e.g. mouse_move /
 #                    mouse_button) executed before the screendump;
 #                    SHOT_STEP (default 0.2) and SHOT_WAIT (default 0.5)
 #                    control the pause between commands / before the shot.
 #
-# Boots with -display none, drives the serial shell through wsl.exe like
-# smoke.rb, then asks the QEMU HMP monitor (TCP) for a screendump and turns
-# the PPM into a PNG with zlib. Pure Ruby.
+# Boots with -display none, waits for the desktop through wsl.exe, then asks
+# the QEMU HMP monitor (TCP) for a screendump and turns the PPM into a PNG
+# with zlib. Pure Ruby.
 
 require "open3"
 require "socket"
@@ -42,7 +41,7 @@ iso_file = Dir[File.join(win_root, "out", "zhaoxu-os_x86-64_*_ld.iso")]
 if boot.start_with?("iso") && !iso_file
   abort "out/zhaoxu-os_x86-64_*_ld.iso not found; run `make iso` first"
 end
-iso_drive = "-cdrom out/#{iso_file ? File.basename(iso_file) : "zhaoxu-os_x86-64_0.7.1_6_ld.iso"}"
+iso_drive = "-cdrom out/#{iso_file ? File.basename(iso_file) : "zhaoxu-os_x86-64_0.7.20_2026-11-16_ld.iso"}"
 drives = case boot
          when "esp"
            [
@@ -141,10 +140,7 @@ Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout,
   stderr.binmode
   deadline = Time.now + TIMEOUT
 
-  prompt_seen = false
-  desktop_sent = false
-  desktop_at = nil
-  typed = false
+  started = Time.now
   loop do
     left = deadline - Time.now
     break if left <= 0
@@ -158,31 +154,7 @@ Open3.popen3("wsl", "-d", DISTRO, "--", "bash", "-lc", inner) do |stdin, stdout,
         end
       end
     end
-    unless prompt_seen
-      # A graphical boot never reaches the 8sh prompt.  SHOT_NO_SHELL keeps
-      # the delayed screendump useful for the desktop and the installer.
-      if ENV["SHOT_NO_SHELL"] == "1"
-        prompt_seen = true
-        desktop_sent = true
-        desktop_at = Time.now
-        next
-      end
-      prompt_seen = out.include?("zhaoxu>")
-      next
-    end
-    unless desktop_sent
-      stdin.write((ENV["SHOT_CMD"] || "desktop") + "\n")
-      stdin.flush
-      desktop_sent = true
-      desktop_at = Time.now
-    end
-    if desktop_sent && !typed && ENV["SHOT_TYPE"] &&
-       Time.now - desktop_at >= (ENV["SHOT_TYPE_AT"] || 1.5).to_f
-      stdin.write(ENV["SHOT_TYPE"].gsub("\\n", "\n"))
-      stdin.flush
-      typed = true
-    end
-    break if desktop_sent && Time.now - desktop_at >= DELAY
+    break if Time.now - started >= DELAY
   end
   sleep 0.5
 
