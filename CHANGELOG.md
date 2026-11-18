@@ -2,6 +2,14 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 build 20
+
+### Licensing — GPL-2.0
+- The project is relicensed from Apache License 2.0 to the GNU General Public License v2.0 (GPL-2.0-only). `LICENSE` now carries the canonical GPL-2.0 text; the Apache `NOTICE` file is removed. The README and CONTRIBUTING license sections are updated.
+- GPL-2.0-only matches the Linux kernel (`GPL-2.0 WITH Linux-syscall-note`), as required for the XNU-style hybrid kernel: Linux 7.4-rc3 integrated as an in-kernel auxiliary personality (Yuanshuo as the Mach-like core, Linux as the BSD-like personality) in a single image. See `docs/superpowers/specs/2026-11-18-xnu-linux-design.md`.
+- Third-party components keep their own licenses (`THIRD_PARTY_NOTICES.md`); the project license does not relicense them. The rule-35 copyright footers are retained. `RULES.md` is unchanged (rule 41).
+- The Linux kernel is not yet vendored; its `THIRD_PARTY_NOTICES.md` entry lands with the M2 integration. The XNU-style integration is staged (M1+); this build is the licensing + design milestone (M0).
+
 ## 0.7.1 「Yuanshuo」 build 19
 
 ### Color channel fix

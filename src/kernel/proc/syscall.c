@@ -110,6 +110,7 @@
 #define SYS_DUP2            75
 #define SYS_IOCTL           76
 #define SYS_STAT            77
+#define SYS_GETPPID         78
 
 #define BLK_SECTOR_BYTES 512u
 #define BLK_MAX_SECTORS  8u
@@ -1052,6 +1053,9 @@ void syscall_dispatch(struct interrupt_frame *frame)
         break;
     case SYS_GETPID:
         result = (long)process->pid;
+        break;
+    case SYS_GETPPID:
+        result = (long)process->parent_pid;
         break;
     case SYS_OPEN:
         result = syscall_open(process, frame->rdi);

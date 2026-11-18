@@ -33,12 +33,7 @@ int user_main(long *stack)
     long argc = stack[0];
     const char **argv = (const char **)(stack + 1);
 
-    u16 cs;
-    __asm__ volatile("mov %%cs, %0" : "=r"(cs));
-
-    u_puts("\n[init] ring 3 alive: CS=");
-    u_puthex(cs);
-    u_puts(" pid=");
+    u_puts("\n[init] ready: pid=");
     u_putn(sys_getpid());
     u_puts(" uptime=");
     u_putn(sys_uptime());

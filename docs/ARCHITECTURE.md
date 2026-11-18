@@ -4,7 +4,6 @@
 
 - Kernel: `Yuanshuo`
 - Operating system: `Zhaoxu OS`
-- Shell: `8sh`
 - Desktop: `Aqua Desktop Environment` (style: Aqua)
 - Window manager: `Desktop Window Manager`
 
@@ -14,7 +13,7 @@ The kernel keeps only `arch`, memory management, thread/process scheduling, IPC,
 
 ```
 Ring3 services                      Ring3 applications
-  aqua     display server / Shell / Desktop Window Manager    /bin/apps/*.zxe
+  aqua     display server / Desktop Window Manager            /bin/apps/*.zxe
   drivers  storage / input / display / bus
       │                                    │
       └──────── named ports + shared memory ────────┘
@@ -42,10 +41,10 @@ Yuanshuo: address spaces, processes, IPC, IRQ/MMIO grants, framebuffer mapping
   `compositor/` (layers, back buffer, damage present, software cursor), `wm/` (window table, focus, z-order,
   hit testing, dragging), `theme/` (Aqua tokens). ZAF runs in Ring3 and links into `/bin/aqua`; the kernel does
   not include ZAF. See `src/zaf/README.md` for the file responsibility table.
+- `third_party/bash` is GNU bash 5.3; `tools/bash.rb` cross-builds it against
+  newlib and the POSIX glue into `/bin/bash`.
 - `src/apps/drivers/` holds Ring3 driver services: AHCI, PS/2, mouse, RTC, serial; the kernel requests block I/O
   through the shared pages in `kernel/include/dev.h`, and logs and input use shared rings.
-- `src/apps/csh/` is the Ring3 Shell: `main.c` (REPL), `builtins.c`, `files.c`,
-  `run.c`, `install.c`, `io.c`; each file handles one class of command.
 - Application clients live in `src/user/` (such as `welcome_client.c` and `calc_client.c`), build into standalone
   `.zxe` files, depend only on Z64 and the client SDK, and do not include Aqua Desktop Environment internal headers.
 - Fonts (MiSans, MiSans Global, Inter) belong to the system: `libzos` loads them from `/mnt`,
@@ -76,7 +75,7 @@ Yuanshuo: address spaces, processes, IPC, IRQ/MMIO grants, framebuffer mapping
 ### P2 landed
 
 - `/bin/aqua` starts as the Ring3 display server; the kernel `spawn`s it and then `wait`s, and prints a log and halts on failure (the kernel no longer contains an Aqua Desktop Environment fallback).
-- Without a framebuffer the kernel starts Ring3 `/bin/8sh`.
+- Without a framebuffer the kernel starts Ring3 `/bin/bash` on the tty.
 - Syscalls expanded: `fb_map`, `mouse`, `key`, `sleep`, `cpus`, `rtc`, `read_path`,
   `port_try_accept`, `port_try_recv`, `readdir`, `disks`, `install`.
 - `libzos` reuses `kernel/gfx/render.c`, `svg.c`, `font/ttf.c`, and stb_truetype to

@@ -19,7 +19,7 @@
 static int sys_version(char *buffer, usize capacity)
 {
     return ksnprintf(buffer, capacity, "%s %s build %s\n", ZHAOXU_VERSION,
-                     ZHAOXU_KERNEL_VERSION, ZHAOXU_BUILD);
+                     ZHAOXU_CODENAME, ZHAOXU_BUILD);
 }
 
 static int sys_cpus(char *buffer, usize capacity)

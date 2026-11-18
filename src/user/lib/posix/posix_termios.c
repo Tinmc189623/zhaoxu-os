@@ -7,10 +7,19 @@
 
 #include <errno.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <termios.h>
 #include <unistd.h>
+
+/* The kernel exposes no /dev nodes, so a tty has no path to report. */
+char *ttyname(int fd)
+{
+    (void)fd;
+    errno = ENOTTY;
+    return NULL;
+}
 
 /* Underscored ioctl stub newlib calls with a fixed pointer argument. */
 int _ioctl(int fd, unsigned long request, void *argument)

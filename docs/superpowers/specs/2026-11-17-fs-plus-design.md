@@ -11,7 +11,7 @@ File system name: `FS+` (exact spelling; see §1.4)
 FS+ is the versioned state layer of Zhaoxu OS. It makes the operating system’s
 state a first-class object that can be snapshotted, cloned, verified, repaired,
 encrypted and booted without copying the file tree. The implementation is a
-64-bit copy-on-write B+tree in Ring 3 as `/bin/fs+`.
+64-bit copy-on-write B+tree in Ring 3 as `/bin/fsplus`.
 
 The design driver is not parity with APFS, XFS or ext4. Those file systems are
 the floor, not the goal. FS+ must also provide:
@@ -44,7 +44,7 @@ decide conformance.
 | Version transport | native diff, send and receive between FS+ volumes |
 | Self-healing | mirror and erasure profiles with online scrub and repair |
 | Metadata security | encrypted FS tree payloads, TPM-sealed keys and anti-rollback |
-| Service containment | `/bin/fs+` crash or restart returns EIO, never panics the kernel |
+| Service containment | `/bin/fsplus` crash or restart returns EIO, never panics the kernel |
 | Snapshot creation | O(1): copy one root item, no tree walk, no per-block refcount update |
 | Snapshot deletion | O(1) metadata removal; reclamation is asynchronous and bounded per AG |
 | Writable clone | O(1): share the source tree version, then CoW independently |
@@ -52,7 +52,7 @@ decide conformance.
 | Allocation | Per-AG free-space trees and locks; prepare in parallel, publish one root generation |
 | Online grow | Append an AG without remounting or rewriting live trees |
 | Integrity | CRC32C on superblocks, B+tree nodes and every stored data block |
-| Repair | Offline `fsck.fs+` plus online scrub; never patch a live tree in place |
+| Repair | Offline `fsck.fsplus` plus online scrub; never patch a live tree in place |
 | POSIX | Files, directories, symlinks, hard links, rename, truncate, fsync, xattr, statfs |
 | Subvolumes | Writable roots with independent inode counters; no nesting |
 | Snapshots | Read-only roots sharing a version; deletion does not walk the tree |
@@ -67,11 +67,19 @@ refuses mount. A missing gate is an open blocker, not a completed design choice.
 
 ### 1.4 Naming rule
 
-The name is exactly `FS+`, with the two ASCII letters followed by the ASCII
+The file system is called `FS+`: the two ASCII letters followed by the ASCII
 plus sign. Do not expand it, translate it, add a Chinese name, or change the
-plus sign. This applies to documentation, UI strings, volume labels, tool output
-and commit messages. Volume labels may add a role suffix such as `ZHAOXUROOT`;
-the file-system name itself stays `FS+`.
+plus sign. Prose, documentation titles, UI strings, volume labels, tool output
+and commit messages use `FS+`. Volume labels may add a role suffix such as
+`ZHAOXUROOT`; the file-system name itself stays `FS+`.
+
+Every path and identifier uses the lowercase ASCII form `fsplus` instead, with
+no plus sign anywhere: `src/fs/fsplus/`, `src/apps/fsplus/`, `/bin/fsplus`,
+`mkfs.fsplus`, `fsck.fsplus`, `tools/fsplus-test.rb`, `fsplus.state=current`.
+Directories, file names, binary names, shell commands, configuration keys and C
+symbols never carry `+`, `-plus` or any other stand-in for it. A directory named
+`fs+` is a build break, not a style choice: `+` is a shell and URL metacharacter,
+breaks Makefile and glob handling on several hosts, and has no place in a path.
 
 ## 2. Design Principles
 
@@ -198,7 +206,7 @@ Mount reads both slots, validates each independently, and chooses the valid slot
 with the highest generation. A slot whose checksum, generation parity, AG
 geometry, root-tree node or level fails validation is ignored. If the newest
 slot’s root tree fails its checksum, the older slot is used and a recovery
-message is logged. If both slots are invalid, mount fails and `fsck.fs+` is
+message is logged. If both slots are invalid, mount fails and `fsck.fsplus` is
 required.
 
 The two-slot fallback is safe because a transaction does not reuse a block it
@@ -660,7 +668,7 @@ authentication tag. A failed mirror copy is retried on another copy; an erasure
 block is reconstructed from the surviving data and parity chunks. A successful
 read repair rewrites the bad copy and records a health event.
 
-`scrub.fs+` walks the committed root tree and every retained tree version:
+`scrub.fsplus` walks the committed root tree and every retained tree version:
 
 1. Reads every metadata node and validates checksum, owner, level and item
    bounds.
@@ -673,7 +681,7 @@ read repair rewrites the bad copy and records a health event.
 
 A group with no remaining redundancy mounts read-only. A group with surviving
 redundancy mounts read-write in degraded mode; new writes continue to all
-reachable members and scrub rebuilds missing copies. `fs+ health` reports device
+reachable members and scrub rebuilds missing copies. `fsplus-health` reports device
 state, scrub progress, repaired blocks and degraded groups. A device that
 disappears is not silently removed from the group.
 
@@ -857,7 +865,7 @@ rollback state.
 
 The session records the update id, package manifest hash and boot selector in
 the root metadata tree. The boot selector is written to two redundant FAT32
-files, `FS+BOOT0.CFG` and `FS+BOOT1.CFG`, on the ESP because Limine cannot read
+files, `FSPLUS0.CFG` and `FSPLUS1.CFG`, on the ESP because Limine cannot read
 FS+. Each copy contains the volume UUID, root id, tree version, generation and
 checksum. A selector update is atomic at the FAT directory level; one copy
 remains readable if the other is torn.
@@ -874,13 +882,13 @@ state is identified by root id, tree version and UUID, not by a kernel copy.
 
 `limine.conf` contains at least these entries:
 
-- `FS+ current`: boots the normal kernel with `fs+.state=current`;
-- `FS+ previous`: boots the same kernel with `fs+.state=previous`;
-- `FS+ recovery`: boots the initramfs with `fs+.state=recovery`,
-  `fs+.readonly=1`.
+- `FS+ current`: boots the normal kernel with `fsplus.state=current`;
+- `FS+ previous`: boots the same kernel with `fsplus.state=previous`;
+- `FS+ recovery`: boots the initramfs with `fsplus.state=recovery`,
+  `fsplus.readonly=1`.
 
 The initramfs reads the boot selector from the two FAT32 selector copies,
-chooses the matching root version, starts `/bin/fs+`, mounts the state read-only
+chooses the matching root version, starts `/bin/fsplus`, mounts the state read-only
 and verifies it. If verification fails, it falls back to the other selector copy
 and then to the previous state. A writable boot mounts and pivots only after the
 service reports READY.
@@ -903,7 +911,7 @@ directory changes, extent mappings, data blocks, checksums and device topology.
 before publishing. The stream is self-describing and versioned; an unknown
 record type aborts the receive without touching the current root.
 
-`fs+ send` and `fs+ receive` use the same RPC operations as the version manager.
+`fsplus-send` and `fsplus-receive` use the same RPC operations as the version manager.
 An incremental stream can recreate a bootable state on another FS+ volume
 without copying unchanged data.
 
@@ -977,7 +985,7 @@ refuses a state older than the counter unless an explicit recovery token is
 present, which is the anti-rollback gate. The same measurement can be included
 in a Secure Boot attestation quote.
 
-`fsck.fs+` can validate structure and ciphertext checksums without a key; deep
+`fsck.fsplus` can validate structure and ciphertext checksums without a key; deep
 metadata repair needs the unlocked key. Key loss means data loss; there is no
 recovery key in the current format.
 
@@ -993,7 +1001,7 @@ truncation.
 
 ### 10.6 Scrubbing and growth
 
-`scrub.fs+` walks every tree and data block, verifies checksums, reference
+`scrub.fsplus` walks every tree and data block, verifies checksums, reference
 counts, dead intervals, AG free-space accounting, mirror copies and erasure
 parity. It reconstructs and rewrites bad chunks when redundancy survives, runs
 online against a snapshot of the current root, and records device health.
@@ -1036,7 +1044,7 @@ as free.
 
 ## 12. Ring 3 Integration
 
-`/bin/fs+` implements the VFS request window used by `/bin/ext4fs`: one control
+`/bin/fsplus` implements the VFS request window used by `/bin/ext4fs`: one control
 page plus the current 4 KiB data window (`FS_DATA_SIZE`), with a state machine
 of `IDLE -> REQUEST -> DONE -> IDLE`. A 64 KiB window is a separate ABI change;
 FS+ stays correct with 4 KiB requests and chunks larger transfers.
@@ -1095,7 +1103,7 @@ widened, and cannot be delegated. `/bin/ext4fs` moves to the same capability
 model. The service must flush every member at commit points; a driver that
 cannot flush forces read-only mounting for that group.
 
-Mount startup order: start `/bin/fs+`, `PROBE` the selected state, verify the
+Mount startup order: start `/bin/fsplus`, `PROBE` the selected state, verify the
 root version and mount FS+; if it fails, try `/bin/ext4fs` as a fallback root at
 `/mnt`; if that fails, use the kernel FAT32 path and the `/data` mirror. The
 default FS+ subvolume becomes `/` after READY; `SUBVOL_LIST` and `MOUNT_ROOT`
@@ -1108,9 +1116,9 @@ superblock slots, AG 0, the root tree, the default subvolume, the AG tree, the
 device tree and the initial per-AG trees. Limine keeps loading everything from
 the ESP.
 
-`fs+import` reads an ext4 volume through `/bin/ext4fs` or a FAT32 volume through
+`fsplus-import` reads an ext4 volume through `/bin/ext4fs` or a FAT32 volume through
 the FAT service and writes a new FS+ root while preserving modes, owners, times
-and supported xattrs. `fs+export` performs the reverse into ext4 where the
+and supported xattrs. `fsplus-export` performs the reverse into ext4 where the
 target supports POSIX metadata; FAT32 export records what the format can carry
 and reports the rest. The migration never overwrites the source volume.
 
@@ -1118,26 +1126,26 @@ and reports the rest. The migration never overwrites the source volume.
 
 | Tool | Role |
 |---|---|
-| `src/fs/fs+/` | core: superblocks, AGs, B+tree, FS tree, refcount/dead/checksum trees, epoch reclaimer, checker |
-| `src/apps/fs+/` | Ring 3 service: RPC, device capabilities, AG workers, commit, reclaimer, TPM/key handling, page cache |
-| `mkfs.fs+` | Ring 3 and host-buildable formatter, device groups and redundancy profiles |
-| `fsck.fs+` | offline checker and repair tool |
-| `scrub.fs+` | online checksum, parity, tree and AG verifier and repair |
-| `fs+resize` | online grow and offline shrink |
-| `fs+clone` | snapshot, clone and reflink front end |
-| `fs+status` | version graph, AG state, free/reclaimable space, workers and reclaimer |
-| `fs+diff` / `fs+send` / `fs+receive` | version diff and incremental transport |
-| `fs+health` | device, AG, degraded-group and scrub health |
-| `fs+update` | update transaction, rollback selector and boot-state management |
-| `fs+import` / `fs+export` | ext4/FAT32 tree migration preserving modes, owners and xattrs where the source supports them |
-| `src/tools/fs+-test.rb` | Ruby host matrix |
-| `src/tools/fs+-fault.rb` | Ruby crash and reclaimer fault injection |
+| `src/fs/fsplus/` | core: superblocks, AGs, B+tree, FS tree, refcount/dead/checksum trees, epoch reclaimer, checker |
+| `src/apps/fsplus/` | Ring 3 service: RPC, device capabilities, AG workers, commit, reclaimer, TPM/key handling, page cache |
+| `mkfs.fsplus` | Ring 3 and host-buildable formatter, device groups and redundancy profiles |
+| `fsck.fsplus` | offline checker and repair tool |
+| `scrub.fsplus` | online checksum, parity, tree and AG verifier and repair |
+| `fsplus-resize` | online grow and offline shrink |
+| `fsplus-clone` | snapshot, clone and reflink front end |
+| `fsplus-status` | version graph, AG state, free/reclaimable space, workers and reclaimer |
+| `fsplus-diff` / `fsplus-send` / `fsplus-receive` | version diff and incremental transport |
+| `fsplus-health` | device, AG, degraded-group and scrub health |
+| `fsplus-update` | update transaction, rollback selector and boot-state management |
+| `fsplus-import` / `fsplus-export` | ext4/FAT32 tree migration preserving modes, owners and xattrs where the source supports them |
+| `src/tools/fsplus-test.rb` | Ruby host matrix |
+| `src/tools/fsplus-fault.rb` | Ruby crash and reclaimer fault injection |
 
 Repository scripts are Ruby. The formatter, checker and service are C programs.
 Host tests build the same core against a file-backed block device; no second
 implementation is allowed.
 
-`fsck.fs+` order:
+`fsck.fsplus` order:
 
 1. Validate every reachable superblock copy, AG geometry, the AG tree and the
    device tree; verify that every AG’s device group has enough members for its
@@ -1192,7 +1200,7 @@ snapshot or clone root is never silently converted or deleted.
   fiemap, O_DIRECT alignment, quotas.
 - Performance: run the target benchmark matrix on the published hardware and
   raw device; a miss of any gate blocks release.
-- After every scenario `fsck.fs+ -n` and `scrub.fs+ -n` must be clean.
+- After every scenario `fsck.fsplus -n` and `scrub.fsplus -n` must be clean.
 
 ### 14.2 Crash and reclaimer fault injection
 
@@ -1238,7 +1246,7 @@ snapshot or clone root is never silently converted or deleted.
   structures.
 - Implement mkfs: superblocks, AG 0, root tree, AG tree, initial per-AG trees,
   default subvolume and root directory.
-- Host-buildable `mkfs.fs+`; read-only fsck on a fresh image.
+- Host-buildable `mkfs.fsplus`; read-only fsck on a fresh image.
 - Acceptance: host matrix formats valid images; `fsck -n` passes.
 
 ### M1 — Read-only
@@ -1282,7 +1290,7 @@ snapshot or clone root is never silently converted or deleted.
 
 ### M6 — Service, installer and compatibility
 
-- `/bin/fs+` RPC, per-device block capabilities, AG workers, commit thread,
+- `/bin/fsplus` RPC, per-device block capabilities, AG workers, commit thread,
   installer default, ext4 fallback, subvolume/snapshot/clone mounts, update
   transactions, boot selector and rollback, diff/send/receive.
 - Acceptance: fresh GPT/MBR installs boot; FS+ becomes `/`; ext4 volumes still
@@ -1292,7 +1300,7 @@ snapshot or clone root is never silently converted or deleted.
 ### M7 — Operations and tuning
 
 - Online grow, offline shrink, scrub, TRIM, quota limits, allocation locality,
-  reclaimer tuning, mirror/erasure rebuild, `fs+ health`, read-only and private
+  reclaimer tuning, mirror/erasure rebuild, `fsplus-health`, read-only and private
   mmap, writable shared mmap, performance against ext4 and XFS benchmarks.
 - Acceptance: growth/shrink/scrub/rebuild/mmap pass; throughput and snapshot
   latency meet published targets; no crash-test regression.

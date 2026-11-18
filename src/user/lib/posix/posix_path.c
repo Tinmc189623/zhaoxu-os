@@ -3,6 +3,7 @@
  * ZOS has no working-directory state yet, so chdir/getcwd report the root
  * and dirname/basename implement the POSIX string rules. */
 #include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -25,11 +26,20 @@ char *getwd(char *buffer)
     return buffer;
 }
 
-/* POSIX getcwd over the same fixed root. */
+/* POSIX getcwd over the same fixed root; a NULL buffer allocates. */
 char *getcwd(char *buffer, size_t size)
 {
-    if (!buffer || size < 2)
+    if (!buffer) {
+        size = size ? size : 2;
+        buffer = malloc(size);
+        if (!buffer) {
+            errno = ENOMEM;
+            return NULL;
+        }
+    } else if (size < 2) {
+        errno = ERANGE;
         return NULL;
+    }
     buffer[0] = '/';
     buffer[1] = '\0';
     return buffer;
@@ -69,6 +79,34 @@ char *basename(char *path)
     if (end < path + strlen(path))
         *end = '\0';
     return base;
+}
+
+/* File-creation mask; the kernel does not apply it to open() yet. */
+static mode_t g_umask = 022;
+
+mode_t umask(mode_t mask)
+{
+    mode_t old = g_umask;
+    g_umask = mask;
+    return old;
+}
+
+/* The kernel has no open-file mode change. */
+int fchmod(int fd, mode_t mode)
+{
+    (void)fd;
+    (void)mode;
+    errno = ENOSYS;
+    return -1;
+}
+
+/* The VFS has no hard links. */
+int link(const char *oldpath, const char *newpath)
+{
+    (void)oldpath;
+    (void)newpath;
+    errno = ENOSYS;
+    return -1;
 }
 
 /* There is no permission model to change yet. */

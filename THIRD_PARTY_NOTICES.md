@@ -2,6 +2,17 @@
 
 Zhaoxu OS incorporates or redistributes the following third-party material.
 
+The Zhaoxu OS project itself — the original Yuanshuo kernel, userland and
+tooling — is licensed under the GNU General Public License v2.0 (GPL-2.0-only);
+see `LICENSE`. The components below retain their own licenses and are aggregated
+with, not relicensed under, the project license.
+
+The XNU-style hybrid kernel design integrates the Linux kernel (7.4-rc3,
+`GPL-2.0 WITH Linux-syscall-note`) as an in-kernel auxiliary personality,
+preserving its upstream terms. Linux is not yet vendored; its entry is added to
+this file at the M2 integration milestone (see
+`docs/superpowers/specs/2026-11-18-xnu-linux-design.md`).
+
 ## font8x8
 
 - Files: `src/kernel/font/font8x8_basic.h`

@@ -268,7 +268,7 @@ $(HEADLESS_HEADER): FORCE
 
 FORCE:
 
-.PHONY: all clean run iso run-iso run-install run-bios run-install-bios version fonts host-test fs+-test FORCE
+.PHONY: all clean run iso run-iso run-install run-bios run-install-bios version fonts host-test fsplus-test bash FORCE
 
 # The kernel is built for the ISO and the installer; Limine stays the only
 # boot manager (rules 8/31), and the installed ESP carries the kernel and
@@ -295,8 +295,8 @@ host-test:
 	$(RUBY) tests/tools/host_test.rb
 
 # FS+ on-disk format tests (host compiler; not linked into the kernel).
-fs+-test:
-	$(RUBY) tools/fs+-test.rb
+fsplus-test:
+	$(RUBY) tools/fsplus-test.rb
 
 # ---- Ring 3 programs -------------------------------------------------
 USER_CFLAGS := $(CROSS) -m64 -std=gnu11 -O2 -ffreestanding -fpie \
@@ -356,7 +356,7 @@ NL_BUILD := $(BUILD)/newlib
 # POSIX glue is split by responsibility (rules 23/29): file/process syscalls,
 # termios, signals, accounts, paths, directory streams, limits and time.
 POSIX_NAMES := libgloss posix_termios posix_signal posix_account posix_path \
-               posix_dirent posix_rlimit posix_time
+               posix_dirent posix_rlimit posix_time posix_select
 POSIX_OBJS := $(addprefix $(NL_BUILD)/,$(addsuffix .o,$(POSIX_NAMES)))
 
 $(NL_BUILD)/%.o: user/lib/posix/%.c
@@ -703,16 +703,13 @@ $(BUILD)/zaf_gfx_demo.uelf: $(ZAF_GFX_SRCS) $(ZAF_GFX_HDRS) user/user.ld
 	$(CC) $(USER_CFLAGS) -Iuser -Iuser/lib/include -Ikernel/include \
 	  $(USER_LDFLAGS) -o $@ $(ZAF_GFX_SRCS)
 
-# ---- csh: the ring 3 shell ------------------------------------------
-CSH_SRCS := apps/csh/main.c apps/csh/io.c apps/csh/commands.c \
-            apps/csh/builtins.c apps/csh/files.c apps/csh/run.c \
-            apps/csh/write.c apps/csh/install.c user/userlib.c
-CSH_HDRS := apps/csh/csh.h user/userlib.h kernel/include/version.h
+# ---- bash: the Ring 3 shell -----------------------------------------
+# The vendored GNU bash 5.3 source is cross-built against newlib by
+# tools/bash.rb and packed as a ZXE image.
+$(OUT)/bash.elf: tools/bash.rb third_party/bash/configure user/elf.ld
+	$(RUBY) tools/bash.rb
 
-$(BUILD)/8sh.uelf: $(CSH_SRCS) $(CSH_HDRS) user/user.ld
-	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -Iapps/csh -Iuser -Ikernel/include \
-	  $(USER_LDFLAGS) -o $@ $(CSH_SRCS)
+bash: $(OUT)/bash.elf
 
 # ---- ext4fs: the Ring3 ext4 service --------------------------------
 # Owns the OS-independent ext4 core (fs/ext4) and talks to the kernel over
@@ -776,7 +773,7 @@ $(BUILD)/drivers.uelf: $(DRV_OBJS) user/user.ld
 
 # ---- initramfs -------------------------------------------------------
 RAMFS := $(BUILD)/initramfs
-RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/aqua $(RAMFS)/bin/8sh \
+RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/aqua $(RAMFS)/bin/bash \
                $(RAMFS)/bin/drivers $(RAMFS)/bin/ext4fs $(RAMFS)/bin/display \
                $(RAMFS)/bin/wayland $(RAMFS)/bin/wldemo \
                $(RAMFS)/bin/apps/welcome.zxe $(RAMFS)/bin/apps/calc.zxe \
@@ -823,7 +820,7 @@ $(RAMFS)/bin/aqua: $(OUT)/aqua.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-$(RAMFS)/bin/8sh: $(OUT)/8sh.zxe
+$(RAMFS)/bin/bash: $(OUT)/bash.elf
 	@mkdir -p $(dir $@)
 	cp $< $@
 
@@ -944,6 +941,8 @@ $(RAMFS)/data/DOCS/INFO.TXT: initramfs/data/info.txt
 
 $(OUT)/initramfs.tar: $(RAMFS_FILES)
 	@mkdir -p $(OUT)
+	# Drop the retired shell from trees produced before its removal.
+	@rm -f $(RAMFS)/bin/8sh
 	$(TAR) $(TAR_FORMAT) $(TAR_OWNER) -cf $@ -C $(RAMFS) .
 
 # The BIOS stage 2 stages the whole kernel below the EBDA (448 KiB), and the
@@ -983,8 +982,9 @@ $(DATA_IMG): $(OUT)/hello.zxe $(OUT)/ft_test.zxe $(OUT)/gl_test.zxe $(OUT)/vk_te
 	MTOOLS_SKIP_CHECK=1 $(MCOPY) -o -i $@ initramfs/data/info.txt ::/DOCS/INFO.TXT
 
 # The installer warns when the build is headless: the kernel it copies to the
-# target would then boot straight to csh.  The flag only lives in -DHEADLESS,
-# so this object must follow $(HEADLESS_HEADER).
+# target would then boot without Aqua Desktop Environment and without a
+# command line.  The flag only lives in -DHEADLESS, so this object follows
+# $(HEADLESS_HEADER).
 $(BUILD)/kernel/fs/install.o: kernel/fs/install.c $(HEADLESS_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -DHEADLESS=$(HEADLESS) -c $< -o $@
@@ -1040,7 +1040,7 @@ $(BUILD)/limine-bios-hdd.bin: third_party/limine/limine-bios-hdd.h \
 clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin \
 	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/aqua.zxe \
-	       $(OUT)/8sh.zxe $(OUT)/initramfs.tar $(OUT)/initramfs.z \
+	       $(OUT)/bash.elf $(OUT)/initramfs.tar $(OUT)/initramfs.z \
 	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu-os_x86-64_*_ld.iso \
 	       $(OUT)/*.patched $(OUT)/target.img
 
@@ -1076,9 +1076,9 @@ $(TARGET_IMG):
 run: run-iso
 
 # ---- UEFI ISO --------------------------------------------------------
-# Rule 11: ISO files are named zhaoxu-os_x86-64_{version}_{build}_ld.iso.
+# Rule 11: ISO files are named zhaoxu-os_x86-64_{version}_{build-date}_ld.iso.
 # version.cfg is the single source; version.h holds the synced macros.  Read
-# all four values with one Ruby call so the ISO metadata matches the build.
+# all five values with one Ruby call so the ISO metadata matches the build.
 VERSION_FIELDS := $(shell $(RUBY) -e 'h=File.read("kernel/include/version.h"); %w[VERSION CODENAME KERNEL KERNEL_VERSION BUILD].each { |k| print(h[/ZHAOXU_#{k}\s+"([^"]+)"/, 1], " ") }')
 ZHAOXU_VERSION := $(word 1,$(VERSION_FIELDS))
 ZHAOXU_CODENAME := $(word 2,$(VERSION_FIELDS))

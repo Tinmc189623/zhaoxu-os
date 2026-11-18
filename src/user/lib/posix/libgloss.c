@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 /* Write bytes to a descriptor. */
@@ -195,12 +196,76 @@ int _execve(const char *path, char *const argv[], char *const envp[])
     return 0;
 }
 
-/* newlib's _wait has no pid; the POSIX wrapper lands with waitpid. */
+/* POSIX names over the newlib syscall entry points. */
+int _fork(void);
+int _execve(const char *path, char *const argv[], char *const envp[]);
+int _pipe(int fds[2]);
+
+pid_t fork(void)
+{
+    return (pid_t)_fork();
+}
+
+int execve(const char *path, char *const argv[], char *const envp[])
+{
+    return _execve(path, argv, envp);
+}
+
+int pipe(int fds[2])
+{
+    return _pipe(fds);
+}
+
+pid_t getppid(void)
+{
+    return (pid_t)zos_syscall3(ZOS_GETPPID, 0, 0, 0);
+}
+
+/* Sleep for whole seconds; the kernel sleep takes milliseconds. */
+unsigned int sleep(unsigned int seconds)
+{
+    zos_syscall3(ZOS_SLEEP, (long)seconds * 1000, 0, 0);
+    return 0;
+}
+
+/* No SIGALRM delivery yet; the alarm is accepted but never fires. */
+unsigned int alarm(unsigned int seconds)
+{
+    (void)seconds;
+    return 0;
+}
+
+/* newlib's _wait has no pid; waitpid() carries the pid through SYS_WAIT. */
 int _wait(int *status)
 {
     (void)status;
     errno = ECHILD;
     return -1;
+}
+
+/* The kernel has no FIFO objects; report the gap instead of faking one. */
+int mkfifo(const char *path, mode_t mode)
+{
+    (void)path;
+    (void)mode;
+    errno = ENOSYS;
+    return -1;
+}
+
+/* Reap one child.  The kernel WAIT call blocks on a specific pid; WNOHANG
+ * has no non-blocking kernel counterpart yet. */
+int waitpid(int pid, int *status, int options)
+{
+    if (options & WNOHANG) {
+        errno = ENOSYS;
+        return -1;
+    }
+    long result = zos_syscall3(ZOS_WAIT, (long)pid, (long)(uintptr_t)status, 0);
+    if (result < 0) {
+        errno = ECHILD;
+        return -1;
+    }
+    return pid;
 }
 
 /* Create a pipe; the kernel returns two zfd numbers. */

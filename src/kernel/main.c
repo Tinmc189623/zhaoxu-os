@@ -95,11 +95,8 @@ void kernel_main(struct boot_info *boot)
     console_init(&g_boot);
 
     console_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
-    kprintf("Zhaoxu OS %s \"%s\" / %s kernel %s (build %s)\n",
-            ZHAOXU_VERSION, ZHAOXU_CODENAME, ZHAOXU_KERNEL,
-            ZHAOXU_KERNEL_VERSION, ZHAOXU_BUILD);
-    console_set_color(COLOR_DARK_GRAY, COLOR_BLACK);
-    kprintf("Microkernel: drivers and applications run in ring 3\n");
+    kprintf("Zhaoxu OS %s \"%s\" (build %s)\n",
+            ZHAOXU_VERSION, ZHAOXU_CODENAME, ZHAOXU_BUILD);
     console_reset_color();
     kprintf("\n");
 
@@ -178,8 +175,8 @@ void kernel_main(struct boot_info *boot)
         status = vfs_stat("/data/HELLO.ZXE", &is_dir, &size);
         kprintf("[m0 ] stat /data/HELLO.ZXE -> %d, dir %d, %llu bytes\n",
                 status, is_dir, size);
-        status = vfs_stat("/bin/8sh", &is_dir, &size);
-        kprintf("[m0 ] stat /bin/8sh -> %d, dir %d, %llu bytes\n",
+        status = vfs_stat("/bin/aqua", &is_dir, &size);
+        kprintf("[m0 ] stat /bin/aqua -> %d, dir %d, %llu bytes\n",
                 status, is_dir, size);
     }
     kprintf("[m0 ] running /data/NET_TEST.ZXE\n");
@@ -349,7 +346,7 @@ void kernel_main(struct boot_info *boot)
     }
 
     console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
-    kprintf("\nBoot complete. No framebuffer; starting 8sh.\n\n");
+    kprintf("\nBoot complete. No framebuffer; starting headless services.\n\n");
     console_reset_color();
 
     /* M2 smoke: the Wayland server is a service; the shm demo client runs
@@ -369,17 +366,21 @@ void kernel_main(struct boot_info *boot)
         kprintf("[wayland] /bin/wayland unavailable\n");
     }
 
+    console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
+    kprintf("\nBoot complete. No framebuffer; starting bash.\n\n");
+    console_reset_color();
+
     for (;;) {
-        u64 shell_pid = process_spawn("/bin/8sh", 0, NULL);
+        u64 shell_pid = process_spawn("/bin/bash", 0, NULL);
         if (!shell_pid) {
             console_set_color(COLOR_LIGHT_RED, COLOR_BLACK);
-            kprintf("[8sh ] /bin/8sh unavailable; halting.\n");
+            kprintf("[bash] /bin/bash unavailable; halting.\n");
             console_reset_color();
             for (;;)
                 hlt();
         }
         int status = -1;
         process_wait(shell_pid, &status);
-        kprintf("[8sh ] exited with %d\n", status);
+        kprintf("[bash] exited with %d\n", status);
     }
 }

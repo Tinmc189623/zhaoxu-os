@@ -2,6 +2,8 @@
  *
  * ZOS has a single built-in account; nano only needs it to label its status
  * bar and to satisfy libc's getpwuid/getpwnam paths. */
+#include <errno.h>
+#include <grp.h>
 #include <pwd.h>
 #include <string.h>
 #include <sys/types.h>
@@ -9,7 +11,7 @@
 
 static char g_user[] = "zhaoxu";
 static char g_home[] = "/";
-static char g_shell[] = "/bin/8sh";
+static char g_shell[] = "";
 
 static struct passwd g_passwd = {
     g_user, (char *)"x", 0, 0, (char *)"", g_home, g_shell
@@ -61,6 +63,47 @@ void setpwent(void)
 }
 
 void endpwent(void)
+{
+}
+
+/* The single account may only set its own uid/root. */
+int setuid(uid_t uid)
+{
+    if (uid == 0 || uid == getuid())
+        return 0;
+    errno = EPERM;
+    return -1;
+}
+
+int setgid(gid_t gid)
+{
+    if (gid == 0 || gid == getgid())
+        return 0;
+    errno = EPERM;
+    return -1;
+}
+
+int setreuid(uid_t real, uid_t effective)
+{
+    return setuid(real) == 0 && setuid(effective) == 0 ? 0 : -1;
+}
+
+int setregid(gid_t real, gid_t effective)
+{
+    return setgid(real) == 0 && setgid(effective) == 0 ? 0 : -1;
+}
+
+/* Zhaoxu has no group database to enumerate. */
+struct group *getgrent(void)
+{
+    return NULL;
+}
+
+void setgrent(void)
+{
+}
+
+void endgrent(void)
 {
 }
 

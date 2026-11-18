@@ -61,10 +61,17 @@ struct termios {
 
 /* c_cflag */
 #define CSIZE   0x0030
+#define CS5     0x0000
+#define CS6     0x0010
+#define CS7     0x0020
 #define CS8     0x0030
+#define CSTOPB  0x0040
 #define CREAD   0x0080
+#define PARENB  0x0100
+#define PARODD  0x0200
 #define HUPCL   0x0400
 #define CLOCAL  0x0800
+#define CRTSCTS 0x80000000u
 
 /* c_lflag */
 #define ISIG    0x0001

@@ -36,7 +36,7 @@ This means:
 
 - Existing Windows, Linux, and data partitions on the target disk disappear with it.
 - The window lists up to four targets. It preselects the first one; click another row to switch. If more than four qualify, disconnect the extra disks so the list is unambiguous.
-- Target detection looks only at the first sector, not at filesystem contents. Blank disks, disks whose boot sector carries Limine's `EB 3C 90` + `LIMINE` signature, and MBR disks whose first partition starts at LBA 2048 with type 0xEF/0x0C/0x0E all become `target` candidates. Some Linux or Windows disks also carry Limine, so confirm the disk is truly expendable; if unsure, unplug it or check with `disks` in `8sh`.
+- Target detection looks only at the first sector, not at filesystem contents. Blank disks, disks whose boot sector carries Limine's `EB 3C 90` + `LIMINE` signature, and MBR disks whose first partition starts at LBA 2048 with type 0xEF/0x0C/0x0E all become `target` candidates. Some Linux or Windows disks also carry Limine, so confirm the disk is truly expendable; if unsure, unplug it.
 - A disk that already holds Zhaoxu OS is recognized as a reinstall target; reinstalling wipes the old system just the same.
 
 ### How large the target disk must be
@@ -69,7 +69,7 @@ cd src
 .\build.ps1 iso
 ```
 
-The product is `src/out/zhaoxu-os_x86-64_0.7.1_6_ld.iso`. The version in the filename comes from `version.cfg`; do not edit it by hand.
+The product is `src/out/zhaoxu-os_x86-64_0.7.20_2026-11-16_ld.iso`. The version in the filename comes from `version.cfg`; do not edit it by hand.
 
 Build dependencies vary by host:
 
@@ -81,7 +81,7 @@ The output of `ruby tools/build.rb --check` is more accurate than this list; whe
 
 ### Download from the release page
 
-If you use a published ISO, its filename should also be `zhaoxu-os_x86-64_0.7.1_6_ld.iso`. Verify the size and checksum after downloading, then write it to the medium.
+If you use a published ISO, its filename should also be `zhaoxu-os_x86-64_0.7.20_2026-11-16_ld.iso`. Verify the size and checksum after downloading, then write it to the medium.
 
 ---
 
@@ -93,7 +93,7 @@ The ISO is a hybrid image with dual El Torito entries plus a GPT hybrid layout; 
 
 Rufus is recommended on Windows:
 
-1. Select `zhaoxu-os_x86-64_0.7.1_6_ld.iso`.
+1. Select `zhaoxu-os_x86-64_0.7.20_2026-11-16_ld.iso`.
 2. Set partition type to GPT and target system to UEFI; machines that only use Legacy BIOS select MBR.
 3. Click "Start". When Rufus asks "ISO Image mode / DD Image mode", choose DD.
 4. Existing data on the USB drive will be erased.
@@ -101,7 +101,7 @@ Rufus is recommended on Windows:
 On Linux/macOS use `dd` directly:
 
 ```bash
-sudo dd if=zhaoxu-os_x86-64_0.7.1_8_ld.iso of=/dev/sdX bs=4M status=progress oflag=sync
+sudo dd if=zhaoxu-os_x86-64_0.7.20_2026-11-16_ld.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
 `of=/dev/sdX` is the whole USB drive, not `/dev/sdX1`. Writing the wrong device destroys another disk; check twice with `lsblk` before running.
@@ -173,13 +173,7 @@ The window header reads "安装 Zhaoxu OS" ("Install Zhaoxu OS") and the subtitl
 
 `磁盘 N` is the zero-based disk index plus one, followed by capacity and model. The first row is selected automatically. Click another row to change the destination; with more than four eligible disks the window asks you to disconnect the extras.
 
-To confirm disk roles from a shell, use `8sh` in a graphics-free environment:
-
-```text
-8sh$ disks
-Idx Port Size Label Role Model
- 0 0 256 MiB - target QEMU HARDDISK
-```
+The installer uses the same role rules internally and lists only eligible target disks.
 
 Role meanings:
 
@@ -339,48 +333,7 @@ VMware's PS/2 keyboard and mouse emulation is sufficient; if the mouse cannot cl
 
 ## 8. Graphics-free installation
 
-When the machine has no usable framebuffer, the kernel starts Ring3 `8sh` instead of Aqua Desktop Environment. Install through serial or headless QEMU. QEMU `-display none` only hides the window; the GOP framebuffer remains and the kernel still starts Aqua Desktop Environment. To use 8sh, disable the graphics layer at build time:
-
-```bash
-ruby tools/build.rb --headless iso
-```
-
-Then boot the ISO built with `HEADLESS=1`; `8sh$ ` appears on serial. Note: the installer copies the bootloader and stage2 currently running, so a headless install still boots only into `8sh` after reboot and will not start Aqua Desktop Environment. For a desktop, go back to section 5 and install with the graphical installer.
-
-```text
-8sh$ disks
-8sh$ install gpt
-```
-
-Or:
-
-```text
-8sh$ install mbr
-8sh$ install 0 gpt
-```
-
-`install` without arguments defaults to MBR and picks the first `target` disk automatically. With an index, run `disks` first and check the `Idx` column; indexing starts at 0.
-
-The output should be:
-
-```text
-Installing GPT + ext4 root; this may take a while...
-Install complete. Boot the target disk directly.
-```
-
-On failure:
-
-```text
-8sh: no suitable blank target disk
-```
-
-Or:
-
-```text
-8sh: install failed while writing the target disk
-```
-
-In the second case serial contains a specific error beginning with `[install]`, such as `target is not a blank Zhaoxu target disk`, `ext4 service could not format the root volume`, or `KERNEL.BIN is not contiguous inside ext4`. Match the error text against the next section.
+A build without a framebuffer starts GNU bash 5.3 on the tty. The graphical installer is still the only installation path; `HEADLESS=1` is not an installation path.
 
 ---
 
@@ -480,7 +433,7 @@ lsblk -f
 sudo blkid
 ```
 
-When `8sh` is available, `disks` also shows roles. However, the first sector of an installed disk is Limine's boot sector, so `disks` marks the whole disk as `target`; that is expected. To judge whether installation succeeded, boot the disk and check serial for `limine: Loading executable`, `[ade ] font boot volume` and `[ade ] wallpaper boot volume`, then `Boot complete. Starting Aqua Desktop Environment.`
+The first sector of an installed disk is Limine's boot sector, so disk-role detection marks the whole disk as `target`; that is expected. To judge whether installation succeeded, boot the disk and check serial for `limine: Loading executable`, `[ade ] font boot volume` and `[ade ] wallpaper boot volume`, then `Boot complete. Starting Aqua Desktop Environment.`
 
 ---
 

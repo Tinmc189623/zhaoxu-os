@@ -25,9 +25,9 @@ with a rule, the rule wins.
   Environment, Desktop Window Compositor, Desktop Window Manager, ZAF, and
   Z64 exactly. Always write the brand `Nexsteaduser` in one word and use
   `admin@nexsteaduser.com` for project mail.
-- The current default shell is 8sh, which is transitional. `RULES.md` rule 1
-  requires bash and forbids further self-developed shell work; do not add new
-  shell features to 8sh. Port bash instead.
+- The shell is GNU bash 5.3, cross-built by `tools/bash.rb` from
+  `third_party/bash`. `RULES.md` rule 1 forbids a new self-developed shell.
+  Port toybox for the full command set.
 
 ## Building
 
@@ -61,8 +61,8 @@ There is no general test suite. At minimum:
 2. A clean `make -j4` links, and `nm -u out/kernel.elf` is empty.
 3. `nm out/kernel.elf` contains none of `ahci_*`, `acpi_init`, `serial_init`,
    `keyboard_*`, `mouse_*`, `pit_init`, or `pci_*`; drivers belong in Ring3.
-4. Boot the ISO in QEMU and reach Aqua Desktop Environment, or 8sh on a
-   headless build. Keep the serial log.
+4. Boot the ISO in QEMU and reach Aqua Desktop Environment. Keep the serial
+   log; a build without a framebuffer starts `/bin/bash` on the tty.
 5. Run the boot test that covers your area (`M0_BOOT_TEST`, `M5_BOOT_TEST`,
    `FT_BOOT_TEST`, `GL_BOOT_TEST`, `VK_BOOT_TEST`, `WLSTOCK_BOOT_TEST`,
    `POSIX_BOOT_TEST`, `NLIBC_BOOT_TEST`, or `FE_BOOT_TEST`) and put the marker
@@ -105,9 +105,10 @@ There is no general test suite. At minimum:
 
 ## License
 
-Contributions are accepted under the Apache License 2.0 in `LICENSE`. By
-submitting a pull request you confirm that you have the right to contribute
-the code and that it is generated and reviewed under the rules above.
+Contributions are accepted under the GNU General Public License v2.0
+(GPL-2.0-only) in `LICENSE`. By submitting a pull request you confirm that you
+have the right to contribute the code and that it is generated and reviewed
+under the rules above.
 
 ---
 

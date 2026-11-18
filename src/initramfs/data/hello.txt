@@ -1,7 +1,6 @@
-Hello from the FAT32 data volume!
+Hello from the Zhaoxu OS data volume!
 
-This text was read through the kernel's AHCI (SATA) block driver and
-the FAT32 filesystem, then delivered to a ring 3 process
-through the open/read syscalls.
+This text was read from the ZHAOXUDATA volume and delivered to an
+application through the Zhaoxu OS file API.
 
 Volume label: ZHAOXUDATA

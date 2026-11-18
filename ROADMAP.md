@@ -10,12 +10,13 @@ compiled, and what is still missing. It is not a promise of dates.
 | --- | --- |
 | Boot | Limine 12.10.0 on UEFI and Legacy BIOS; hybrid ISO and installed ESP boot-tested |
 | Kernel | Yuanshuo microkernel with Ring3 drivers, scheduler, IPC, VFS core, ZXE loader |
+| Hybrid kernel | XNU-style design landed (M0): Linux 7.4-rc3 as an in-kernel auxiliary personality on the Yuanshuo core, single image; project relicensed GPL-2.0. Implementation staged M1–M5 |
 | Desktop | Aqua Desktop Environment on Desktop Window Compositor and Desktop Window Manager, software raster path |
 | Installer | Graphical GPT/MBR flow, custom ESP/data sizes, FAT32/ext4 formatting, Limine deployment |
 | Executables | ZXE v1 PIE, W^X, random load base, Z64 1.0 syscalls 0–77 |
 | POSIX | newlib 4.6, libgloss, pipes, dup2, tty/termios, ncurses 6.5; nano 8.4 compiles but is not yet ZXE-linked |
 | Graphics API | Software OpenGL 1.1 and a software Vulkan 1.0 ICD; the desktop still uses the ZOS raster renderer |
-| Shell/tools | 8sh is still the default; bash and toybox are not ported |
+| Shell/tools | GNU bash 5.3 runs as `/bin/bash`; job control, signals and toybox are pending |
 | Networking, audio, USB HID | Not implemented |
 
 ## Now: finish the foundations
@@ -26,11 +27,9 @@ compiled, and what is still missing. It is not a promise of dates.
 2. **Split the POSIX glue.** `libgloss.c` currently mixes file I/O, process
    control, terminals, signals, accounts and directory streams. Move each into
    its own file under `user/lib/posix/` so rules 23/29 hold.
-3. **bash as the shell.** `RULES.md` rule 1 requires bash and forbids a
-   self-developed shell. Port bash 5.x on newlib/libgloss once the remaining
-   POSIX surface (signals, job control, `tcsetpgrp`, `waitpid`) is in place,
-   then make it the default shell. 8sh stays only as a transition tool until
-   that happens.
+3. **Finish the bash surface.** GNU bash 5.3 is cross-built as `/bin/bash`.
+   Remaining work is signal delivery, job control (`tcsetpgrp`, `SIGCHLD`,
+   `WNOHANG` reaping) and the rest of the POSIX process surface.
 4. **toybox.** Port toybox as the source of standard Unix commands required by
    rule 36. Do not add busybox.
 5. **Version scheme cleanup.** `version.cfg`, `version.h`, the MOTD, the ISO
@@ -58,6 +57,13 @@ compiled, and what is still missing. It is not a promise of dates.
 
 ## Later
 
+- **XNU-style Linux personality.** Integrate Linux 7.4-rc3 as an in-kernel
+  auxiliary personality (Yuanshuo as the Mach-like core, Linux as the BSD-like
+  personality) in a single `KERNEL.ELF`, per
+  `docs/superpowers/specs/2026-11-18-xnu-linux-design.md`. M0 (GPL-2.0 relicense +
+  design) is done; M1 exports the core personality API, M2 ports Linux, M3–M5
+  bring up boot/console, subsystems and syscall routing. Requires the owner's
+  r9 amendment (rule 41) for in-kernel drivers.
 - File system completeness: full ext4 write coverage, FAT32 edge cases, media
   probing, and safe removal.
 - Drivers: NVMe, USB xHCI/HID, virtio-gpu 3D, audio, and power management,

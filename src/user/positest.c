@@ -6,8 +6,7 @@
  *   2. blocking read returns after the writer closes (EOF)
  *   3. dup2 installs a pipe end at a chosen descriptor number
  *
- * Launch with POSIX_BOOT_TEST=1, or from 8sh:
- *   run /data/POSIX_TEST.ZXE
+ * Launch with POSIX_BOOT_TEST=1.
  */
 #include "userlib.h"
 

@@ -2,7 +2,7 @@
 
 Date: 2026-11-17
 Status: Target, not an implementation claim
-File system name: `FS+` (exact spelling)
+File system name: `FS+` (exact spelling; paths and identifiers use `fsplus`)
 
 ## 1. One Sentence
 
@@ -46,7 +46,7 @@ FS+ exposes a version graph, not just files and directories.
 - The boot path can select a previous state. The kernel and Limine files remain
   on the FAT32 ESP, because Limine cannot read FS+; the FS+ root selector is
   passed to the kernel and the initramfs mounts that state.
-- `fs+ diff`, `fs+ send` and `fs+ receive` move a version delta without copying
+- `fsplus-diff`, `fsplus-send` and `fsplus-receive` move a version delta without copying
   unchanged data.
 - Retention policies, pinning and automatic pruning are first-class operations,
   not shell scripts.
@@ -74,7 +74,7 @@ detected, isolated and repaired when local redundancy exists.
   mappings and repairs degraded profiles.
 - A read never returns unverified bytes. A checksum failure returns EIO for that
   range and records a health event.
-- `fs+ health` reports per-AG error counts, scrub progress, degraded profiles
+- `fsplus-health` reports per-AG error counts, scrub progress, degraded profiles
   and repair history.
 
 Target gates:
@@ -151,7 +151,7 @@ service.
 
 - The Yuanshuo kernel contains no FS+ parser, no FS+ allocator and no FS+
   transaction code.
-- `/bin/fs+` runs in Ring 3 with a per-volume block capability.
+- `/bin/fsplus` runs in Ring 3 with a per-volume block capability.
 - The service is crash-only: it can be killed and restarted, and the kernel
   returns EIO rather than panicking.
 - Commit state is a model-checked state machine; every crash point is injected.
@@ -180,13 +180,13 @@ system:
 
 FS+ is observable without a debugger.
 
-- `fs+ status`: version graph, AG health, reclaimer state, free/reclaimable
+- `fsplus-status`: version graph, AG health, reclaimer state, free/reclaimable
   space, worker saturation.
-- `fs+ diff`: version-to-version metadata and data differences.
-- `fs+ send` / `fs+ receive`: incremental version transfer.
-- `fs+ scrub`: online verification and repair.
-- `fs+ fsck`: offline structural repair.
-- `fs+ clone`: snapshot, clone and reflink front end.
+- `fsplus-diff`: version-to-version metadata and data differences.
+- `fsplus-send` / `fsplus-receive`: incremental version transfer.
+- `fsplus-scrub`: online verification and repair.
+- `fsplus-fsck`: offline structural repair.
+- `fsplus-clone`: snapshot, clone and reflink front end.
 - Structured events for checksum errors, degraded profiles, reclaimer stalls and
   capability violations.
 

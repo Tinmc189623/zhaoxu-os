@@ -3,8 +3,7 @@
  *
  * Exercises the whole Wayland prerequisite set without the compositor:
  * AF_UNIX stream sockets, poll readiness, memfd + mmap, SCM_RIGHTS fd
- * passing and O_NONBLOCK.  Run it from 8sh with `run /data/NET_TEST.ZXE`
- * once the toolchain can produce a bootable ISO.
+ * passing and O_NONBLOCK.  M0_BOOT_TEST runs it at boot.
  */
 #include "userlib.h"
 
