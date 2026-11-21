@@ -10,8 +10,8 @@ with a rule, the rule wins.
 - **Code must be AI-generated.** Human-written code is not accepted (rule 6).
   Reviewers will still read it line by line; generating code does not transfer
   responsibility to the tool that produced it.
-- **All repository scripts are Ruby** (rule 6). Do not add shell, Python, or
-  JavaScript build scripts. The Makefile is the build system; Ruby only
+- **All repository scripts are Python, sh or ps1** (rule 6). Prefer Python
+  when a tool needs libraries. The Makefile is the build system; Python only
   handles auxiliary tools under `src/tools/`.
 - **One file does one job** (rules 12, 23, 29). Do not add catch-all files or
   extend an existing catch-all with an unrelated responsibility.
@@ -25,7 +25,7 @@ with a rule, the rule wins.
   Environment, Desktop Window Compositor, Desktop Window Manager, ZAF, and
   Z64 exactly. Always write the brand `Nexsteaduser` in one word and use
   `admin@nexsteaduser.com` for project mail.
-- The shell is GNU bash 5.3, cross-built by `tools/bash.rb` from
+- The shell is GNU bash 5.3, cross-built by `tools/bash.py` from
   `third_party/bash`. `RULES.md` rule 1 forbids a new self-developed shell.
   Port toybox for the full command set.
 
@@ -38,7 +38,7 @@ cd src
 make -j4                 # kernel, user programs and initramfs
 make iso                 # hybrid Limine ISO
 make run-iso             # UEFI QEMU
-make host-test           # Ruby host-detection tests
+make host-test           # Python host-detection tests
 ```
 
 A clean ISO build needs `xorriso`, `mtools`, `dosfstools`, `qemu`,
@@ -46,8 +46,8 @@ OVMF/SeaBIOS firmware, `ffmpeg`, and the cross toolchain described in
 `CLAUDE.md`. A newlib/ncurses/nano build additionally needs:
 
 ```bash
-ruby tools/newlib.rb
-ruby tools/posix-ports.rb
+python3 tools/newlib.py
+python3 tools/posix-ports.py
 ```
 
 Do not commit `build/`, `out/`, `esp/`, generated ISOs, or newlib/ncurses
@@ -57,7 +57,7 @@ installations.
 
 There is no general test suite. At minimum:
 
-1. `ruby tests/tools/host_test.rb` prints `PASS`.
+1. `python3 tests/tools/host_test.py` prints `PASS`.
 2. A clean `make -j4` links, and `nm -u out/kernel.elf` is empty.
 3. `nm out/kernel.elf` contains none of `ahci_*`, `acpi_init`, `serial_init`,
    `keyboard_*`, `mouse_*`, `pit_init`, or `pci_*`; drivers belong in Ring3.

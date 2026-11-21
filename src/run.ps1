@@ -1,7 +1,7 @@
 # Zhaoxu OS 运行入口（PowerShell -> WSL make + QEMU）
 #
 # 构建系统是 Makefile；Windows 默认在 WSL2 里执行 make run-iso。
-# 只有显式 -HostMode native 才走原生 MSYS2 的 Ruby 包装脚本。
+# 只有显式 -HostMode native 才走原生 MSYS2 的 Python 包装脚本。
 [CmdletBinding()]
 param(
     [int]$MemMB = 2048,
@@ -22,26 +22,25 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-function Find-Ruby {
-    $command = Get-Command ruby -ErrorAction SilentlyContinue
+function Find-Python {
+    $command = Get-Command python -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
-    foreach ($candidate in (Get-ChildItem 'C:\Ruby*\bin\ruby.exe' -ErrorAction SilentlyContinue)) {
-        return $candidate.FullName
-    }
+    $command = Get-Command py -ErrorAction SilentlyContinue
+    if ($command) { return $command.Source }
     return $null
 }
 
-$ruby = Find-Ruby
+$python = Find-Python
 $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
 $useWsl = ($HostMode -ne 'native') -and $wsl
 
-# ---- 原生 MSYS2：Ruby 辅助脚本 ---------------------------------------
+# ---- 原生 MSYS2：Python 辅助脚本 -------------------------------------
 if (-not $useWsl) {
-    if (-not $ruby) {
+    if (-not $python) {
         if ($wsl) {
-            [Console]::Error.WriteLine('WSL2 已检测到：去掉 -HostMode native 就直接用 WSL2 的 make；native 模式需要 Ruby。')
+            [Console]::Error.WriteLine('WSL2 已检测到：去掉 -HostMode native 就直接用 WSL2 的 make；native 模式需要 Python。')
         } else {
-            [Console]::Error.WriteLine('未检测到 wsl.exe；安装 WSL2，或安装 Ruby 后使用 -HostMode native。')
+            [Console]::Error.WriteLine('未检测到 wsl.exe；安装 WSL2，或安装 Python 后使用 -HostMode native。')
         }
         exit 1
     }
@@ -56,11 +55,11 @@ if (-not $useWsl) {
     if ($Distro) { $arguments += '--distro'; $arguments += $Distro }
     $arguments += $MakeArgs
     if ($DryRun) {
-        Write-Host "Ruby：$ruby"
-        Write-Host "命令：ruby tools/run.rb $($arguments -join ' ')"
+        Write-Host "Python：$python"
+        Write-Host "命令：python tools/run.py $($arguments -join ' ')"
         exit 0
     }
-    & $ruby (Join-Path $PSScriptRoot 'tools\run.rb') @arguments
+    & $python (Join-Path $PSScriptRoot 'tools\run.py') @arguments
     exit $LASTEXITCODE
 }
 

@@ -2,13 +2,50 @@
 
 Full version history of Zhaoxu OS. See [README.md](README.md) for what the current release does; `version.cfg` is the single source of version numbers.
 
+## 0.7.1 「Yuanshuo」 build 21
+
+### FreeBSD 15.1 personality replaces the Linux plan
+- The XNU-style auxiliary personality is now **FreeBSD 15.1-RELEASE** instead of Linux 7.4-rc3. The design is `docs/superpowers/specs/2026-11-20-xnu-freebsd-design.md`; the 2026-11-18 Linux design document is removed (it stayed at M0 and never had an implementation).
+- FreeBSD is BSD-2-Clause, so the GPL-2.0 relicense is no longer legally required for the combined image; the project stays GPL-2.0 by owner decision. CDDL-only parts of the tree (`sys/contrib/openzfs`, `sys/cddl`) are excluded from the linked image.
+- FreeBSD builds cross-platform through its own `tools/build/make.py` (bmake bootstrap plus an external clang/lld), so WSL2 remains the Windows build host; a FreeBSD VM is the documented fallback.
+- The hybrid kernel is named **OS_5P**, and its device framework is **IO/287**, filling the IOKit role in the XNU model. IO/287 is an in-kernel freestanding C++ framework — matching, registry, driver families — that owns device attachment; the FreeBSD personality consumes its nodes instead of attaching hardware through newbus. The existing Ring3 `/bin/drivers` set stays and migrates per-device.
+- Nothing is vendored or implemented yet. M0 remains a design milestone; M1 (core personality API) is unchanged in shape.
+
+### M1 — core personality API
+- `src/kernel/include/personality.h` defines the kernel-internal contract; `src/kernel/personality/personality.c` implements it: task threads backed by core kthreads with join timeouts, a 256-page reserved VM region granted unmapped with map/unmap/reprotect, trap forwarding out of `interrupt_dispatch`, and a periodic timer service on the boot CPU.
+- `src/kernel/ipc/kport.c` adds kernel-space IPC endpoint pairs (typed messages up to `IPC_MSG_MAX`, 32-deep per-direction queues, close semantics) for a personality that has no process id.
+- `src/kernel/personality/selftest.c` runs with `PERSONALITY_SELFTEST=1` and prints `[per ]` markers. Verified on QEMU: VM map/write/unmap, task thread, kernel IPC, trap forwarding and timer service all PASS.
+- The shipped kernel is unchanged: the self-test body and its object follow the flag through a build stamp, so a test kernel cannot leak into an ISO.
+
+### M3 — boot handoff and console (core side)
+- `personality_start()` records the core `boot_info` for the personality and `personality_boot_info()` reads it back; `personality_console_write()` routes personality output through the core console (`console_write_n`, VGA plus the log ring), which is the call FreeBSD's `cn(4)` backend will make.
+- Verified with `PERSONALITY_SELFTEST=1`: `[per ] boot handoff PASS` and `[per ] console service PASS` appear alongside the M1 checks.
+- This is not M3 itself: the personality still has no machine port, is not linked into `KERNEL.ELF`, and never reaches `mi_startup`. That gate is M2.
+
+### M2 — FreeBSD build input
+- `src/tools/freebsd-personality.py` fetches the pinned 15.1-RELEASE `src.txz` (official URL or `FREEBSD_SRC_URL` mirror), verifies the SHA-256 published in the release MANIFEST (`cf5762da…89e1`), extracts it under `build/freebsd/`, and applies the `ZHAOXU` kernel configuration from `kernel/personality/overlay/` without touching the vendored tree.
+- Verified end to end: 241.3 MB downloaded, checksum matched, tree extracted to `usr/src`, `KERNCONF=ZHAOXU` present after the overlay.
+- The cross build on the WSL2 host is still blocked: `kernel-toolchain` stops on missing host packages (`flex`, `libssl-dev`) and on a conflict between FreeBSD's `__unused` macro and glibc's `bits/struct_mutex.h` in the bootstrap tools (`dtc`, `libclangminimal`).
+- The native build inside the FreeBSD 15.1 VM works: `make -j16 buildkernel KERNCONF=ZHAOXU` completed in 162 s and produced `/usr/obj/usr/src/amd64.amd64/sys/ZHAOXU/kernel` (13,319,904 bytes, ELF64 FreeBSD executable) plus `kernel.full` (52,856,968 bytes). Two VM prerequisites were fixed: the 6 GiB image was grown to 16 GiB (`qemu-img resize`, `gpart resize -i 4`, `growfs`), and the source tree was re-extracted after an earlier disk-full run left it incomplete.
+- Slice 1 landed: `FREEBSD_PERSONALITY=0/1` build gate (stamp keyed like `M0_BOOT_TEST`), `kernel/personality/freebsd/boot.c` hand-off seam with a weak `freebsd_personality_main`, and the FreeBSD BSD-2-Clause entry in `THIRD_PARTY_NOTICES.md`. The gated ISO links with no undefined symbols (`freebsd_personality_main` `W`, `freebsd_personality_start` `T`) and boots to `[bsd ] personality entry not linked`; the default build is unchanged and boots to `Boot complete`.
+- Slice 2 (pmap linkage study): `pmap.o` leaves 171 undefined symbols; 154 resolve inside the FreeBSD kernel object set, and the other 17 are linker-generated — 15 `__start_set_*`/`__stop_set_*` (sysinit, sysuninit, sysctl, pcpu, sdt_tracepoint), `_end`, and `brsection`. `kernel/linker.ld` now provides `_end`, `brsection` and the five `set_*` output sections, so the auto set symbols materialize once the personality objects are linked. The default kernel still links with no undefined symbols.
+- Slice 3: `kernel/include/personality_freebsd.h` defines the versioned `freebsd_core_services` table (page size, kernel window, identity limit, console, VM window, tasks, traps, timers, IPC) so the FreeBSD side binds through a table instead of clashing with core symbols. `freebsd_pmap_init()` maps, writes and reads back a probe word in the granted VM window before the port runs. Verified with `FREEBSD_PERSONALITY=1 PERSONALITY_SELFTEST=1`: `[bsd ] core services v1`, `[bsd ] pmap window 0xffffffff91000000, 256 pages, identity 64 GiB`, `[bsd ] pmap window PASS`, and every M1/M3 core marker still passes.
+- Slice 4: the ABI moved to `kernel/personality/freebsd/core_abi.h` with portable `zx_u8/32/64` types and `struct zx_core_services`, so the same header compiles in both kernels. `probe.c` builds inside the FreeBSD 15.1 tree (`cc -D_KERNEL -I/usr/src/sys -I/usr/obj/usr/src/amd64.amd64/sys/ZHAOXU -I<header dir>`) with `kernel_pmap`, `pmap_t` and `vm_page_t` visible: `PROBE=0`, 1,296-byte object. The core builds with no undefined symbols.
+- Still open: the Zhaoxu machine-dependent port and linking the personality into `KERNEL.ELF`. No FreeBSD object is linked into `KERNEL.ELF` yet; M2 stays open.
+
+### Rule 6 — scripts move to Python
+- Every repository script is now Python 3 (`src/tools/*.py`, `src/tests/tools/host_test.py`); the 28 Ruby originals are removed. `RULES.md` rule 6 allows Python / sh / ps1, the Makefile invokes `$(PYTHON)` and depends on the `.py` files, and `build.ps1` / `run.ps1` locate `python` / `py`.
+- Equivalence was checked against the Ruby tools, not assumed: `zxe-pack.py` is byte-identical on `aqua.uelf` (3 segments, 561 relocations) and `display.uelf`; `initramfs-compress.py`, `kernel-flat.py`, `find-ovmf.py`, `zxe-fixture-lib.py` and `spirv-test-gen.py` produce identical bytes; `zxe-check.py` matches the Ruby verdict on all 28 images in `out/`; `ext4-test.py` prints the same 23 lines; the host-detection suite passes 13/13.
+- End to end: `make iso` builds `out/zhaoxu-os_x86-64_0.7.21_2026-11-21_ld.iso` (39,563,264 bytes) and the ported `smoke.py` boots it to `Boot complete`.
+- `archive/boot-legacy/tools/*.rb` stays as archived history and is not part of any build.
+
 ## 0.7.1 「Yuanshuo」 build 20
 
 ### Licensing — GPL-2.0
 - The project is relicensed from Apache License 2.0 to the GNU General Public License v2.0 (GPL-2.0-only). `LICENSE` now carries the canonical GPL-2.0 text; the Apache `NOTICE` file is removed. The README and CONTRIBUTING license sections are updated.
-- GPL-2.0-only matches the Linux kernel (`GPL-2.0 WITH Linux-syscall-note`), as required for the XNU-style hybrid kernel: Linux 7.4-rc3 integrated as an in-kernel auxiliary personality (Yuanshuo as the Mach-like core, Linux as the BSD-like personality) in a single image. See `docs/superpowers/specs/2026-11-18-xnu-linux-design.md`.
+- GPL-2.0-only matched the Linux kernel (`GPL-2.0 WITH Linux-syscall-note`) planned for the XNU-style hybrid kernel: Linux 7.4-rc3 as an in-kernel auxiliary personality (Yuanshuo as the Mach-like core, Linux as the BSD-like personality) in a single image. That personality was replaced by FreeBSD 15.1 in build 21; see `docs/superpowers/specs/2026-11-20-xnu-freebsd-design.md`.
 - Third-party components keep their own licenses (`THIRD_PARTY_NOTICES.md`); the project license does not relicense them. The rule-35 copyright footers are retained. `RULES.md` is unchanged (rule 41).
-- The Linux kernel is not yet vendored; its `THIRD_PARTY_NOTICES.md` entry lands with the M2 integration. The XNU-style integration is staged (M1+); this build is the licensing + design milestone (M0).
+- The Linux kernel was never vendored; its `THIRD_PARTY_NOTICES.md` entry was deferred to the M2 integration. The XNU-style integration is staged (M1+); this build is the licensing + design milestone (M0).
 
 ## 0.7.1 「Yuanshuo」 build 19
 

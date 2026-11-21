@@ -1,7 +1,7 @@
 # Zhaoxu OS build system.
 #
 # Four host environments are supported: native Linux, macOS, Windows
-# (MSYS2/MinGW) and WSL2.  `ruby tools/build.rb` detects the host and passes
+# (MSYS2/MinGW) and WSL2.  `python3 tools/build.py` detects the host and passes
 # the right tool paths; `make` can also be run directly from a POSIX shell
 # with the toolchain on PATH.
 
@@ -56,7 +56,7 @@ endif
 ifeq ($(origin LD),default)
   LD := ld.lld
 endif
-# Image/packaging tools: overridable so build.rb can point at the host copy
+# Image/packaging tools: overridable so build.py can point at the host copy
 # (MSYS2 prefixes, Homebrew, or a custom PATH).
 MKFS_VFAT  ?= mkfs.vfat
 MMD        ?= mmd
@@ -113,6 +113,10 @@ POSIX_BOOT_TEST ?= 0
 CFLAGS += -DPOSIX_BOOT_TEST=$(POSIX_BOOT_TEST)
 NLIBC_BOOT_TEST ?= 0
 CFLAGS += -DNLIBC_BOOT_TEST=$(NLIBC_BOOT_TEST)
+PERSONALITY_SELFTEST ?= 0
+CFLAGS += -DPERSONALITY_SELFTEST=$(PERSONALITY_SELFTEST)
+FREEBSD_PERSONALITY ?= 0
+CFLAGS += -DFREEBSD_PERSONALITY=$(FREEBSD_PERSONALITY)
 # make does not track CFLAGS changes; stamps keyed by the test mode force
 # kernel/main.o to rebuild when a boot-time test toggles, so an ISO cannot
 # silently ship a self-test kernel.
@@ -161,7 +165,20 @@ $(BUILD)/nlibc-%.stamp:
 	@mkdir -p $(BUILD)
 	@rm -f $(BUILD)/nlibc-*.stamp
 	@touch $@
-$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP) $(GL_STAMP) $(VK_STAMP) $(FE_STAMP) $(POSIX_STAMP) $(NLIBC_STAMP)
+PERSONALITY_STAMP := $(BUILD)/personality-$(PERSONALITY_SELFTEST).stamp
+$(BUILD)/personality-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/personality-*.stamp
+	@touch $@
+FREEBSD_STAMP := $(BUILD)/freebsd-personality-$(FREEBSD_PERSONALITY).stamp
+$(BUILD)/freebsd-personality-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/freebsd-personality-*.stamp
+	@touch $@
+$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP) $(GL_STAMP) $(VK_STAMP) $(FE_STAMP) $(POSIX_STAMP) $(NLIBC_STAMP) $(PERSONALITY_STAMP) $(FREEBSD_STAMP)
+# The self-test body is compiled out unless the flag is on, so the object
+# must follow the flag as well.
+$(BUILD)/kernel/personality/selftest.o: $(PERSONALITY_STAMP)
 ADAFLAGS := -c -gnatp -gnat2022 -O2 -g -fno-pie \
             -fno-stack-protector -mno-red-zone -mcmodel=kernel \
             -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -mno-avx \
@@ -230,7 +247,10 @@ C_SRCS := kernel/main.c \
           kernel/proc/dev.c \
           kernel/proc/fsrpc.c \
           kernel/proc/thread.c \
+          kernel/personality/personality.c \
+          kernel/personality/selftest.c \
           kernel/ipc/port.c \
+          kernel/ipc/kport.c \
           kernel/ipc/shm.c \
           kernel/ipc/zfd.c \
           kernel/ipc/unix_socket.c \
@@ -245,6 +265,10 @@ C_SRCS := kernel/main.c \
           kernel/mem/pmm.c \
           kernel/mem/vmm.c \
           kernel/mem/heap.c
+# The FreeBSD personality glue only exists when the port is linked.
+ifeq ($(FREEBSD_PERSONALITY),1)
+C_SRCS += kernel/personality/freebsd/boot.c
+endif
 ASM_SRCS := kernel/arch/x86_64/entry.S \
             kernel/arch/x86_64/gdt_flush.S \
             kernel/arch/x86_64/isr.S \
@@ -281,22 +305,22 @@ FONT_FILES := initramfs/data/MiSans-Regular.ttf \
               initramfs/data/Inter-Regular.otf
 
 fonts:
-	$(RUBY) tools/fetch-fonts.rb
+	$(PYTHON) tools/fetch-fonts.py
 
 $(FONT_FILES):
-	$(RUBY) tools/fetch-fonts.rb
+	$(PYTHON) tools/fetch-fonts.py
 
 # Sync the version from version.cfg (repo root) into all surfaces.
 version:
-	$(RUBY) tools/version.rb
+	$(PYTHON) tools/version.py
 
-# Host-detection unit tests (pure Ruby, runs on every supported host).
+# Host-detection unit tests (pure Python, runs on every supported host).
 host-test:
-	$(RUBY) tests/tools/host_test.rb
+	$(PYTHON) tests/tools/host_test.py
 
 # FS+ on-disk format tests (host compiler; not linked into the kernel).
 fsplus-test:
-	$(RUBY) tools/fsplus-test.rb
+	$(PYTHON) tools/fsplus-test.py
 
 # ---- Ring 3 programs -------------------------------------------------
 USER_CFLAGS := $(CROSS) -m64 -std=gnu11 -O2 -ffreestanding -fpie \
@@ -316,15 +340,14 @@ endif
 # forwards it.
 USER_LDFLAGS := $(USER_LINK_TARGET) -nostdlib -Wl,-shared -Wl,-Bsymbolic,--build-id=none \
                 -Wl,-T,user/user.ld -Wl,-z,max-page-size=0x1000
-# Ruby drives the ELF->.zxe and ISO tooling.  Linux/macOS normally provide
-# it on PATH; WSL may not, so fall back to a Windows RubyInstaller path
-# under /mnt/c.  tools/build.rb passes the exact path when it orchestrates.
+# Python drives the ELF->.zxe and ISO tooling (rule 6).  Linux, macOS and WSL
+# provide python3 on PATH; native Windows builds normally have python.exe.
 ifeq ($(ZOS_HOST),windows)
-  RUBY ?= ruby.exe
+  PYTHON ?= python.exe
 else
-  RUBY ?= $(shell command -v ruby 2>/dev/null || ls -d /mnt/c/Ruby*/bin/ruby.exe 2>/dev/null | head -n 1)
-  ifeq ($(strip $(RUBY)),)
-    RUBY := ruby
+  PYTHON ?= $(shell command -v python3 2>/dev/null || command -v python 2>/dev/null)
+  ifeq ($(strip $(PYTHON)),)
+    PYTHON := python3
   endif
 endif
 
@@ -338,12 +361,12 @@ $(BUILD)/%.uelf: user/%.c user/userlib.c user/userlib.h user/user.ld
 	@mkdir -p $(BUILD)
 	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -o $@ user/$*.c user/userlib.c
 
-$(OUT)/%.zxe: $(BUILD)/%.uelf tools/zxe-pack.rb
+$(OUT)/%.zxe: $(BUILD)/%.uelf tools/zxe-pack.py
 	@mkdir -p $(OUT)
-	$(RUBY) tools/zxe-pack.rb $< $@
+	$(PYTHON) tools/zxe-pack.py $< $@
 
 # ---- newlib smoke program -------------------------------------------
-# newlib 4.6 must be built PIC; tools/newlib.rb prepares it in the WSL home
+# newlib 4.6 must be built PIC; tools/newlib.py prepares it in the WSL home
 # directory because autoconf rejects the repository path's spaces.
 NEWLIB_ROOT ?= $(HOME)/newlib/install/x86_64-elf
 NEWLIB_CC ?= clang
@@ -374,7 +397,7 @@ $(NL_BUILD)/crt0.o: user/lib/posix/crt0.S
 $(BUILD)/nlib_hello.uelf: $(NL_BUILD)/crt0.o $(NL_BUILD)/newlib_hello.o \
                           $(POSIX_OBJS) user/user.ld
 	@test -f $(NEWLIB_ROOT)/lib/libc.a || { \
-	  echo "newlib is missing; run: ruby tools/newlib.rb"; exit 1; }
+	  echo "newlib is missing; run: python3 tools/newlib.py"; exit 1; }
 	$(LD) -m elf_x86_64 -shared -Bsymbolic --build-id=none \
 	  -z max-page-size=0x1000 -T user/user.ld -o $@ \
 	  $(NL_BUILD)/crt0.o $(NL_BUILD)/newlib_hello.o $(POSIX_OBJS) \
@@ -431,9 +454,9 @@ WALLPAPER_SRC := apps/ADE/web/wallpaper/3pty/img0.jpg
 WALLPAPER_RAW := $(ADE_BUILD)/wallpaper.rgb
 WALLPAPER_OBJ := $(ADE_BUILD)/wallpaper.o
 
-$(WALLPAPER_RAW): $(WALLPAPER_SRC) tools/wallpaper-raw.rb
+$(WALLPAPER_RAW): $(WALLPAPER_SRC) tools/wallpaper-raw.py
 	@mkdir -p $(dir $@)
-	$(RUBY) tools/wallpaper-raw.rb $< $@
+	$(PYTHON) tools/wallpaper-raw.py $< $@
 
 $(WALLPAPER_OBJ): $(WALLPAPER_RAW)
 	objcopy -I binary -O elf64-x86-64 -B i386:x86-64 \
@@ -705,9 +728,9 @@ $(BUILD)/zaf_gfx_demo.uelf: $(ZAF_GFX_SRCS) $(ZAF_GFX_HDRS) user/user.ld
 
 # ---- bash: the Ring 3 shell -----------------------------------------
 # The vendored GNU bash 5.3 source is cross-built against newlib by
-# tools/bash.rb and packed as a ZXE image.
-$(OUT)/bash.elf: tools/bash.rb third_party/bash/configure user/elf.ld
-	$(RUBY) tools/bash.rb
+# tools/bash.py and packed as a ZXE image.
+$(OUT)/bash.elf: tools/bash.py third_party/bash/configure user/elf.ld
+	$(PYTHON) tools/bash.py
 
 bash: $(OUT)/bash.elf
 
@@ -951,8 +974,8 @@ $(OUT)/initramfs.tar: $(RAMFS_FILES)
 # it before mounting rootfs.  The ISO still ships the raw tar as initrd.img.
 INITRAMFS_Z := $(OUT)/initramfs.z
 
-$(INITRAMFS_Z): $(OUT)/initramfs.tar tools/initramfs-compress.rb
-	$(RUBY) tools/initramfs-compress.rb $< $@
+$(INITRAMFS_Z): $(OUT)/initramfs.tar tools/initramfs-compress.py
+	$(PYTHON) tools/initramfs-compress.py $< $@
 
 $(BUILD)/initramfs.o: $(INITRAMFS_Z)
 	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 \
@@ -1033,9 +1056,9 @@ HOST_CC ?= cc
 # Raw Limine BIOS disk image embedded in limine-bios-hdd.h; the installer
 # writes its boot sector and stage 2 when creating a BIOS-bootable disk.
 $(BUILD)/limine-bios-hdd.bin: third_party/limine/limine-bios-hdd.h \
-                              tools/limine-bios-hdd.rb
+                              tools/limine-bios-hdd.py
 	@mkdir -p $(BUILD)
-	$(RUBY) tools/limine-bios-hdd.rb $< $@
+	$(PYTHON) tools/limine-bios-hdd.py $< $@
 
 clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin \
@@ -1078,8 +1101,8 @@ run: run-iso
 # ---- UEFI ISO --------------------------------------------------------
 # Rule 11: ISO files are named zhaoxu-os_x86-64_{version}_{build-date}_ld.iso.
 # version.cfg is the single source; version.h holds the synced macros.  Read
-# all five values with one Ruby call so the ISO metadata matches the build.
-VERSION_FIELDS := $(shell $(RUBY) -e 'h=File.read("kernel/include/version.h"); %w[VERSION CODENAME KERNEL KERNEL_VERSION BUILD].each { |k| print(h[/ZHAOXU_#{k}\s+"([^"]+)"/, 1], " ") }')
+# all five values with one Python call so the ISO metadata matches the build.
+VERSION_FIELDS := $(shell $(PYTHON) -c 'import re;q=chr(34);h=open("kernel/include/version.h").read();print(" ".join(re.search("ZHAOXU_"+k+"[ \\t]+"+q+"([^"+q+"]+)"+q,h).group(1) for k in ("VERSION","CODENAME","KERNEL","KERNEL_VERSION","BUILD")))')
 ZHAOXU_VERSION := $(word 1,$(VERSION_FIELDS))
 ZHAOXU_CODENAME := $(word 2,$(VERSION_FIELDS))
 ZHAOXU_KERNEL := $(word 3,$(VERSION_FIELDS))
@@ -1099,7 +1122,7 @@ LIMINE_CONF := boot/limine.conf
 # protocol, with the flat image and desktop assets as Limine modules.
 $(ISO): $(OUT)/kernel.elf $(OUT)/initramfs.tar $(OUT)/drivers.zxe \
         $(FONT_FILES) $(WALLPAPER_RAW) $(LIMINE_BINS) $(LIMINE_CONF) \
-        $(BUILD)/limine-host tools/kernel-flat.rb tools/iso-manifest.rb
+        $(BUILD)/limine-host tools/kernel-flat.py tools/iso-manifest.py
 	@rm -rf $(ISO_ROOT)
 	@mkdir -p $(ISO_ROOT)/install $(ISO_ROOT)/casper
 	@mkdir -p $(ISO_ROOT)/boot/limine $(ISO_ROOT)/EFI/BOOT
@@ -1116,7 +1139,7 @@ $(ISO): $(OUT)/kernel.elf $(OUT)/initramfs.tar $(OUT)/drivers.zxe \
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/casper/kernel.elf
 	cp $(OUT)/initramfs.tar $(ISO_ROOT)/casper/initrd.img
 	cp $(OUT)/drivers.zxe $(ISO_ROOT)/casper/vga.ko
-	$(RUBY) tools/kernel-flat.rb $(OUT)/kernel.elf $(ISO_ROOT)/casper/kernel.bin
+	$(PYTHON) tools/kernel-flat.py $(OUT)/kernel.elf $(ISO_ROOT)/casper/kernel.bin
 	cp initramfs/data/MiSans-Regular.ttf $(ISO_ROOT)/boot/limine/MiSans.ttf
 	cp $(WALLPAPER_RAW) $(ISO_ROOT)/boot/limine/WALL.RGB
 	$(MKSQUASHFS) $(BUILD)/initramfs $(ISO_ROOT)/casper/filesystem.squashfs \
@@ -1125,7 +1148,7 @@ $(ISO): $(OUT)/kernel.elf $(OUT)/initramfs.tar $(OUT)/drivers.zxe \
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.ELF
 	cp initramfs/data/MiSans-Regular.ttf $(ISO_ROOT)/install/MiSans.ttf
 	cp initramfs/data/Inter-Regular.otf $(ISO_ROOT)/install/Inter.otf
-	$(RUBY) tools/iso-manifest.rb $(ISO_ROOT) $(ZHAOXU_VERSION) \
+	$(PYTHON) tools/iso-manifest.py $(ISO_ROOT) $(ZHAOXU_VERSION) \
 	  $(ZHAOXU_CODENAME) $(ZHAOXU_KERNEL) $(ZHAOXU_KERNEL_VERSION) \
 	  $(ZHAOXU_BUILD)
 	$(XORRISO) -as mkisofs -o $@ -V ZHAOXU_OS -J -R \
@@ -1145,7 +1168,7 @@ QEMU_TARGET_DISK := \
 
 run-iso: $(ISO)
 	@test -n "$(OVMF_CODE)" -a -n "$(OVMF_VARS)" || \
-	  { echo "OVMF not found; set OVMF_CODE/OVMF_VARS or run: ruby tools/build.rb --check"; exit 1; }
+	  { echo "OVMF not found; set OVMF_CODE/OVMF_VARS or run: python3 tools/build.py --check"; exit 1; }
 	cp $(OVMF_VARS) $(OUT)/OVMF_VARS.fd
 	$(QEMU) -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
 	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
@@ -1156,7 +1179,7 @@ run-iso: $(ISO)
 # Installer test: the same CD plus one blank target disk.
 run-install: $(ISO) $(TARGET_IMG)
 	@test -n "$(OVMF_CODE)" -a -n "$(OVMF_VARS)" || \
-	  { echo "OVMF not found; set OVMF_CODE/OVMF_VARS or run: ruby tools/build.rb --check"; exit 1; }
+	  { echo "OVMF not found; set OVMF_CODE/OVMF_VARS or run: python3 tools/build.py --check"; exit 1; }
 	cp $(OVMF_VARS) $(OUT)/OVMF_VARS.fd
 	$(QEMU) -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
 	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \

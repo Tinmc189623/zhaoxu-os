@@ -3,6 +3,7 @@
 #include <idt.h>
 #include <io.h>
 #include <kprintf.h>
+#include <personality.h>
 #include <process.h>
 #include <string.h>
 #include <thread.h>
@@ -154,14 +155,25 @@ static void irq_dispatch(struct interrupt_frame *f)
     sched_maybe_preempt();
 }
 
+static int (*g_forward)(struct interrupt_frame *f);
+
+/* Install the personality dispatch hook; NULL removes it. */
+void idt_set_forward(int (*fn)(struct interrupt_frame *f))
+{
+    g_forward = fn;
+}
+
 void interrupt_dispatch(struct interrupt_frame *f)
 {
+    if (g_forward && g_forward(f))
+        return;
     if (f->vector == 0x80) {
         syscall_dispatch(f);
         return;
     }
     if (f->vector == APIC_VECTOR_TIMER) {
         timer_irq();
+        personality_timer_tick();
         lapic_eoi();
         sched_maybe_preempt();
         return;

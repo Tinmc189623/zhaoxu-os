@@ -19,3 +19,6 @@ docs/articles/
 src/initramfs/data/MiSans-Regular.ttf
 src/initramfs/data/MiSansLatinVF.ttf
 src/initramfs/data/Inter-Regular.otf
+docs/architecture/*.pdf
+__pycache__/
+*.pyc

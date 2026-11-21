@@ -7,11 +7,24 @@ tooling — is licensed under the GNU General Public License v2.0 (GPL-2.0-only)
 see `LICENSE`. The components below retain their own licenses and are aggregated
 with, not relicensed under, the project license.
 
-The XNU-style hybrid kernel design integrates the Linux kernel (7.4-rc3,
-`GPL-2.0 WITH Linux-syscall-note`) as an in-kernel auxiliary personality,
-preserving its upstream terms. Linux is not yet vendored; its entry is added to
-this file at the M2 integration milestone (see
-`docs/superpowers/specs/2026-11-18-xnu-linux-design.md`).
+The XNU-style hybrid kernel design integrates the FreeBSD 15.1-RELEASE kernel
+(`BSD-2-Clause`, per `sys/COPYRIGHT`) as an in-kernel auxiliary personality,
+preserving its upstream terms. FreeBSD is not yet vendored; its entry, with the
+upstream copyright notice, is added to this file at the M2 integration milestone
+(see `docs/superpowers/specs/2026-11-20-xnu-freebsd-design.md`). CDDL-only parts
+of the tree (`sys/contrib/openzfs`, `sys/cddl`) are excluded from the linked
+image.
+
+## FreeBSD (OS_5P personality)
+
+- Source: FreeBSD 15.1-RELEASE `src.txz` (kernel tree)
+- License: BSD-2-Clause (`sys/COPYRIGHT`); some files BSD-3-Clause or ISC
+- Status: not vendored in this repository. `src/tools/freebsd-personality.py`
+  downloads the pinned tarball (SHA-256 `cf5762da…89e1` from the release
+  MANIFEST), verifies it, and builds it outside the tree. The `ZHAOXU` kernel
+  configuration is applied as an overlay; the upstream source is never edited.
+- CDDL-only parts (`sys/contrib/openzfs`, `sys/cddl`) are excluded from any
+  linked image, so GPL-2.0 and CDDL never meet in one binary.
 
 ## font8x8
 
@@ -98,7 +111,7 @@ Zhaoxu OS kernel image.
   copied to installed ESPs, `include/limine.h` supplies the Limine Boot
   Protocol used by `src/kernel/boot/limine_boot.c`, `limine-bios-hdd.h` is
   the source of the installer's BIOS HDD image (extracted by
-  `src/tools/limine-bios-hdd.rb`), and `limine.c` builds the host-side
+  `src/tools/limine-bios-hdd.py`), and `limine.c` builds the host-side
   `limine bios-install` helper used by `make iso`.
 
 ## UEFI / OVMF / QEMU
@@ -109,8 +122,8 @@ redistributed by this repository.
 ## Fonts
 
 - **Inter** — © The Inter Project Authors, SIL Open Font License 1.1.
-  Fetched at build time by `src/tools/fetch-fonts.rb`.
+  Fetched at build time by `src/tools/fetch-fonts.py`.
 - **MiSans / MiSans Global** — © Xiaomi. Distributed under the MiSans font
   licence, which forbids redistributing the font files. They are fetched at
-  build time by `src/tools/fetch-fonts.rb` and are not committed to this
+  build time by `src/tools/fetch-fonts.py` and are not committed to this
   repository.

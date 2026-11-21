@@ -12,6 +12,9 @@ struct interrupt_frame {
 
 void idt_init(void);
 void idt_reload(void);
+
+/* Personality forwarder: return 1 when the personality claimed the vector. */
+void idt_set_forward(int (*fn)(struct interrupt_frame *f));
 void pic_init(void);
 void pic_unmask(u8 irq);
 void pic_mask(u8 irq);

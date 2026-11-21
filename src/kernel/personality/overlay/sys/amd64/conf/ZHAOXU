@@ -1,0 +1,12 @@
+# ZHAOXU -- the OS_5P personality kernel.
+#
+# Built on MINIMAL: scheduler, VM, traps and the console the personality
+# bring-up (M3) needs.  M4 adds UFS/GEOM, network and the first IO/287
+# driver by including the matching options here, not by editing upstream.
+#
+# This file is applied as an overlay by tools/freebsd-personality.rb; the
+# vendored tree itself is never modified (rule 39).
+
+include "MINIMAL"
+
+ident           ZHAOXU
