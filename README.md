@@ -6,11 +6,11 @@
 
 <kbd>🧩 Microkernel</kbd> <kbd>🧵 Ring 3 user mode</kbd> <kbd>💾 FAT32 + ext4</kbd> <kbd>💿 UEFI + Legacy BIOS</kbd> <kbd>🧬 MBR + GPT</kbd> <kbd>🎨 Aqua</kbd>
 
-**C** kernel, **Limine** UEFI/BIOS boot, **GAS** low-level assembly, **Ada** drivers, **C++20** applications, **Ruby** toolchain
+**C** kernel, **Limine** UEFI/BIOS boot, **GAS** low-level assembly, **Ada** drivers, **C++20** applications, **Python** toolchain
 
 [🌐 OSHUB](https://oshub.org/projects/zhaoxu-os) [🐙 GitHub](https://github.com/Tinmc189623/zhaoxu-os) [🦊 Gitee](https://gitee.com/Tinmc189623/zhaoxu-os) [🦄 GitCode](https://gitcode.com/2503_94276351/zhaoxu-os)
 
-**Current version: 0.7.20 「Yuanshuo」, kernel 0.7.1, build 2026-11-16**. Version history in [CHANGELOG.md](CHANGELOG.md)
+**Current version: 0.7.21 「Yuanshuo」, kernel 0.7.1, build 2026-11-21**. Version history in [CHANGELOG.md](CHANGELOG.md)
 
 </div>
 
@@ -98,7 +98,7 @@ make -j4                 # kernel, ring 3 programs and the initramfs
 make iso                 # out/zhaoxu-os_x86-64_{version}_{build}_ld.iso
 make run-iso             # UEFI boot in QEMU
 make run-bios            # SeaBIOS boot in QEMU
-make host-test           # Ruby host-detection tests
+make host-test           # Python host-detection tests
 ```
 
 A clean ISO build needs `xorriso`, `mtools`, `dosfstools`, `qemu`, OVMF and
@@ -109,12 +109,12 @@ drivers are written in Ada and need a GNAT with Ada 2022 support.
 The newlib/ncurses/nano ports are separate, cached builds:
 
 ```bash
-ruby tools/newlib.rb       # PIC newlib 4.6 under $HOME/newlib
-ruby tools/posix-ports.rb  # compiles the support library, ncurses and nano
+python3 tools/newlib.py       # PIC newlib 4.6 under $HOME/newlib
+python3 tools/posix-ports.py  # compiles the support library, ncurses and nano
 ```
 
-`tools/build.rb` is a convenience wrapper; it is not the build system. All
-repository scripts are Ruby, per the project rules.
+`tools/build.py` is a convenience wrapper; it is not the build system. All
+repository scripts are Python, sh or ps1, per rule 6.
 
 ### Try the installer
 
@@ -150,7 +150,7 @@ Manager owns z-order, focus, dragging and damage; Desktop Window Compositor
 keeps the system-RAM back buffer and presents damaged rectangles. All drawing
 replays through `kernel/gfx/render.c`, shared with the kernel and Ring 3.
 
-**User executables.** ZXE v1 is a PIE packed by `tools/zxe-pack.rb`. Dependencies
+**User executables.** ZXE v1 is a PIE packed by `tools/zxe-pack.py`. Dependencies
 load from `/lib` by plain filename; there is no ELF dynamic linker. The kernel
 and user code are freestanding: no libc in the kernel, no SSE outside the
 font code.
@@ -189,12 +189,13 @@ font code.
 ## 📜 License
 
 This project is licensed under the [GNU General Public License v2.0](LICENSE)
-(GPL-2.0-only, matching the Linux kernel). Third-party component and font
-notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+(GPL-2.0-only; FreeBSD's BSD-2-Clause personality is compatible and CDDL-only
+subsystems stay unlinked). Third-party component and font notices are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 <div align="center">
 
-**Zhaoxu OS, Yuanshuo**. Built with C / GAS / Ada / C++ / Ruby.
+**Zhaoxu OS, Yuanshuo**. Built with C / GAS / Ada / C++ / Python.
 
 Copyright © 2026 Nexsteaduser. All Rights Reserved. Email: admin@nexsteaduser.com
 

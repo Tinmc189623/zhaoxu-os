@@ -19,6 +19,7 @@
 #include <kprintf.h>
 #include <mem.h>
 #include <mmu.h>
+#include <personality.h>
 #include <process.h>
 #include <smp.h>
 #include <string.h>
@@ -100,6 +101,19 @@ void kernel_main(struct boot_info *boot)
     console_reset_color();
     kprintf("\n");
 
+    /* Reserve the personality VM region before processes and filesystems
+     * start allocating. */
+    if (personality_init() != 0)
+        kprintf("[per ] personality API unavailable\n");
+    else if (personality_start(&g_boot) != 0)
+        kprintf("[per ] personality boot handoff failed\n");
+
+#if FREEBSD_PERSONALITY == 1
+    if (personality_boot_info() &&
+        freebsd_personality_start(personality_boot_info()) != 0)
+        kprintf("[bsd ] personality start returned an error\n");
+#endif
+
     mmu_init();
     hpet_init();
     cpu_init();
@@ -133,6 +147,15 @@ void kernel_main(struct boot_info *boot)
         kprintf("[fs  ] ext4 service ready\n");
     else
         kprintf("[fs  ] ext4 service unavailable\n");
+
+#if PERSONALITY_SELFTEST == 1
+    if (personality_selftest() == 0)
+        kprintf("[per ] M1 personality selftest PASS\n");
+    else
+        kprintf("[per ] M1 personality selftest FAIL\n");
+    for (;;)
+        hlt();
+#endif
 
     struct pmm_stats pmm;
     pmm_get_stats(&pmm);

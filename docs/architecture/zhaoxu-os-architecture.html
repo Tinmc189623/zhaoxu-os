@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Zhaoxu OS 架构文档</title>
+<style>
+:root {
+  --ink: #16202c;
+  --muted: #5c6b7a;
+  --line: #d6dfe8;
+  --soft: #f3f7fb;
+  --accent: #0f6fd1;
+  --teal: #0a8f84;
+  --flag: #b3541e;
+}
+@page { size: A4; margin: 18mm 17mm 20mm 17mm; }
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 10.5pt/1.75 "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  color: var(--ink);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+h1, h2, h3 { line-height: 1.35; }
+h1.chapter {
+  break-before: page;
+  page-break-before: always;
+  font-size: 19pt;
+  margin: 0 0 6mm;
+  padding-bottom: 3mm;
+  border-bottom: 1.2pt solid var(--accent);
+}
+h1.chapter .num { color: var(--accent); margin-right: 3mm; }
+h2 { font-size: 13pt; margin: 7mm 0 2.5mm; }
+h3 { font-size: 11pt; margin: 5mm 0 1.5mm; color: #24384c; }
+h2, h3 { break-after: avoid; page-break-after: avoid; }
+
+p { margin: 0 0 2.6mm; text-align: justify; }
+ul, ol { margin: 0 0 3mm; padding-left: 6mm; }
+li { margin-bottom: 1.2mm; }
+code, .mono {
+  font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+  font-size: 9.2pt;
+  background: #eef3f8;
+  padding: 0 1.2mm;
+  border-radius: 1mm;
+}
+pre {
+  font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+  font-size: 8.8pt;
+  line-height: 1.5;
+  background: var(--soft);
+  border: 0.6pt solid var(--line);
+  border-left: 2pt solid var(--accent);
+  padding: 3mm 3.5mm;
+  margin: 2mm 0 4mm;
+  white-space: pre-wrap;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9.4pt;
+  margin: 2mm 0 4.5mm;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+th, td {
+  border: 0.6pt solid var(--line);
+  padding: 1.6mm 2.4mm;
+  vertical-align: top;
+  text-align: left;
+}
+th { background: var(--soft); font-weight: 600; }
+td.num { white-space: nowrap; text-align: right; font-family: Consolas, monospace; }
+tr:nth-child(even) td { background: #fafcfe; }
+
+.note {
+  border: 0.6pt solid #cfe0f2;
+  background: #f4f9ff;
+  border-radius: 1.5mm;
+  padding: 3mm 3.5mm;
+  margin: 3mm 0 4mm;
+  font-size: 9.6pt;
+  break-inside: avoid;
+}
+.note.warn { border-color: #f0d6c6; background: #fdf6f1; }
+.note b { color: var(--accent); }
+.note.warn b { color: var(--flag); }
+
+/* 封面 */
+.cover { height: 245mm; display: flex; flex-direction: column; }
+.cover .brand {
+  font-size: 9.5pt;
+  letter-spacing: 3pt;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.cover h1 {
+  font-size: 34pt;
+  margin: 60mm 0 4mm;
+  letter-spacing: 1pt;
+}
+.cover .sub { font-size: 15pt; color: #33475c; margin-bottom: 2mm; }
+.cover .meta { margin-top: auto; font-size: 9.5pt; color: var(--muted); line-height: 2; }
+.cover .rule { height: 3pt; background: var(--accent); width: 46mm; margin: 8mm 0; }
+.cover .legal { margin-top: 10mm; font-size: 8.6pt; color: #7c8b9a; }
+
+/* 分层图 */
+.stack { margin: 3mm 0 5mm; break-inside: avoid; }
+.layer {
+  border: 0.7pt solid var(--line);
+  border-left: 3pt solid var(--accent);
+  background: #fff;
+  padding: 2.4mm 3mm;
+  margin-bottom: 1.6mm;
+  font-size: 9.4pt;
+}
+.layer b { display: inline-block; min-width: 34mm; color: #24405a; }
+.layer svc { }
+.layer.l-teal { border-left-color: var(--teal); }
+.layer.l-flag { border-left-color: var(--flag); }
+
+.two { display: flex; gap: 5mm; }
+.two > div { flex: 1; }
+
+.toc { font-size: 10pt; }
+.toc div { display: flex; justify-content: space-between; padding: 1.3mm 0; border-bottom: 0.5pt dotted var(--line); }
+.toc .t2 { padding-left: 8mm; font-size: 9.4pt; color: var(--muted); }
+.toc b { color: var(--accent); min-width: 14mm; }
+
+.small { font-size: 9pt; color: var(--muted); }
+.tag {
+  display: inline-block;
+  font-size: 8pt;
+  padding: 0.3mm 1.6mm;
+  border-radius: 1mm;
+  background: #e8f1fa;
+  color: var(--accent);
+  margin-left: 1.5mm;
+}
+.tag.wip { background: #fdf1e8; color: var(--flag); }
+</style>
+</head>
+<body>
+
+<!-- ======================= 封面 ======================= -->
+<div class="cover">
+  <div class="brand">Nexsteaduser</div>
+  <h1>Zhaoxu OS<br>架构文档</h1>
+  <div class="rule"></div>
+  <div class="sub">微内核 Yuanshuo · 桌面 Aqua Desktop Environment · 目标混合内核 OS_5P</div>
+  <div class="meta">
+    版本 0.7.21 「Yuanshuo」<br>
+    内核版本 0.7.1<br>
+    构建日期 2026-11-21<br>
+    平台 x86_64 · Limine · UEFI / Legacy BIOS<br>
+    联系 admin@nexsteaduser.com
+  </div>
+  <div class="legal">
+    本文档描述截至构建日期的实现与已立项设计。未实现的部分在文中明确标注（<span class="tag wip">未实现</span>），
+    不与已交付能力混写。<br>
+    Copyright © 2026 Nexsteaduser. All Rights Reserved.
+  </div>
+</div>
+
+<!-- ======================= 目录 ======================= -->
+<h1 class="chapter"><span class="num">目录</span></h1>
+<div class="toc">
+  <div><span><b>1</b> 系统概览</span><span>身份、分层与约束</span></div>
+  <div><span><b>2</b> 启动链</span><span>Limine 双路径与 boot_info</span></div>
+  <div><span><b>3</b> 内核 Yuanshuo</span><span>内存、调度、IPC、VFS、ABI</span></div>
+  <div><span><b>4</b> 用户态与工具链</span><span>ZXE、newlib、bash、构建</span></div>
+  <div><span><b>5</b> 桌面栈</span><span>Aqua、DWC、DWM、ADE 协议</span></div>
+  <div><span><b>6</b> 图形 API</span><span>OpenGL 1.1 与 Vulkan 1.0 软件实现</span></div>
+  <div><span><b>7</b> 驱动模型</span><span>Ring3 驱动与共享页</span></div>
+  <div><span><b>8</b> 安装器与磁盘布局</span><span>MBR / GPT、ESP、ext4、数据分区</span></div>
+  <div><span><b>9</b> Wayland 方向</span><span>M0 已交付与 M1 计划</span></div>
+  <div><span><b>10</b> OS_5P 目标架构</span><span>FreeBSD personality 与 IO/287</span></div>
+  <div><span><b>11</b> 验证与回归</span><span>构建检查、串口标记、QEMU 清单</span></div>
+  <div><span><b>12</b> 附录</span><span>名称契约与术语</span></div>
+</div>
+
+<div class="note">
+  <b>阅读顺序。</b>第 1 至 9 章描述当前可启动、可验证的系统；第 10 章是已获批但尚未实现的目标架构。
+  两部分的边界在文中逐节标出，任何把目标设计当成现状的表述都属于错误。
+</div>
+
+<!-- ======================= 1 ======================= -->
+<h1 class="chapter"><span class="num">1</span>系统概览</h1>
+
+<h2>1.1 系统身份</h2>
+<table>
+  <tr><th style="width:32mm">项目</th><th>名称与说明</th></tr>
+  <tr><td>操作系统</td><td>Zhaoxu OS</td></tr>
+  <tr><td>内核</td><td>Yuanshuo（微内核，C，freestanding）</td></tr>
+  <tr><td>目标混合内核</td><td>OS_5P：Yuanshuo 核心 + FreeBSD 15.1 personality + IO/287 设备框架 <span class="tag wip">未实现</span></td></tr>
+  <tr><td>设备框架</td><td>IO/287（内核内 C++，IOKit 角色）<span class="tag wip">未实现</span></td></tr>
+  <tr><td>引导管理器</td><td>Limine 12（原样使用，UEFI + Legacy BIOS）</td></tr>
+  <tr><td>桌面</td><td>Aqua Desktop Environment</td></tr>
+  <tr><td>合成器 / 窗口管理器</td><td>Desktop Window Compositor / Desktop Window Manager</td></tr>
+  <tr><td>Shell</td><td>GNU bash 5.3（<code>/bin/bash</code>）；RULES.md 第 1 条要求以 csh 为默认并保留 bash</td></tr>
+  <tr><td>可执行格式</td><td>ZXE v1（PIE，RVA 0 链接，随机基址，W^X）</td></tr>
+  <tr><td>图形 API</td><td>Z64 1.0（内核与 Ring3 共用的光栅接口，<code>kernel/include/zos_api.h</code>）</td></tr>
+  <tr><td>脚本</td><td>仓库脚本一律 Ruby；构建系统是 Makefile</td></tr>
+</table>
+
+<h2>1.2 分层</h2>
+<div class="stack">
+  <div class="layer"><b>应用与工具</b>bash 5.3、Aqua 客户端、安装器、测试程序，全部为 ZXE 镜像</div>
+  <div class="layer"><b>桌面</b>Aqua Desktop Environment · Desktop Window Compositor · Desktop Window Manager</div>
+  <div class="layer l-teal"><b>Ring3 服务</b><code>/bin/drivers</code>（块设备、RTC、键盘、鼠标、串口）· <code>/bin/ext4fs</code> · <code>/bin/display</code> · <code>/bin/wayland</code></div>
+  <div class="layer l-flag"><b>系统调用边界</b><code>int 0x80</code>，调用号 0–78；zfd 描述符表；端口与共享内存</div>
+  <div class="layer"><b>内核 Yuanshuo</b>PMM / VMM、调度器与 SMP、IPC、VFS 核心、Z64 光栅实现</div>
+  <div class="layer"><b>引导</b>Limine → <code>kernel.elf</code>（UEFI 与 Legacy BIOS 共用 Limine 协议）</div>
+</div>
+
+<h2>1.3 结构约束</h2>
+<ul>
+  <li><b>内核不含驱动、不含桌面、不含应用。</b>AHCI、PS/2、鼠标、RTC、串口由 Ring3 <code>/bin/drivers</code> 独占；内核只保留 CPU、内存、调度、IPC 与 VFS 核心。构建后 <code>nm out/kernel.elf</code> 不应出现 <code>ahci_*</code>、<code>acpi_init</code>、<code>serial_init</code>、<code>keyboard_*</code>、<code>mouse_*</code>、<code>pit_init</code>、<code>pci_*</code> 等符号。</li>
+  <li><b>内核 freestanding。</b>无 libc、无 STL、无异常与 RTTI、默认禁用浮点与 SSE（<code>-mgeneral-regs-only</code>）。Ring3 字体源码是唯一例外。</li>
+  <li><b>版本单一来源。</b><code>version.cfg</code> 是唯一版本源，<code>make version</code> 同步 <code>version.h</code>、motd、<code>/etc/version</code> 与 README。</li>
+  <li><b>名称契约。</b>Yuanshuo、OS_5P、IO/287、Limine、Aqua Desktop Environment、Desktop Window Compositor、Desktop Window Manager、ZAF、Z64 不得改名或缩写。</li>
+</ul>
+
+<!-- ======================= 2 ======================= -->
+<h1 class="chapter"><span class="num">2</span>启动链</h1>
+
+<h2>2.1 两条固件路径</h2>
+<p>UEFI 下固件直接加载 Limine 的 <code>EFI/BOOT/BOOTX64.EFI</code>。Legacy BIOS 下 SeaBIOS 读取 Limine 的引导扇区（ISO 上是 <code>limine-bios-cd.bin</code>，已安装盘上是安装器写入的 MBR 扇区），stage 1 从 LBA 8（MBR）或 LBA 34（GPT 的 BIOS boot 分区）加载 stage 2，stage 2 用自带的 FAT / ISO9660 驱动读取 <code>limine.conf</code> 与 <code>limine-bios.sys</code>。两条路径此后都进入 Limine 协议。</p>
+
+<pre>UEFI    : 固件 → BOOTX64.EFI → limine.conf → kernel.elf
+Legacy  : SeaBIOS → limine-bios-cd.bin / MBR stage1 → stage2 → limine.conf → kernel.elf</pre>
+
+<h2>2.2 Limine 协议与 boot_info</h2>
+<p><code>kernel/boot/limine_boot.c</code> 实现 Limine 协议：在 Limine 提供的 HHDM 页表上安装 64 GiB 恒等映射，映射 BSS 引导栈窗口，然后把内存映射、帧缓冲、RSDP、可执行地址与模块整理成 <code>struct boot_info</code>（magic <code>0x5A4F5331</code>）。<code>boot_info</code> 的字段顺序必须与 <code>kernel/include/boot.h</code> 同步；模块与帧缓冲地址经 HHDM 换算成物理地址。</p>
+
+<table>
+  <tr><th style="width:38mm">模块</th><th>用途</th></tr>
+  <tr><td><code>kernel.bin</code></td><td>安装器与 legacy BIOS 使用的扁平镜像</td></tr>
+  <tr><td><code>MiSans.ttf</code></td><td>启动字体，交给 Aqua Desktop Environment</td></tr>
+  <tr><td><code>WALL.RGB</code></td><td>预转换壁纸原始像素，省去启动时解码</td></tr>
+</table>
+
+<p>内嵌 initramfs 由 <code>tools/initramfs-compress.rb</code> 压成 ZIR1 包装的 zlib 流，内核在挂载 rootfs 之前解压，这保证 legacy BIOS 的 <code>install/KERNEL.BIN</code> 控制在 stage 2 的 448 KiB 缓冲之内。</p>
+
+<div class="note">
+  <b>Limine 12 没有 ext4 驱动。</b>已安装系统的 <code>KERNEL.ELF</code>、<code>KERNEL.BIN</code>、<code>MiSans.ttf</code>、<code>WALL.RGB</code> 全部放在 ESP 根目录，ext4 的 <code>ZHAOXUROOT</code> 不承载任何引导文件。
+</div>
+
+<h2>2.3 地址布局</h2>
+<table>
+  <tr><th style="width:46mm">区域</th><th>地址</th><th>说明</th></tr>
+  <tr><td>内核 VMA</td><td class="mono">0xffffffff80000000</td><td>kernel.elf 链接基址</td></tr>
+  <tr><td>内核栈顶</td><td class="mono">0xffffffff80f00000</td><td>BSS 栈窗口，五处定义必须同步</td></tr>
+  <tr><td>内核堆</td><td class="mono">0xffffffff90000000</td><td>内核分配器</td></tr>
+  <tr><td>物理内存</td><td class="mono">0 .. 64 GiB</td><td>恒等映射，2 MiB 大页</td></tr>
+  <tr><td>用户映像窗口</td><td class="mono">0x10000000000</td><td>1 TiB 起，1 GiB 窗口，避开恒等映射区</td></tr>
+  <tr><td>用户栈顶</td><td class="mono">0x10100000000</td><td>32 页</td></tr>
+  <tr><td>memfd / mmap</td><td class="mono">1 TiB + 2 GiB</td><td>共享内存映射区</td></tr>
+</table>
+<p class="small">内核栈顶在 <code>limine_boot.c</code>、<code>kernel/linker.ld</code>、<code>arch/x86_64/entry.S</code>、<code>arch/x86_64/gdt.c</code>（TSS rsp0）与 <code>proc/process.c</code> 五处出现，改动布局必须同步全部五处。</p>
+
+<!-- ======================= 3 ======================= -->
+<h1 class="chapter"><span class="num">3</span>内核 Yuanshuo</h1>
+
+<h2>3.1 物理内存</h2>
+<p><code>kernel/mem/pmm.c</code> 是位图页分配器：<code>pmm_alloc_page</code>、<code>pmm_free_page</code>、<code>pmm_reserve_range</code>，上限 <code>PMM_MAX_PHYS</code> 为 64 GiB，内部用 irqsave 自旋锁保护。PMM 在 <code>vmm_init</code> 之前就要能管理完整内存映射，已在 8 GiB 配置下验证。</p>
+
+<h2>3.2 虚拟内存</h2>
+<p><code>kernel/mem/vmm.c</code> 提供 <code>vmm_map_page</code>、<code>vmm_unmap_page</code>、<code>vmm_space_map_page</code>。低端 64 GiB 用 2 MiB 页恒等映射（<code>identity_map_high</code>），NX 强制开启（<code>enable_nx</code>）；每个进程有独立 CR3，内核高半区共享，用户窗口在 PML4 slot 2 私有。</p>
+<p>用户映像的段权限强制 W^X：CODE 为 RX，RODATA 为 R，DATA/ZERO 为 RW，数据段页带 NX。</p>
+
+<h2>3.3 进程、线程与调度</h2>
+<p><code>kernel/proc/thread.c</code> 维护 32 槽的共享线程表。BSP 与 AP 都用 LAPIC timer 以 1 kHz 触发 <code>sched_tick</code>（PIT 只在启动时做一次 LAPIC 校准），量子 <code>SCHED_QUANTUM_TICKS=10</code>。上下文切换在 <code>arch/x86_64/switch.S</code>，保存/恢复 callee-saved 寄存器与 RFLAGS；线程栈 16 KiB，退出线程由下一次上下文切换在 <code>sched_reap_local</code> 中释放。</p>
+<p>SMP 由 <code>arch/x86_64/apic.c</code> 解析 RSDP/XSDT/MADT，<code>arch/x86_64/smp.c</code> 把 <code>ap_trampoline.S</code> 复制到物理 <code>0x7000</code>，以 INIT-SIPI-SIPI 启动 AP。AP 必须在 <code>ap_entry</code> 里重新加载 GDT 与 IDT 并切换自己的 TSS，否则第一个中断就是三重故障。调度交接用 <code>on_cpu</code> 标记：旧线程完全切走之后，其他 CPU 才允许重新选中该槽位。</p>
+<p>进程侧：<code>fork</code> 逐页复制用户映射（连同页权限）和 zfd 描述符，子线程在父进程 <code>int 0x80</code> 之后以 <code>rax=0</code> 返回；<code>exec</code> 先在全新地址空间装载镜像，成功后切 CR3、释放旧页并改写中断帧的 <code>rip/rsp</code>，失败则保留原程序。</p>
+
+<h2>3.4 IPC 与描述符</h2>
+<table>
+  <tr><th style="width:44mm">机制</th><th>实现</th><th style="width:34mm">编号</th></tr>
+  <tr><td>Mach 风格端口</td><td>listen / connect / accept / send / recv / close / try_accept / try_recv</td><td>syscall 9–14、26–27</td></tr>
+  <tr><td>共享内存</td><td>shm_create / map / unmap / close</td><td>15–18</td></tr>
+  <tr><td>管道</td><td>64 KiB 环形对象，读写端各占一个 zfd</td><td>74（<code>SYS_PIPE</code>）</td></tr>
+  <tr><td>AF_UNIX 流</td><td>64 KiB 接收环，阻塞由 1 ms 调度睡眠实现；含 socketpair</td><td>43–50、57</td></tr>
+  <tr><td>memfd</td><td>共享内存文件，mmap 落在 1 TiB + 2 GiB</td><td>51–55</td></tr>
+  <tr><td>事件循环</td><td>eventfd、timerfd、epoll（电平触发，每对象最多 32 个注册）</td><td>61–67</td></tr>
+  <tr><td>描述符传递</td><td><code>SCM_RIGHTS</code>，当前只允许 memfd，引用计数转移而非复制</td><td><code>sendmsg</code>/<code>recvmsg</code></td></tr>
+</table>
+<p>描述符空间分两套：VFS 保留 3–18，新的 zfd 表从 64（<code>ZFD_BASE</code>）起，<code>dup2</code> 可以把 zfd 装到 0/1/2 并改写进程的 stdio 重定向表。<code>kernel/proc/tty.c</code> 为 0/1/2 提供终端语义：规范模式按行缓冲并回显，原模式逐字节返回，<code>ioctl</code> 支持 <code>TCGETS</code>/<code>TCSETS</code>/<code>TIOCGWINSZ</code>（80×25）/<code>FIONREAD</code>。</p>
+<p>命名的端口消息上限 <code>IPC_MSG_MAX</code> 为 256 字节；ADE 桌面协议每条文本命令上限 <code>ADE_TEXT_MAX</code> 为 160 字节（含终止符），<code>ade_text</code> 在 UTF-8 边界截断。</p>
+
+<h2>3.5 VFS 与存储</h2>
+<p><code>/</code> 是 initramfs 支撑的 rootfs（initramfs 下层 + ramfs 写时复制）；<code>/mnt</code> 是按卷标 <code>ZHAOXUDATA</code> 选中的 FAT32 数据盘；没有数据盘时 <code>/mnt/...</code> 自动回退到 initramfs 内嵌的 <code>/data/...</code> 镜像。FAT32 支持文件级创建、覆盖与删除（<code>kernel/fs/fat32_write.c</code>，VFAT 长名、写侧 FAT 缓存、空闲槽复用）。ext4 <code>ZHAOXUROOT</code> 由 Ring3 <code>/bin/ext4fs</code> 经共享页 RPC 提供，内核不直接解析 ext4。</p>
+<p>VFS 读描述符是只读的；写入走 <code>write_file</code> / <code>unlink</code> 系统调用路径，而不是 <code>write</code>。</p>
+
+<h2>3.6 系统调用 ABI</h2>
+<p>入口是 <code>int 0x80</code>：<code>rax</code> 为调用号，<code>rdi/rsi/rdx/r10</code> 为参数。调用号在 <code>kernel/proc/syscall.c</code> 与 <code>user/userlib.h</code> 各有一份，必须完全一致。用户指针按当前进程地址空间逐页校验。</p>
+<table class="abi">
+  <tr><th>号</th><th>名称</th><th>号</th><th>名称</th><th>号</th><th>名称</th><th>号</th><th>名称</th></tr>
+  <tr><td class="num">0</td><td>exit</td><td class="num">20</td><td>mouse</td><td class="num">40</td><td>blk_read</td><td class="num">60</td><td>map_phys</td></tr>
+  <tr><td class="num">1</td><td>write</td><td class="num">21</td><td>key</td><td class="num">41</td><td>blk_write</td><td class="num">61</td><td>eventfd</td></tr>
+  <tr><td class="num">2</td><td>getpid</td><td class="num">22</td><td>sleep</td><td class="num">42</td><td>blk_flush</td><td class="num">62</td><td>timerfd_create</td></tr>
+  <tr><td class="num">3</td><td>open</td><td class="num">23</td><td>cpus</td><td class="num">43</td><td>socket</td><td class="num">63</td><td>timerfd_settime</td></tr>
+  <tr><td class="num">4</td><td>read</td><td class="num">24</td><td>rtc</td><td class="num">44</td><td>bind</td><td class="num">64</td><td>timerfd_gettime</td></tr>
+  <tr><td class="num">5</td><td>close</td><td class="num">25</td><td>read_path</td><td class="num">45</td><td>listen</td><td class="num">65</td><td>epoll_create1</td></tr>
+  <tr><td class="num">6</td><td>uptime</td><td class="num">26</td><td>port_try_accept</td><td class="num">46</td><td>accept</td><td class="num">66</td><td>epoll_ctl</td></tr>
+  <tr><td class="num">7</td><td>spawn</td><td class="num">27</td><td>port_try_recv</td><td class="num">47</td><td>connect</td><td class="num">67</td><td>epoll_wait</td></tr>
+  <tr><td class="num">8</td><td>wait</td><td class="num">28</td><td>serial_write</td><td class="num">48</td><td>sendmsg</td><td class="num">68</td><td>install_error</td></tr>
+  <tr><td class="num">9</td><td>port_listen</td><td class="num">29</td><td>readdir</td><td class="num">49</td><td>recvmsg</td><td class="num">69</td><td>reboot</td></tr>
+  <tr><td class="num">10</td><td>port_connect</td><td class="num">30</td><td>disks</td><td class="num">50</td><td>poll</td><td class="num">70</td><td>install_progress</td></tr>
+  <tr><td class="num">11</td><td>port_accept</td><td class="num">31</td><td>install</td><td class="num">51</td><td>memfd_create</td><td class="num">71</td><td>install_config</td></tr>
+  <tr><td class="num">12</td><td>port_send</td><td class="num">32</td><td>write_file</td><td class="num">52</td><td>ftruncate</td><td class="num">72</td><td>fork</td></tr>
+  <tr><td class="num">13</td><td>port_recv</td><td class="num">33</td><td>unlink</td><td class="num">53</td><td>lseek</td><td class="num">73</td><td>exec</td></tr>
+  <tr><td class="num">14</td><td>port_close</td><td class="num">34</td><td>data_volume</td><td class="num">54</td><td>mmap</td><td class="num">74</td><td>pipe</td></tr>
+  <tr><td class="num">15</td><td>shm_create</td><td class="num">35</td><td>dev_alloc_page</td><td class="num">55</td><td>munmap</td><td class="num">75</td><td>dup2</td></tr>
+  <tr><td class="num">16</td><td>shm_map</td><td class="num">36</td><td>boot_font</td><td class="num">56</td><td>fcntl</td><td class="num">76</td><td>ioctl</td></tr>
+  <tr><td class="num">17</td><td>shm_unmap</td><td class="num">37</td><td>spawn_arg</td><td class="num">57</td><td>socketpair</td><td class="num">77</td><td>stat</td></tr>
+  <tr><td class="num">18</td><td>shm_close</td><td class="num">38</td><td>blk_count</td><td class="num">58</td><td>boot_wallpaper</td><td class="num">78</td><td>getppid</td></tr>
+  <tr><td class="num">19</td><td>fb_map</td><td class="num">39</td><td>blk_info</td><td class="num">59</td><td>memfd_phys</td><td></td><td></td></tr>
+</table>
+<p class="small"><code>memfd_phys</code> 与 <code>map_phys</code> 只授予内核启动的 <code>/bin/display</code>（<code>display_cap</code>），用于把 memfd 扫描缓冲和 PCI MMIO BAR 交给 virtio-gpu。</p>
+
+<h2>3.7 图形核心 Z64 1.0</h2>
+<p><code>kernel/gfx/render.c</code> 实现 Z64 1.0 光栅接口（<code>kernel/include/zos_api.h</code>，banner <code>Z64 1.0</code>）：矩形、线、圆角、裁剪、混合、纹理与字形绘制、SVG 光栅化。Ring3 复用同一份实现，Desktop Window Manager 与 Aqua Desktop Environment 都不直接访问帧缓冲像素。</p>
+
+<!-- ======================= 4 ======================= -->
+<h1 class="chapter"><span class="num">4</span>用户态与工具链</h1>
+
+<h2>4.1 ZXE v1</h2>
+<p>用户 ELF 是链接到 RVA 0 的 PIE（<code>-fpie</code>/<code>-fPIC</code>，<code>user/user.ld</code>，不使用 <code>-mcmodel=large</code>），由 <code>tools/zxe-pack.rb</code> 转成 ZXE v1。加载器 <code>proc/zxe_loader.c</code> 在 <code>[1 TiB, 1 TiB + 1 GiB)</code> 内按 64 KiB 对齐随机选择基址（最多重试 64 次，失败即拒绝启动）。依赖按简单文件名从 <code>/lib</code> 加载。<code>tools/zxe-check.rb</code> 校验结构，<code>tools/zxe-fixture-lib.rb</code> 生成动态链接测试库。</p>
+
+<h2>4.2 C 库与 POSIX 层</h2>
+<p>newlib 4.6 是 C 库，由 <code>tools/newlib.rb</code> 用 clang 构建成 <code>x86_64-elf</code> 的 PIC 版本（必须 <code>-fPIC</code>，否则 PIE 重定位装不进随机基址）。<code>user/lib/posix/libgloss.c</code> 与 <code>crt0.S</code> 实现系统调用桩和 <code>main(argc, argv, envp)</code> 启动。ncurses 6.5 在树外构建，terminfo 条目为 <code>initramfs/usr/share/terminfo/z/zhaoxu</code>。nano 8.4 尚未完成 ZXE PIE 重链接。</p>
+
+<h2>4.3 Shell</h2>
+<p>GNU bash 5.3 由 <code>tools/bash.rb</code> 交叉构建并打包为 ZXE，运行在 <code>/bin/bash</code>。无帧缓冲启动时内核直接拉起 bash，可在串口操作。作业控制、信号与 toybox 尚未完成。</p>
+
+<h2>4.4 构建</h2>
+<pre>cd src
+make -j4                       # 全部构建（Linux / macOS / WSL2）
+make iso                       # out/zhaoxu-os_x86-64_{version}_{build}_ld.iso
+make run-iso                   # UEFI 从 ISO 启动
+make host-test                 # 宿主检测单元测试
+ruby tools/zxe-pack.rb in.elf out.zxe</pre>
+<p>Windows 首选 WSL2，在其内部直接 <code>make</code>；原生 Windows 走 MSYS2/MinGW 回退。Ada 驱动需要 <code>gnat</code>（<code>gcc-14</code>/<code>15</code>/<code>16</code> 按序探测）。<code>tools/build.rb</code> 只是便捷包装，构建入口始终是 Makefile。</p>
+
+<!-- ======================= 5 ======================= -->
+<h1 class="chapter"><span class="num">5</span>桌面栈</h1>
+
+<h2>5.1 三个组件</h2>
+<table>
+  <tr><th style="width:44mm">组件</th><th>职责</th><th>源码</th></tr>
+  <tr><td>Aqua Desktop Environment</td><td>显示服务器入口、应用注册、壁纸、菜单栏、Dock</td><td><code>src/apps/ADE/main.cpp</code>、<code>wallpaper.cpp</code>、<code>menubar.cpp</code>、<code>dock.cpp</code></td></tr>
+  <tr><td>Desktop Window Compositor</td><td>系统内存后缓冲、损伤区域合成、光标</td><td><code>src/apps/ADE/compositor/</code></td></tr>
+  <tr><td>Desktop Window Manager</td><td>z 序、焦点、拖动、关闭、输入分发、损伤</td><td><code>src/apps/ADE/winmgr/dwm.cpp</code></td></tr>
+</table>
+<p>开机在图形模式直接 <code>spawn /bin/aqua</code>，随后拉起 <code>welcome.zxe</code> 与 <code>calc.zxe</code>。客户端只依赖 <code>ade_protocol.h</code> 与 <code>ade_client.h</code>，通过命令重放交给内核的 Z64 渲染器执行。</p>
+
+<h2>5.2 字体与光标</h2>
+<p>字体只允许 MiSans、MiSans Global 与 Inter 三种 OpenType 字体；Ring3 字体引擎是 FreeType 2.13.3（<code>third_party/freetype</code>，适配层 <code>user/lib/freetype/ttf_freetype.c</code>），内核启动字体仍用 <code>kernel/font/</code>。光标主题由 PNG 帧序列加文本描述 <code>cursor.theme</code> 组成，位于 <code>/usr/share/cursors/Aqua</code>，解码用 vendored <code>stb_image.h</code>。</p>
+
+<h2>5.3 合成路径</h2>
+<pre>客户端命令 → ade_protocol → Aqua(server.cpp) → Desktop Window Manager（z 序/损伤）
+           → Desktop Window Compositor（后缓冲、损伤合成）
+           → Z64 render.c → 帧缓冲</pre>
+
+<!-- ======================= 6 ======================= -->
+<h1 class="chapter"><span class="num">6</span>图形 API</h1>
+
+<h2>6.1 OpenGL 1.1 软件实现</h2>
+<p><code>src/user/lib/opengl</code> 是立即模式软件实现：矩阵栈、正交与透视投影、图元、深度测试、背面剔除、RGBA 纹理、<code>GL_LIGHT0..7</code> 光照与材质、混合、Alpha 测试、裁剪与 <code>glReadPixels</code>。构建时从 <code>USER_CFLAGS</code> 过滤 <code>-mno-sse</code> 并加 <code>-msse2</code>。缺显示列表、求值器、雾、选择/反馈、扩展与着色器。</p>
+
+<h2>6.2 Vulkan 1.0 软件 ICD</h2>
+<p><code>src/user/lib/vulkan</code> 提供单 ICD 实现：实例、物理/逻辑设备、队列、内存、缓冲区、图像、渲染通道、帧缓冲、图形管线、命令缓冲、栅栏，以及 SPIR-V 1.0 解释器和 CPU 三角光栅化。没有 WSI/交换链、描述符集与 UBO、计算、深度/模板、多重采样与信号量。</p>
+
+<div class="note warn">
+  <b>规则 37/38 尚未满足。</b>桌面仍走 Z64 软件光栅路径，OpenGL 与 Vulkan 是 Ring3 兼容层。发布说明必须如实描述上述限制，不得写成“默认 Vulkan、兼容 OpenGL”已达成。
+</div>
+
+<!-- ======================= 7 ======================= -->
+<h1 class="chapter"><span class="num">7</span>驱动模型</h1>
+
+<h2>7.1 Ring3 驱动进程</h2>
+<p>Ada 驱动在 <code>src/drivers/*.ads</code> 用 <code>pragma Export, Convention => C</code> 导出符号，与 <code>apps/drivers/</code> 的 C 胶水一起编译成 <code>/bin/drivers</code>（<code>-mcmodel=large</code>）。驱动进程拥有 0–4 GiB 恒等用户映射和 IOPL=3，DMA 与 MMIO 指针就是物理地址；<code>pmm_alloc_page</code> 通过 <code>dev_alloc_page</code> 系统调用实现。</p>
+
+<h2>7.2 共享页协议</h2>
+<table>
+  <tr><th style="width:30mm">页</th><th>内容</th></tr>
+  <tr><td>头页</td><td>请求状态机：块 I/O、RTC、信息查询</td></tr>
+  <tr><td>数据页</td><td>块读写缓冲区</td></tr>
+  <tr><td>输入页</td><td>键盘字符与鼠标状态的原子输入环</td></tr>
+  <tr><td>日志页</td><td>内核日志环，由驱动输出到 COM1</td></tr>
+</table>
+<p>四页定义在 <code>kernel/include/dev.h</code>。<code>DEBUG_SERIAL=1</code> 只用于开发，默认构建不含内核串口代码。AHCI 的 DMA 使用物理地址，依赖内核的恒等映射；命令头 <code>prdtl</code> 在偏移 2，FLUSH 这类无数据命令必须保持 <code>prdtl = 0</code>。</p>
+
+<h2>7.3 受信任能力</h2>
+<p><code>/bin/ext4fs</code> 持有块设备能力并独占 ext4 解析。<code>/bin/display</code> 额外持有 <code>display_cap</code>，可用 <code>memfd_phys</code> 与 <code>map_phys</code> 取得扫描缓冲和 PCI MMIO BAR。<code>casper/vga.ko</code> 目前只是 Ring3 通用驱动镜像的副本，内核模块加载器尚未实现。</p>
+
+<!-- ======================= 8 ======================= -->
+<h1 class="chapter"><span class="num">8</span>安装器与磁盘布局</h1>
+
+<h2>8.1 流程</h2>
+<p><code>/bin/apps/install.zxe</code> 扫描 <code>sys_disks</code>，列出空白盘与既有 Zhaoxu 盘，自动选中一个目标，确认一次后按 GPT（默认）或 MBR（高级选项）安装。UI 另起一个 <code>worker</code> 副本执行写入，父进程通过共享页读取 <code>SYS_INSTALL_PROGRESS</code>（70）的 done/total 重绘进度条。完成后可点“立即重启”，走 <code>SYS_REBOOT</code>（69）。</p>
+<p>内核侧 <code>kernel/fs/install.c</code> 自包含，不读取额外介质：写 MBR/GPT、写 Limine 的 BIOS 引导扇区与 stage 2、复制 UEFI 加载器、合成单段 ELF 内核、格式化 FAT32 ESP 与 ext4 根。</p>
+
+<h2>8.2 布局</h2>
+<table>
+  <tr><th style="width:22mm">方案</th><th>分区顺序</th></tr>
+  <tr><td>MBR</td><td>LBA0 Limine stage 1 · LBA1 stage 2 · 空隙 · ESP · ext4 · 可选数据分区</td></tr>
+  <tr><td>GPT</td><td>保护性 MBR · LBA1/2 头与项 · LBA34 stage 2 · 空隙 · ESP · ext4 · 可选数据分区 · 末尾备份 GPT</td></tr>
+</table>
+<table>
+  <tr><th style="width:38mm">卷</th><th>内容</th><th style="width:38mm">大小</th></tr>
+  <tr><td><code>ZHAOXUEFI</code>（FAT32）</td><td>UEFI 加载器、<code>limine.conf</code>、<code>limine-bios.sys</code>、<code>KERNEL.ELF</code>、<code>KERNEL.BIN</code>、<code>MiSans.ttf</code>、<code>WALL.RGB</code></td><td>默认 64 MiB，可选 64/128/256 MiB</td></tr>
+  <tr><td><code>ZHAOXUROOT</code>（ext4）</td><td>系统文件，不放任何引导文件</td><td>剩余空间</td></tr>
+  <tr><td><code>ZHAOXUDATA</code>（FAT32，可选）</td><td>用户数据，挂载到 <code>/mnt</code></td><td>64/128/256 MiB</td></tr>
+</table>
+<p>安装目标识别按首扇区判断：空白盘、带 Limine 签名（<code>EB 3C 90</code> + <code>LIMINE</code>）的盘、首分区类型为 <code>0xEF</code>/<code>0x0C</code>/<code>0x0E</code> 且从 LBA 2048 开始的盘。带 <code>ZHAOXUDATA</code> 的数据盘永不作为安装目标。</p>
+
+<!-- ======================= 9 ======================= -->
+<h1 class="chapter"><span class="num">9</span>Wayland 方向</h1>
+<p>目标架构写在 <code>docs/superpowers/specs/2026-11-14-wayland-gbm-kms-design.md</code>：Wayland 1.x 核心加 xdg-shell、wl_shm/dmabuf，缓冲经 GBM 分配，先 GPU 渲染/合成，再走 KMS 原子提交与页翻转。</p>
+<table>
+  <tr><th style="width:22mm">阶段</th><th>内容</th><th style="width:26mm">状态</th></tr>
+  <tr><td>M0</td><td>传输层：socket、memfd、SCM_RIGHTS、eventfd/timerfd/epoll</td><td>已实现并验证</td></tr>
+  <tr><td>M1</td><td>Ring3 <code>/bin/display</code> 的 KMS 服务（virtio-gpu 2D + 双缓冲翻转）与 GBM</td><td><span class="tag wip">未完成</span></td></tr>
+  <tr><td>M4</td><td>dma-buf</td><td><span class="tag wip">未开始</span></td></tr>
+</table>
+<p>树内 vendored 组件：<code>third_party/wayland</code>（libwayland 1.23.1 客户端核心与生成的核心/xdg-shell 绑定）、<code>third_party/libffi</code>（x86_64 SysV <code>ffi_call</code> 子集）、<code>user/lib/wayland</code> 兼容层。<code>make out/wlstock.zxe</code> 构建测试客户端，<code>WLSTOCK_BOOT_TEST=1</code> 启动 <code>/bin/wayland</code> 并核验串口输出 <code>commit 320x240</code>。未修改的上游应用（weston-terminal）仍缺 libc 与 <code>shm_open</code> 面，尚未跑通。</p>
+
+<!-- ======================= 10 ======================= -->
+<h1 class="chapter"><span class="num">10</span>OS_5P 目标架构 <span class="tag wip">未实现</span></h1>
+
+<h2>10.1 三根支柱</h2>
+<p>OS_5P 是 XNU 式单镜像混合内核：Yuanshuo 当 Mach 角色，FreeBSD 15.1-RELEASE 当 BSD 角色，IO/287 当 IOKit 角色。三者编译进同一个 <code>KERNEL.ELF</code>，不是虚拟机、不是 bhyve 客户机、不是用户态 FreeBSD 进程。完整设计在 <code>docs/superpowers/specs/2026-11-20-xnu-freebsd-design.md</code>。</p>
+<table>
+  <tr><th style="width:36mm">支柱</th><th>角色</th><th>职责</th></tr>
+  <tr><td>Yuanshuo</td><td>Mach</td><td>物理/虚拟内存、调度、线程、IPC 端口、陷阱与系统调用入口</td></tr>
+  <tr><td>FreeBSD 15.1</td><td>BSD</td><td>vnodes 与描述符表、UFS2/GEOM、网络栈、POSIX 进程面</td></tr>
+  <tr><td>IO/287</td><td>IOKit</td><td>设备匹配、设备注册表、驱动族，内核内 C++</td></tr>
+</table>
+
+<h2>10.2 绑定关系</h2>
+<table>
+  <tr><th style="width:42mm">FreeBSD 需要</th><th>Yuanshuo 提供</th></tr>
+  <tr><td>物理页（<code>vm_page</code>、UMA）</td><td>PMM 预留区，经 personality VM API 分配</td></tr>
+  <tr><td>页表与 <code>pmap</code></td><td>页表根归核心，映射/解映射/NX 经核心 API</td></tr>
+  <tr><td><code>kthread</code> 与 ULE</td><td>由核心线程承载，切换与时钟由核心驱动</td></tr>
+  <tr><td><code>ithread</code> 中断线程</td><td>IDT 分发把注册向量转给 FreeBSD <code>intr_event</code></td></tr>
+  <tr><td><code>callout(9)</code></td><td>LAPIC timer 驱动 <code>hardclock</code></td></tr>
+  <tr><td>控制台 <code>cn(4)</code></td><td>核心 UART / 串口</td></tr>
+  <tr><td>设备访问</td><td>IO/287 节点，不走 newbus 硬件 attach</td></tr>
+</table>
+
+<h2>10.3 IO/287</h2>
+<p>IO/287 是内核内 freestanding C++ 的设备框架：匹配（总线探测或 vendor/device/class）、注册表（root → bus → device → function，属性可枚举）、引用计数对象模型（不开 RTTI 的类注册表）、驱动族（block / network / input / display / bus）。</p>
+<ul>
+  <li>约束：无异常、无 RTTI、无 STL、无 C++ 运行时；静态构造不自动执行，由初始化钩子显式调用；对象从 personality VM API 预留区分配；注册表锁内不睡眠，探测在 kthread 上下文。</li>
+  <li>边界：newbus 只保留给 personality 内部伪设备；现有 Ring3 <code>/bin/drivers</code> 继续运行，按设备迁移。</li>
+  <li>许可：FreeBSD 为 BSD-2-Clause，与 GPL-2.0 兼容；<code>sys/contrib/openzfs</code> 与 <code>sys/cddl</code>（CDDL）不参与链接。</li>
+</ul>
+
+<div class="note warn">
+  <b>两条规则需要项目所有者修改 RULES.md（规则 41，AI 不得代改）。</b><br>
+  r9：驱动只在 Ring3 —— 与内核内 IO/287 直接冲突。<br>
+  r5：C 写内核、SPARK 写驱动 —— 与内核内 C++ 驱动族冲突。
+</div>
+
+<h2>10.4 里程碑</h2>
+<table>
+  <tr><th style="width:16mm">阶段</th><th>交付</th><th>证据</th></tr>
+  <tr><td>M0</td><td>设计落地（本架构文档第 10 章）</td><td>文档与许可核查</td></tr>
+  <tr><td>M1</td><td>核心 personality API：线程、内核态 IPC、VM 预留区、陷阱转发、时钟（已交付）</td><td><code>[per ] personality API PASS</code></td></tr>
+  <tr><td>M2</td><td>FreeBSD 机器相关层移植；IO/287 与 15.1 链接进 KERNEL.ELF</td><td>干净链接；<code>nm</code>；64 MiB 镜像上限</td></tr>
+  <tr><td>M3</td><td>最小启动与控制台</td><td>串口启动日志</td></tr>
+  <tr><td>M4</td><td>UFS2/GEOM、网络栈消费 IO/287 节点，首个硬件驱动</td><td>子系统串口/截图</td></tr>
+  <tr><td>M5</td><td>系统调用 personality 路由，FreeBSD ELF 可执行</td><td>真实 FreeBSD 二进制运行</td></tr>
+</table>
+<p>FreeBSD 侧由 Ruby 驱动 <code>src/tools/freebsd-personality.rb</code> 拉取并校验 <code>src.txz</code>，用其 <code>tools/build/make.py</code> 在 WSL2 上交叉构建（自举 bmake，外部 clang/lld）；FreeBSD 虚拟机是兜底宿主。
+
+<p class="small">M1 已实现于 <code>kernel/personality/</code> 与 <code>kernel/ipc/kport.c</code>：任务线程、256 页预留 VM 区、陷阱转发、时钟服务与内核态 IPC 端点，由 <code>PERSONALITY_SELFTEST=1</code> 的自测验证。</p></p>
+
+<!-- ======================= 11 ======================= -->
+<h1 class="chapter"><span class="num">11</span>验证与回归</h1>
+
+<h2>11.1 构建检查</h2>
+<pre>ruby tools/build.rb --check      # 宿主工具与 OVMF
+make clean && make -j4           # 干净重建
+nm -u out/kernel.elf             # 必须为空
+nm out/kernel.elf | grep -E 'ahci_|acpi_init|serial_init|keyboard_|mouse_|pit_init|pci_'</pre>
+
+<h2>11.2 串口回归标记</h2>
+<table>
+  <tr><th style="width:44mm">测试</th><th>期望标记</th></tr>
+  <tr><td>M0 传输</td><td><code>[m0] socket, poll, memfd, mmap, SCM_RIGHTS PASS</code></td></tr>
+  <tr><td>M1 personality API</td><td><code>[per ] personality API PASS</code>（VM、线程、内核 IPC、陷阱、时钟）</td></tr>
+  <tr><td>M5 事件循环</td><td><code>[m5] eventfd, timerfd, epoll PASS</code></td></tr>
+  <tr><td>fork/exec</td><td><code>[fe ] FORKEXEC exit 7</code></td></tr>
+  <tr><td>pipe/dup2/tty</td><td><code>[posix] PIPE, EOF, DUP2, STDIO, TTY PASS</code></td></tr>
+  <tr><td>newlib / ncurses</td><td><code>ncurses hello: 80x25 ok</code></td></tr>
+  <tr><td>FreeType</td><td><code>[ft] FreeType PASS</code></td></tr>
+  <tr><td>OpenGL / Vulkan</td><td><code>[gl ] OpenGL PASS</code> / <code>[vk ] Vulkan PASS</code></td></tr>
+  <tr><td>Wayland stock</td><td><code>[wlstock] WLSTOCK exit 0</code></td></tr>
+</table>
+
+<h2>11.3 桌面与安装</h2>
+<p><code>make run-iso</code> 应直接进入 Aqua Desktop Environment，日志出现 <code>limine: Loading executable</code>、<code>[ade ] font boot volume</code>、<code>[dwc] Desktop Window Compositor back buffer</code>，并显示 Welcome 与 Calculator 两个窗口。ISO 改动要分别用 <code>make run-iso</code>（UEFI）与 <code>make run-bios</code>（SeaBIOS）验证。安装回归用 <code>make run-install</code>（GPT）与 <code>make run-install-bios</code>（MBR），随后只用目标盘启动。</p>
+<p class="small">当前没有通用测试套件。内核或引导改动后的最低要求是：宿主检查、干净重建、<code>nm</code> 检查、一次 QEMU 冒烟。</p>
+
+<!-- ======================= 12 ======================= -->
+<h1 class="chapter"><span class="num">12</span>附录</h1>
+
+<h2>12.1 名称契约</h2>
+<p>下列名称不得改名、缩写或替换：</p>
+<table>
+  <tr><th style="width:44mm">名称</th><th>对象</th></tr>
+  <tr><td>Zhaoxu OS</td><td>操作系统</td></tr>
+  <tr><td>Yuanshuo</td><td>微内核</td></tr>
+  <tr><td>OS_5P</td><td>目标混合内核</td></tr>
+  <tr><td>IO/287</td><td>内核内设备框架（IOKit 角色）</td></tr>
+  <tr><td>Limine</td><td>引导管理器</td></tr>
+  <tr><td>Aqua Desktop Environment</td><td>桌面</td></tr>
+  <tr><td>Desktop Window Compositor</td><td>合成器</td></tr>
+  <tr><td>Desktop Window Manager</td><td>窗口管理器</td></tr>
+  <tr><td>ZAF / Z64</td><td>桌面框架 / 图形接口</td></tr>
+</table>
+
+<h2>12.2 术语</h2>
+<table>
+  <tr><th style="width:40mm">术语</th><th>含义</th></tr>
+  <tr><td>zfd</td><td>从 64 起的进程级描述符表，与 VFS 描述符 3–18 分离</td></tr>
+  <tr><td>ZIR1</td><td>initramfs 的压缩包装格式（zlib 流加头）</td></tr>
+  <tr><td>Z64 1.0</td><td>内核与 Ring3 共用的光栅接口</td></tr>
+  <tr><td>ZXE v1</td><td>原生可执行格式（PIE，RVA 0，W^X）</td></tr>
+  <tr><td>personality</td><td>运行在同一内核地址空间内的大子系统（FreeBSD）</td></tr>
+  <tr><td>capability</td><td>内核授予特定进程的特权（<code>display_cap</code>、块设备能力）</td></tr>
+</table>
+
+<div class="note">
+  <b>文档维护。</b>本文件与 <code>AGENTS.md</code>、<code>docs/superpowers/specs/</code> 同源。实现变化后先改源码与规格，再重新生成本文档；不要把目标设计写成本文第 1–9 章那样的现状描述。<br>
+  Copyright © 2026 Nexsteaduser. All Rights Reserved. · admin@nexsteaduser.com
+</div>
+
+</body>
+</html>

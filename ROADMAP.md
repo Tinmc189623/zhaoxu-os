@@ -10,7 +10,7 @@ compiled, and what is still missing. It is not a promise of dates.
 | --- | --- |
 | Boot | Limine 12.10.0 on UEFI and Legacy BIOS; hybrid ISO and installed ESP boot-tested |
 | Kernel | Yuanshuo microkernel with Ring3 drivers, scheduler, IPC, VFS core, ZXE loader |
-| Hybrid kernel | XNU-style design landed (M0): Linux 7.4-rc3 as an in-kernel auxiliary personality on the Yuanshuo core, single image; project relicensed GPL-2.0. Implementation staged M1–M5 |
+| Hybrid kernel | Design (M0) plus the core personality API (M1) landed: **OS_5P** = Yuanshuo core + FreeBSD 15.1-RELEASE personality + IO/287 device framework, single image. M2–M5 pending |
 | Desktop | Aqua Desktop Environment on Desktop Window Compositor and Desktop Window Manager, software raster path |
 | Installer | Graphical GPT/MBR flow, custom ESP/data sizes, FAT32/ext4 formatting, Limine deployment |
 | Executables | ZXE v1 PIE, W^X, random load base, Z64 1.0 syscalls 0–77 |
@@ -22,7 +22,7 @@ compiled, and what is still missing. It is not a promise of dates.
 ## Now: finish the foundations
 
 1. **nano as a real ZXE application.** Relink the compiled nano objects with
-   `user/user.ld` and `ld.lld -shared`, pack with `tools/zxe-pack.rb`, start it
+   `user/user.ld` and `ld.lld -shared`, pack with `tools/zxe-pack.py`, start it
    from a boot test, edit a file, save it, and exit cleanly.
 2. **Split the POSIX glue.** `libgloss.c` currently mixes file I/O, process
    control, terminals, signals, accounts and directory streams. Move each into
@@ -57,13 +57,27 @@ compiled, and what is still missing. It is not a promise of dates.
 
 ## Later
 
-- **XNU-style Linux personality.** Integrate Linux 7.4-rc3 as an in-kernel
-  auxiliary personality (Yuanshuo as the Mach-like core, Linux as the BSD-like
-  personality) in a single `KERNEL.ELF`, per
-  `docs/superpowers/specs/2026-11-18-xnu-linux-design.md`. M0 (GPL-2.0 relicense +
-  design) is done; M1 exports the core personality API, M2 ports Linux, M3–M5
-  bring up boot/console, subsystems and syscall routing. Requires the owner's
-  r9 amendment (rule 41) for in-kernel drivers.
+- **OS_5P, the XNU-style hybrid kernel.** Integrate FreeBSD 15.1-RELEASE as an
+  in-kernel auxiliary personality (Yuanshuo as the Mach-like core, FreeBSD as
+  the BSD-like personality) plus **IO/287**, the in-kernel C++ device framework
+  in the IOKit role, all in a single `KERNEL.ELF`, per
+  `docs/superpowers/specs/2026-11-20-xnu-freebsd-design.md`. M0 (design) and
+  M1 (core personality API, `kernel/personality/` + `kernel/ipc/kport.c`,
+  verified by `PERSONALITY_SELFTEST=1` serial markers) are done; M2 has its
+  build driver (`tools/freebsd-personality.py`: fetch, checksum, overlay) and a
+  native `buildkernel KERNCONF=ZHAOXU` inside the FreeBSD 15.1 VM completes in
+  162 s (`kernel` 13.3 MB). Slices 1–4 of the port are in: a
+  `FREEBSD_PERSONALITY` gate with a weak boot seam, the linker-side symbols the
+  FreeBSD objects need (`_end`, `brsection`, `set_*` sections), the versioned
+  `zx_core_services` table with `freebsd_pmap_init()`, and a shared
+  `core_abi.h` that compiles in both kernels (`probe.c` builds inside the 15.1
+  tree, `PROBE=0`). The pmap study shows 154 of `pmap.o`'s 171 externals
+  resolve inside the FreeBSD objects. The WSL2 cross `kernel-toolchain` still fails, and the machine port
+  plus IO/287 are not started. M3's core half (boot handoff
+  and console service) is in and covered by the self-test; the personality
+  still cannot reach `mi_startup` without the M2 port. M4–M5 bring up
+  subsystems and syscall routing. CDDL subsystems (ZFS, DTrace) stay unlinked. Requires the owner's r9
+  amendment (rule 41) for in-kernel drivers and drivers outside Ring3.
 - File system completeness: full ext4 write coverage, FAT32 edge cases, media
   probing, and safe removal.
 - Drivers: NVMe, USB xHCI/HID, virtio-gpu 3D, audio, and power management,
