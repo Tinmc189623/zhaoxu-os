@@ -1,12 +1,59 @@
 # ZHAOXU -- the OS_5P personality kernel.
 #
-# Built on MINIMAL: scheduler, VM, traps and the console the personality
-# bring-up (M3) needs.  M4 adds UFS/GEOM, network and the first IO/287
-# driver by including the matching options here, not by editing upstream.
+# MINIMAL plus the FreeBSD subsystems the OS_5P design requires from FreeBSD
+# (owner directive 2026-11-25): the vnode/VFS layer (FFS, tmpfs, pseudo-fs),
+# TCP/IP (already in MINIMAL), character devices through the FreeBSD cdevsw
+# layer, pf and NFS.  These are compiled from the vendored FreeBSD 15.1 tree;
+# no Zhaoxu replacement is written for any of them.
 #
-# This file is applied as an overlay by tools/freebsd-personality.rb; the
+# This file is applied as an overlay by tools/freebsd-personality.py; the
 # vendored tree itself is never modified (rule 39).
 
 include "MINIMAL"
 
 ident           ZHAOXU
+
+# ---- VFS: vnode layer, on-disk and in-memory filesystems ----------------
+options         FFS                     # Berkeley Fast Filesystem
+options         TMPFS                   # Efficient memory filesystem
+options         PSEUDOFS                # Pseudo-filesystem framework
+options         PROCFS                  # Process filesystem
+options         GEOM_PART_GPT           # GUID partition tables
+options         GEOM_PART_MBR           # Master Boot Record partitions
+
+# ---- cdev ---------------------------------------------------------------
+# Character devices are the FreeBSD cdevsw layer in sys/kern/subr_cdev.c,
+# compiled as part of every kernel; devfs publishes the nodes.
+
+# ---- TCP/IP -------------------------------------------------------------
+# INET/INET6 and the loopback (`loop`) come from MINIMAL unchanged.
+
+# ---- pf -----------------------------------------------------------------
+device          pf                      # packet filter
+device          pflog                   # pf logging device
+# pf's TCP initial sequence number uses SHA-512 from sys/crypto/sha2,
+# which is only compiled when the crypto device is present.
+device          crypto                  # core crypto support
+
+# ---- NFS ----------------------------------------------------------------
+options         NFSCL                   # client
+options         NFSD                    # server
+options         NFSLOCKD                # lock manager
+
+# ---- SCSI / CAM ---------------------------------------------------------
+# CAM is the FreeBSD SCSI subsystem the OS_5P storage path uses; sym covers
+# the LSI 53C895A that QEMU emulates, virtio_scsi covers the VirtIO target.
+device          scbus
+device          da                      # direct-access disks
+device          pass                    # raw passthrough
+device          sym                     # LSI 53C8xx SCSI
+device          virtio_scsi
+
+# ---- Ethernet -----------------------------------------------------------
+device          iflib                   # shared NIC framework
+device          em                      # Intel PRO/1000 (E1000 family)
+
+# ---- USB / xHCI ---------------------------------------------------------
+device          usb                     # USB core
+device          xhci                    # xHCI host controller
+device          umass                   # USB mass storage (CAM peripheral)

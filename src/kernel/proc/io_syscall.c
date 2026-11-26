@@ -520,6 +520,11 @@ long sys_ipc_mmap(struct process *process, u64 arguments)
     struct zmmap_arguments args;
     if (copy_from_user(process, &args, arguments, sizeof(args)) != 0)
         return -1;
+    /* fd == -1 plus MAP_ANONYMOUS selects the anonymous allocator; the
+     * memfd path below keeps its existing contract. */
+    if (args.fd == -1 && (args.flags & 0x20u))
+        return process_anon_mmap(process, args.address, args.length,
+                                 (u32)args.protection, (u32)args.flags);
     if (args.length == 0 || args.fd < ZFD_BASE)
         return -1;
     struct zfd_entry *entry = zfd_get(process, (int)args.fd);

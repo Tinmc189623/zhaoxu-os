@@ -44,4 +44,8 @@ long sys_ipc_epoll_ctl(struct process *process, u64 epfd, u64 op, u64 fd,
 long sys_ipc_epoll_wait(struct process *process, u64 epfd, u64 events,
                         u64 max_events, u64 timeout);
 
+/* Sleep/wake on a shared 32-bit word (futex.c). */
+long sys_futex(struct process *process, u64 address, u64 operation, u64 value,
+               u64 timeout_pointer, u64 bitset);
+
 #endif

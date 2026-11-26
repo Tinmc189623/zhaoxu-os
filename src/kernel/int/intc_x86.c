@@ -63,7 +63,7 @@ void intc_disable_irq(u32 irq)
 void intc_eoi(u32 irq)
 {
     if (g_kind == INTC_APIC)
-        lapic_eoi();
+        yuanshuo_lapic_eoi();
     else if (irq < 16)
         pic_eoi((u8)irq);
 }

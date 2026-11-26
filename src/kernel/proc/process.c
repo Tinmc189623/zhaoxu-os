@@ -24,12 +24,8 @@
 #include <vfs.h>
 #include <zxe_format.h>
 
-#define USER_LOAD_BASE      0x0000010000000000ULL   /* 1 TiB   */
-#define USER_STACK_TOP      0x0000010100000000ULL   /* 1 TiB + 4 GiB */
-#define USER_STACK_PAGES    32
-#define USER_KERNEL_STACK   KERNEL_THREAD_STACK
-#define USER_ADDRESS_LIMIT  0x0000018000000000ULL
 #include "process_internal.h"
+#include "elf_loader.h"
 
 static struct process g_processes[MAX_PROCESSES];
 static u64 g_next_pid = 1;
@@ -37,36 +33,6 @@ static u64 g_last_pid;
 
 extern void user_enter(u64 entry, u64 stack);
 void process_exit_current(int status);
-
-struct elf64_header {
-    u8 ident[16];
-    u16 type;
-    u16 machine;
-    u32 version;
-    u64 entry;
-    u64 program_header_offset;
-    u64 section_header_offset;
-    u32 flags;
-    u16 header_size;
-    u16 program_header_size;
-    u16 program_header_count;
-    u16 section_header_size;
-    u16 section_header_count;
-    u16 string_table_index;
-} __attribute__((packed));
-
-struct elf64_program_header {
-    u32 type;
-    u32 flags;
-    u64 offset;
-    u64 virtual_address;
-    u64 physical_address;
-    u64 file_size;
-    u64 memory_size;
-    u64 alignment;
-} __attribute__((packed));
-
-#define ELF_PT_LOAD 1
 
 static struct process *current_process(void)
 {
@@ -77,6 +43,17 @@ static struct process *current_process(void)
 struct process *process_current(void)
 {
     return current_process();
+}
+
+struct process *process_lookup(u64 pid)
+{
+    if (!pid)
+        return NULL;
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (g_processes[i].used && g_processes[i].pid == pid)
+            return &g_processes[i];
+    }
+    return NULL;
 }
 
 static struct process *process_find(u64 pid)
@@ -130,26 +107,6 @@ int process_user_write(struct process *process, u64 virtual_address,
     return 0;
 }
 
-static int user_zero(struct process *process, u64 virtual_address, u64 length)
-{
-    while (length) {
-        u64 page = virtual_address & ~0xFFFULL;
-        u64 offset = virtual_address & 0xFFF;
-        u64 chunk = PAGE_SIZE - offset;
-        if (chunk > length)
-            chunk = length;
-
-        u64 physical = vmm_space_get_physical(process->space, page);
-        if (!physical)
-            return -1;
-        memset((u8 *)(uintptr_t)physical + offset, 0, chunk);
-
-        virtual_address += chunk;
-        length -= chunk;
-    }
-    return 0;
-}
-
 u64 process_map_page(struct process *process, u64 virtual_address,
                      u64 page_flags)
 {
@@ -193,6 +150,74 @@ u64 process_map_page(struct process *process, u64 virtual_address,
     return physical;
 }
 
+/* Drop one recorded page mapping and free its physical page. */
+void process_unmap_page(struct process *process, u64 virtual_address)
+{
+    for (int i = 0; i < process->mapping_count; i++) {
+        if (process->mappings[i].virtual_address != virtual_address)
+            continue;
+        u64 physical = vmm_space_unmap_page(process->space, virtual_address);
+        if (physical)
+            pmm_free_page(physical);
+        process->mappings[i] = process->mappings[--process->mapping_count];
+        return;
+    }
+}
+
+/* Copy a NUL-terminated path from user memory; an unterminated string that
+ * fills the buffer is rejected rather than silently truncated. */
+int copy_path_from_user(struct process *process, char *destination,
+                        usize capacity, u64 source)
+{
+    if (!process || !destination || !capacity)
+        return -1;
+    for (usize i = 0; i < capacity; i++) {
+        if (user_range_ok(process, source + i, 1) != 1)
+            return -1;
+        char character = *(const char *)(uintptr_t)(source + i);
+        destination[i] = character;
+        if (character == 0)
+            return 0;
+    }
+    destination[capacity - 1] = 0;
+    return -1;
+}
+
+/* Move the program break; pages are mapped on demand and freed on shrink.
+ * A request outside [brk_start, brk_limit] leaves the break unchanged, which
+ * is the Linux contract glibc's malloc expects. */
+u64 process_brk(struct process *process, u64 requested)
+{
+    if (!process || !process->space)
+        return 0;
+    if (requested == 0)
+        return process->brk_current;
+    if (requested < process->brk_start || requested > process->brk_limit)
+        return process->brk_current;
+
+    u64 old_end = ALIGN_UP(process->brk_current, PAGE_SIZE);
+    u64 new_end = ALIGN_UP(requested, PAGE_SIZE);
+    if (new_end > old_end) {
+        u64 mapped = old_end;
+        for (; mapped < new_end; mapped += PAGE_SIZE)
+            if (!process_map_page(process, mapped,
+                                  VMM_WRITABLE | VMM_EXECUTE_DISABLE))
+                break;
+        if (mapped < new_end) {
+            for (u64 undo = old_end; undo < mapped; undo += PAGE_SIZE)
+                process_unmap_page(process, undo);
+            return process->brk_current;
+        }
+    } else if (new_end < old_end) {
+        for (u64 va = old_end; va > new_end;) {
+            va -= PAGE_SIZE;
+            process_unmap_page(process, va);
+        }
+    }
+    process->brk_current = requested;
+    return requested;
+}
+
 void process_release_pages(struct process *process)
 {
     if (!process)
@@ -209,136 +234,10 @@ void process_release_pages(struct process *process)
     }
     process->mapping_count = 0;
     process->mapping_capacity = 0;
+    process->anon_count = 0;
+    process->anon_cursor = 0;
     kfree(process->mappings);
     process->mappings = NULL;
-}
-
-static int elf_load(struct process *process, const u8 *image, u64 image_size,
-                    u64 *entry_out)
-{
-    if (!image || image_size < sizeof(struct elf64_header))
-        return -1;
-
-    const struct elf64_header *header = (const struct elf64_header *)image;
-    if (header->ident[0] != 0x7F || header->ident[1] != 'E' ||
-        header->ident[2] != 'L' || header->ident[3] != 'F')
-        return -1;
-    if (header->ident[4] != 2 || header->ident[5] != 1)
-        return -1;
-    if (header->type != 2 || header->machine != 62)
-        return -1;
-    if (header->program_header_size < sizeof(struct elf64_program_header))
-        return -1;
-    if (header->program_header_count == 0 ||
-        header->program_header_count > 32)
-        return -1;
-
-    u64 table_end = header->program_header_offset +
-                    (u64)header->program_header_count *
-                        header->program_header_size;
-    if (table_end > image_size)
-        return -1;
-
-    for (u32 i = 0; i < header->program_header_count; i++) {
-        const struct elf64_program_header *program =
-            (const struct elf64_program_header *)
-                (image + header->program_header_offset +
-                 (u64)i * header->program_header_size);
-        if (program->type != ELF_PT_LOAD || program->memory_size == 0)
-            continue;
-        if (program->file_size > program->memory_size)
-            return -1;
-        if (program->offset + program->file_size > image_size)
-            return -1;
-        if (program->virtual_address < USER_LOAD_BASE)
-            return -1;
-        if (program->virtual_address + program->memory_size <
-            program->virtual_address)
-            return -1;
-        if (program->virtual_address + program->memory_size >
-            USER_ADDRESS_LIMIT)
-            return -1;
-
-        u64 start = program->virtual_address & ~0xFFFULL;
-        u64 end = (program->virtual_address + program->memory_size +
-                   0xFFFULL) & ~0xFFFULL;
-
-        u64 page_flags = (program->flags & 2) ? VMM_WRITABLE : 0;
-        if (!(program->flags & 1))
-            page_flags |= VMM_EXECUTE_DISABLE;
-        if ((program->flags & 3) == 3)
-            return -1;
-        for (u64 page = start; page < end; page += PAGE_SIZE) {
-            if (!process_map_page(process, page, page_flags))
-                return -1;
-        }
-
-        if (program->file_size &&
-            process_user_write(process, program->virtual_address,
-                       image + program->offset, program->file_size) != 0)
-            return -1;
-        if (program->memory_size > program->file_size &&
-            user_zero(process,
-                      program->virtual_address + program->file_size,
-                      program->memory_size - program->file_size) != 0)
-            return -1;
-    }
-
-    if (header->entry < USER_LOAD_BASE ||
-        header->entry >= USER_ADDRESS_LIMIT)
-        return -1;
-
-    *entry_out = header->entry;
-    return 0;
-}
-
-static int zxe_load(struct process *process, const u8 *image, u64 image_size,
-                    const char *path, u64 *entry_out)
-{
-    return zxe_load_image(process, image, image_size, path, entry_out);
-}
-
-static int image_load(struct process *process, const u8 *image, u64 image_size,
-                      const char *path, u64 *entry_out)
-{
-    if (image_size >= 4 && memcmp(image, ZXE_MAGIC, 4) == 0)
-        return zxe_load(process, image, image_size, path, entry_out);
-    if (image_size >= 3 && image[0] == 'Z' && image[1] == 'X' && image[2] == 'E')
-        return -1;
-    return elf_load(process, image, image_size, entry_out);
-}
-
-static u64 build_user_stack(struct process *process, int argc,
-                            const char **argv)
-{
-    u64 stack = USER_STACK_TOP - 16;
-    u64 pointers[16];
-
-    if (argc > 16)
-        argc = 16;
-    if (argc <= 0)
-        return 0;
-
-    for (int i = argc - 1; i >= 0; i--) {
-        usize length = strlen(argv[i]) + 1;
-        stack -= length;
-        if (process_user_write(process, stack, argv[i], length) != 0)
-            return 0;
-        pointers[i] = stack;
-    }
-
-    stack &= ~0xFULL;
-    stack -= (u64)(argc + 2) * sizeof(u64);
-
-    u64 frame[18];
-    frame[0] = (u64)argc;
-    for (int i = 0; i < argc; i++)
-        frame[1 + i] = pointers[i];
-    frame[1 + argc] = 0;
-    if (process_user_write(process, stack, frame,
-                   (u64)(argc + 2) * sizeof(u64)) != 0)
-        return 0;
-    return stack;
 }
 
 int process_prepare_image(struct process *process, const u8 *image,
@@ -346,20 +245,10 @@ int process_prepare_image(struct process *process, const u8 *image,
                           const char **argv)
 {
     u64 entry = 0;
-    if (image_load(process, image, image_size, path, &entry) != 0)
+    u64 stack = 0;
+    if (image_load(process, image, image_size, path, argc, argv, &entry,
+                   &stack) != 0)
         return -1;
-
-    for (u64 page = USER_STACK_TOP - USER_STACK_PAGES * PAGE_SIZE;
-         page < USER_STACK_TOP; page += PAGE_SIZE) {
-        if (!process_map_page(process, page,
-                              VMM_WRITABLE | VMM_EXECUTE_DISABLE))
-            return -1;
-    }
-
-    u64 stack = build_user_stack(process, argc, argv);
-    if (!stack)
-        return -1;
-
     process->entry = entry;
     process->user_stack = stack;
     return 0;
@@ -383,6 +272,19 @@ static void process_fail(struct process *process)
     process->state = PROC_UNUSED;
 }
 
+/* Rule 49: a userland driver is a .udrv bundle.  The spawn resolver passes
+ * "<bundle>/executable"; match either the bundle path or its executable. */
+static int path_is_bundle(const char *name, const char *bundle)
+{
+    if (!name)
+        return 0;
+    if (strcmp(name, bundle) == 0)
+        return 1;
+    usize length = strlen(bundle);
+    return strncmp(name, bundle, length) == 0 &&
+           strcmp(name + length, "/executable") == 0;
+}
+
 static u64 spawn_image(const u8 *image, u64 image_size, const char *name,
                        int argc, char **argv)
 {
@@ -400,18 +302,18 @@ static u64 spawn_image(const u8 *image, u64 image_size, const char *name,
      * must not end up able to drive the raw disk.  Kernel boot spawns
      * (dev_start, fs_service_start) run without a current process. */
     int trusted = (parent == NULL) && name &&
-                  (strcmp(name, "/bin/drivers") == 0 ||
-                   strcmp(name, "/bin/ext4fs") == 0 ||
-                   strcmp(name, "/bin/display") == 0);
+                  (path_is_bundle(name, "/bin/drivers.udrv") ||
+                   path_is_bundle(name, "/bin/ext4fs.udrv") ||
+                   path_is_bundle(name, "/bin/display.udrv"));
     process->space = vmm_space_create(trusted);
     if (!process->space) {
         process_fail(process);
         return 0;
     }
     process->block_cap = (parent == NULL) && name &&
-                         strcmp(name, "/bin/ext4fs") == 0;
+                         path_is_bundle(name, "/bin/ext4fs.udrv");
     process->display_cap = (parent == NULL) && name &&
-                           strcmp(name, "/bin/display") == 0;
+                           path_is_bundle(name, "/bin/display.udrv");
 
     const char *default_argv[1] = { name ? name : "<memory>" };
     const char **stack_argv = (argc > 0) ? (const char **)argv : default_argv;
@@ -426,8 +328,8 @@ static u64 spawn_image(const u8 *image, u64 image_size, const char *name,
         return 0;
     }
 
-    int affinity = (name && (strcmp(name, "/bin/drivers") == 0 ||
-                             strcmp(name, "/bin/display") == 0))
+    int affinity = (name && (path_is_bundle(name, "/bin/drivers.udrv") ||
+                             path_is_bundle(name, "/bin/display.udrv")))
                        ? 0
                        : -1;
     struct thread *thread = kthread_create_ctx(
@@ -444,6 +346,8 @@ static u64 spawn_image(const u8 *image, u64 image_size, const char *name,
     return process->pid;
 }
 
+/* Rule 49: a userland driver is a .udrv bundle whose executable is the ZXE
+ * named by its manifest.  Spawning the bundle path resolves to that file. */
 u64 process_spawn(const char *path, int argc, char **argv)
 {
     if (!path)
@@ -451,12 +355,20 @@ u64 process_spawn(const char *path, int argc, char **argv)
 
     u8 *image = NULL;
     u64 image_size = 0;
+    const char *resolved = path;
+    char bundled[160];
     if (vfs_read_all(path, &image, &image_size) != 0) {
-        kprintf("[proc] cannot read %s\n", path);
-        return 0;
+        int written = ksnprintf(bundled, sizeof(bundled), "%s/executable",
+                                path);
+        if (written <= 0 || (usize)written >= sizeof(bundled) ||
+            vfs_read_all(bundled, &image, &image_size) != 0) {
+            kprintf("[proc] cannot read %s\n", path);
+            return 0;
+        }
+        resolved = bundled;
     }
 
-    u64 pid = spawn_image(image, image_size, path, argc, argv);
+    u64 pid = spawn_image(image, image_size, resolved, argc, argv);
     kfree(image);
     return pid;
 }
@@ -523,17 +435,24 @@ void process_exit_current(int status)
     struct process *process = current_process();
 
     if (!process) {
-        kthread_exit();
+        yuanshuo_kthread_exit();
     }
 
     process->state = PROC_ZOMBIE;
     process->exit_code = status;
+    /* set_tid_address observers poll this word to learn the thread died. */
+    struct thread *thread = sched_current();
+    if (thread && thread->clear_child_tid) {
+        u32 zero = 0;
+        process_user_write(process, thread->clear_child_tid, &zero, sizeof(zero));
+        thread->clear_child_tid = 0;
+    }
     ipc_process_exit(process->pid);
     shm_process_exit(process->pid);
     zfd_process_exit(process);
     process_release_pages(process);
     g_last_pid = process->pid;
-    kthread_exit();
+    yuanshuo_kthread_exit();
 }
 
 void process_init(void)
@@ -588,6 +507,11 @@ const struct process_info *process_get_info(void)
 
 void process_handle_exception(struct interrupt_frame *frame)
 {
+    /* A registered handler for SIGSEGV/SIGILL/SIGFPE takes over here; only an
+     * unhandled fault reaches the reporter below. */
+    if (signal_deliver_fault(current_process(), frame))
+        return;
+
     u64 cr2 = 0;
     if (frame->vector == 14)
         __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));

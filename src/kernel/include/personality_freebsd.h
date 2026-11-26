@@ -26,6 +26,10 @@ const struct zx_core_services *freebsd_core_services(void);
 
 /* Core-side pmap preparation: verifies the granted VM window is usable. */
 int freebsd_pmap_init(const struct boot_info *bi);
+
+/* The machine port replaces this weak seam; the core passes the filled table
+ * so the port never has to know struct boot_info. */
+int freebsd_personality_port_start(struct zx_core_services *services);
 #endif
 
 #endif

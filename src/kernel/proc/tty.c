@@ -105,7 +105,7 @@ int tty_read(struct process *process, void *buffer, u64 length, int nonblock)
     }
 }
 
-int tty_ioctl(struct process *process, int fd, u64 request, u64 argument)
+int yuanshuo_tty_ioctl(struct process *process, int fd, u64 request, u64 argument)
 {
     if (fd < 0 || fd > 2)
         return -1;

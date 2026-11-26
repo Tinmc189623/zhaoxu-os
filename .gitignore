@@ -22,3 +22,6 @@ src/initramfs/data/Inter-Regular.otf
 docs/architecture/*.pdf
 __pycache__/
 *.pyc
+
+# Local rules: never uploaded (RULES.local.md says so)
+RULES.local.md

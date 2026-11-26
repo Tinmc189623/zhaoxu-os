@@ -54,6 +54,25 @@ static void handle_scancode(u8 scancode)
     }
     if (extended) {
         extended = 0;
+        if (scancode & 0x80)
+            return;
+        /* Arrow/Home/End/Page keys carry no ASCII; give setup a private
+         * byte range so text screens can move a selection. */
+        u8 code = 0;
+        switch (scancode) {
+        case 0x48: code = 0x81; break;   /* up */
+        case 0x50: code = 0x82; break;   /* down */
+        case 0x4B: code = 0x83; break;   /* left */
+        case 0x4D: code = 0x84; break;   /* right */
+        case 0x47: code = 0x85; break;   /* home */
+        case 0x4F: code = 0x86; break;   /* end */
+        case 0x49: code = 0x87; break;   /* page up */
+        case 0x51: code = 0x88; break;   /* page down */
+        case 0x53: code = 0x7F; break;   /* delete */
+        default: break;
+        }
+        if (code)
+            driver_push_key((char)code);
         return;
     }
     if (scancode == 0x2A || scancode == 0x36) {
@@ -76,6 +95,17 @@ static void handle_scancode(u8 scancode)
         caps_lock = !caps_lock;
         return;
     }
+    /* Function keys: F1..F10 are 0x3B..0x44, F11/F12 are 0x57/0x58.  They
+     * arrive as 0xF1..0xFC so setup can use XP's F3/F8 bindings. */
+    if (scancode >= 0x3B && scancode <= 0x44) {
+        driver_push_key((char)(0xF1 + (scancode - 0x3B)));
+        return;
+    }
+    if (scancode == 0x57 || scancode == 0x58) {
+        driver_push_key((char)(scancode == 0x57 ? 0xFB : 0xFC));
+        return;
+    }
+
     if (scancode & 0x80)
         return;
 

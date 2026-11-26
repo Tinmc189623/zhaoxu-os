@@ -327,7 +327,7 @@ void lapic_enable_ap(void)
     lapic_write(LAPIC_REG_LVT_ERROR, LVT_MASKED | APIC_VECTOR_SPURIOUS);
 }
 
-void lapic_eoi(void)
+void yuanshuo_lapic_eoi(void)
 {
     lapic_write(LAPIC_REG_EOI, 0);
 }

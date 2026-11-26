@@ -56,19 +56,16 @@ void ade_menubar_paint(void)
     render_blend_rect(0, 0, screen->width, height / 2, 0xFFFFFF, 42);
     render_hline(0, height - 1, screen->width, 0x7E93A8);
 
+    /* Rule 57: the desktop chrome carries no OS, team or brand name.  A plain
+     * accent chip keeps the About entry point without printing a name. */
     int x = ade_ui(14);
     int logo = ade_ui(20);
     int logo_y = (height - logo) / 2;
     render_rounded_rect(x, logo_y, logo, logo, logo / 2, 0x1E6FB8, 255);
     render_rounded_rect(x + 2, logo_y + 2, logo - 4, logo / 2, logo / 3,
                         0xFFFFFF, 110);
-    render_text_center("Z", x + logo / 2, logo_y + 1, 0xFFFFFF, 1);
-    x += logo + ade_ui(12);
-
-    int brand = render_text_width("Zhaoxu OS", 1);
-    render_text("Zhaoxu OS", x, text_y, 0x16293C, 1);
-    g_brand_end = x + brand;
-    x += brand + ade_ui(20);
+    g_brand_end = x + logo + ade_ui(10);
+    x = g_brand_end;
 
     static const char *const labels[4] = {"文件", "编辑", "显示", "帮助"};
     for (int i = 0; i < 4; i++) {

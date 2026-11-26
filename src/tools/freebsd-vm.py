@@ -10,6 +10,8 @@
     python3 src/tools/freebsd-vm.py --serial-cmd "ls" 120
     python3 src/tools/freebsd-vm.py --build-live        # full build in the VM
     python3 src/tools/freebsd-vm.py --build-resume      # continue buildkernel
+    python3 src/tools/freebsd-vm.py --start             # boot headless, keep it
+    python3 src/tools/freebsd-vm.py --link              # rename + link the image
     python3 src/tools/freebsd-vm.py --probe             # headless serial probe
 
 Image (in FREEBSD_VM_DIR, default ~/freebsd-vm):
@@ -40,9 +42,13 @@ WORK = Path(os.environ.get("FREEBSD_WORK", "~/zhaoxu-freebsd")).expanduser()
 TARBALL = WORK / "src-15.1-RELEASE.txz"
 SERIAL_PORT = int(os.environ.get("FREEBSD_VM_SERIAL_PORT", 4555))
 HTTP_PORT = int(os.environ.get("FREEBSD_VM_HTTP_PORT", 8000))
+LINK_PORT = int(os.environ.get("FREEBSD_VM_LINK_PORT", 8003))
+CONFIG_PORT = int(os.environ.get("FREEBSD_VM_CONFIG_PORT", 8004))
 MEMORY = os.environ.get("FREEBSD_VM_MEMORY", "4096")
-CPUS = os.environ.get("FREEBSD_VM_CPUS", "4")
+CPUS = os.environ.get("FREEBSD_VM_CPUS", "8")
 BUILD_TIMEOUT = int(os.environ.get("FREEBSD_VM_BUILD_TIMEOUT", 2700))
+LINK_TIMEOUT = int(os.environ.get("FREEBSD_VM_LINK_TIMEOUT", 2400))
+ROOT = Path(__file__).resolve().parent.parent          # src/
 
 KEYMAP = {
     " ": "spc", "-": "minus", "_": "shift-minus", "=": "equal",
@@ -65,8 +71,17 @@ class Console:
         self.buffer = ""
 
     def write(self, text: str) -> None:
-        """Send raw text to the guest."""
-        self.sock.sendall(text.encode("utf-8"))
+        """Send raw text to the guest in small chunks.
+
+        A single burst longer than a few dozen bytes occasionally loses or
+        shifts a character on the emulated UART, which silently changes a
+        command (a filename gained a space and make received a stray
+        argument).  Chunking with a short pause keeps every byte intact.
+        """
+        data = text.encode("utf-8")
+        for start in range(0, len(data), 64):
+            self.sock.sendall(data[start:start + 64])
+            time.sleep(0.01)
 
     def wait_for(self, pattern: str, timeout: float) -> str | None:
         """Wait for a regex, returning the text through the match."""
@@ -173,7 +188,10 @@ def start_qemu(display: str = "none", monitor: Path | None = None,
     ]
     if serial:
         args += ["-serial", serial]
-    return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # start_new_session detaches QEMU from the caller's session so --start can
+    # leave the VM running after the driver process exits.
+    return subprocess.Popen(args, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, start_new_session=True)
 
 
 def connect_monitor() -> Monitor:
@@ -189,8 +207,16 @@ def connect_monitor() -> Monitor:
 
 
 def connect_serial() -> Console:
-    """Connect to the running VM's serial port."""
-    return Console(socket.create_connection(("127.0.0.1", SERIAL_PORT), timeout=10))
+    """Connect to the running VM's serial port, waiting for QEMU to bind it."""
+    deadline = time.time() + 30
+    while True:
+        try:
+            return Console(socket.create_connection(("127.0.0.1", SERIAL_PORT),
+                                                    timeout=10))
+        except OSError:
+            if time.time() > deadline:
+                raise SystemExit("serial port not ready")
+            time.sleep(0.3)
 
 
 def start_http_server() -> subprocess.Popen:
@@ -202,25 +228,48 @@ def start_http_server() -> subprocess.Popen:
     )
 
 
+def type_slow(console: Console, text: str) -> None:
+    """Send a line one character at a time so getty never drops the first key."""
+    for char in text:
+        console.write(char)
+        time.sleep(0.04)
+    console.write("\n")
+
+
 def login(console: Console) -> None:
-    """Authenticate as root over the serial console; reuse a live shell."""
-    if console.wait_for(r"# \Z", 3):
+    """Authenticate as root over the serial console; reuse a live shell.
+
+    Prompts are matched at the end of the buffer: the login motd contains
+    "Last login: ..." and an unanchored search mistakes it for a prompt.
+    """
+
+    def enter_shell() -> None:
         console.write("stty -echo\n")
         time.sleep(0.5)
         console.run("echo SYNC_OK", "SYNC_OK", 20)
-        return
 
-    if console.wait_for(r"login:", 180) is None:
-        raise SystemExit("no login prompt on the serial console")
-
-    for _ in range(3):
-        console.write("root\n")
-        if console.wait_for(r"(# |\$ )", 45):
-            console.write("stty -echo\n")
-            time.sleep(0.5)
-            console.run("echo SYNC_OK", "SYNC_OK", 20)
+    console.write("\n")  # a live shell re-prints its prompt; getty prints login:
+    for _ in range(4):
+        prompt = console.wait_for(r"(# \Z|login: \Z)", 60)
+        if prompt is None:
+            console.write("\n")
+            continue
+        if prompt.endswith("# "):
+            enter_shell()
             return
-        console.write("\n")
+        time.sleep(0.5)
+        type_slow(console, "root")
+        answer = console.wait_for(r"(Password:\s*\Z|# \Z|\$ \Z|login: \Z)", 30)
+        if answer is None:
+            continue
+        if answer.endswith("# ") or answer.endswith("$ "):
+            enter_shell()
+            return
+        if "Password:" in answer:
+            console.write("\n")  # root has an empty password
+            if console.wait_for(r"(# \Z|\$ \Z|login: \Z)", 60):
+                enter_shell()
+                return
     raise SystemExit("root login failed")
 
 
@@ -283,7 +332,7 @@ def serial_cmd(command: str, limit: float = 180) -> None:
     """Run one command over the serial console and print its output."""
     console = connect_serial()
     login(console)
-    print(console.run(f"{command}; echo CMD_DONE_$?", r"CMD_DONE=\d+", limit))
+    print(console.run(f"{command}; echo CMD_DONE=$?", r"CMD_DONE=\d+", limit))
 
 
 def serial_debug() -> None:
@@ -318,27 +367,81 @@ def run_build(console: Console, fetch_source: bool) -> None:
 
     if fetch_source:
         print("guest  : fetching source")
-        console.run(
+        fetched = console.run(
             f"fetch -q -o /tmp/src.txz http://10.0.2.2:{HTTP_PORT}/src-15.1-RELEASE.txz; "
-            "echo FETCH_RC=$?", r"FETCH_RC=", 900)
+            "echo FETCH_RC=$?", r"FETCH_RC=\d+", 900)
+        if "FETCH_RC=0" not in fetched:
+            raise SystemExit("source fetch failed:\n" + fetched[-800:])
         print("guest  : extracting to /usr/src")
-        console.run("rm -rf /usr/src && tar -xJf /tmp/src.txz -C /; echo TAR_RC=$?",
-                    r"TAR_RC=", 900)
-        print("guest  : writing ZHAOXU config")
-        console.write("cat > /usr/src/sys/amd64/conf/ZHAOXU <<'ZEOF'\n")
-        console.write('include "MINIMAL"\n')
-        console.write("ident ZHAOXU\n")
-        console.write("ZEOF\n")
-        console.run("echo CONFIG_RC=$?", r"CONFIG_RC=", 60)
+        tarred = console.run(
+            "rm -rf /usr/src && tar -xJf /tmp/src.txz -C /; echo TAR_RC=$?",
+            r"TAR_RC=\d+", 900)
+        if "TAR_RC=0" not in tarred:
+            # A truncated tree later fails as "Missing KERNCONF" or a missing
+            # mtree file, so stop at the extraction that broke.
+            raise SystemExit("source extraction failed:\n" + tarred[-800:])
+
+    # The repository overlay is the single source of truth and is sent on every
+    # build, including a resume.  It travels over HTTP instead of a serial
+    # heredoc: a pasted multi-line heredoc loses characters at speed and the
+    # shell then never sees its terminator.
+    print("guest  : writing ZHAOXU config")
+    overlay = ROOT / "kernel/personality/overlay/sys/amd64/conf/ZHAOXU"
+    if not overlay.is_file():
+        raise SystemExit(f"missing kernel configuration: {overlay}")
+    repo_http = subprocess.Popen(
+        [sys.executable, "-m", "http.server", str(CONFIG_PORT),
+         "--directory", str(ROOT)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        # Popen returns before the socket is listening; wait for it, or the
+        # first fetch fails and the build then reports a missing KERNCONF.
+        readiness = time.time() + 10
+        while True:
+            try:
+                probe = socket.create_connection(("127.0.0.1", CONFIG_PORT),
+                                                 timeout=1)
+                probe.close()
+                break
+            except OSError:
+                if time.time() > readiness:
+                    raise SystemExit("configuration HTTP server did not start")
+                time.sleep(0.2)
+        command = ("fetch -q -o /usr/src/sys/amd64/conf/ZHAOXU "
+                   f"http://10.0.2.2:{CONFIG_PORT}/kernel/personality/overlay/"
+                   "sys/amd64/conf/ZHAOXU && "
+                   "wc -c < /usr/src/sys/amd64/conf/ZHAOXU; echo CONFIG_RC=$?")
+        for attempt in (1, 2):
+            # The marker must include the exit status: matching bare
+            # "CONFIG_RC=" returns before the digit arrives and looks failed.
+            fetched = console.run(command, r"CONFIG_RC=\d+", 120)
+            if "CONFIG_RC=0" in fetched:
+                print("guest  : config uploaded, "
+                      + fetched.strip().splitlines()[-1])
+                break
+            if attempt == 2:
+                raise SystemExit("ZHAOXU configuration fetch failed:\n"
+                                 + fetched[-800:])
+        # The build script keeps the make transcript off the serial line; the
+        # short fetch-and-run command is also immune to long-line corruption.
+        script = console.run(
+            "fetch -q -o /tmp/fbsd-build.sh "
+            f"http://10.0.2.2:{CONFIG_PORT}/tools/freebsd-build.sh; "
+            "echo BUILD_SH_RC=$?", r"BUILD_SH_RC=\d+", 60)
+        if "BUILD_SH_RC=0" not in script:
+            raise SystemExit("build script fetch failed:\n" + script[-800:])
+    finally:
+        repo_http.terminate()
 
     print("guest  : buildkernel")
-    output = console.run(
-        f"cd /usr/src && make -j{CPUS} buildkernel KERNCONF=ZHAOXU; echo BUILD_RC=$?",
-        r"BUILD_RC=\d+", BUILD_TIMEOUT)
+    output = console.run(f"JOBS={CPUS} sh /tmp/fbsd-build.sh",
+                         r"BUILD_RC=\d+", BUILD_TIMEOUT)
 
     errors = [line for line in output.splitlines()
-              if re.search(r"Kernel build|error:|Stop\.", line)]
-    print("\n".join(errors[-20:]))
+              if re.search(r"Kernel build|error:|Stop\.|\*\*\*|config:|"
+                           r"is not defined|no such|unknown option", line,
+                           re.IGNORECASE)]
+    print("\n".join(errors[-30:]))
     rc = re.search(r"BUILD_RC=(\d+)", output)
     listing = console.run(
         "ls -l /usr/obj/usr/src/amd64.amd64/sys/ZHAOXU/kernel; echo LS_DONE",
@@ -346,7 +449,11 @@ def run_build(console: Console, fetch_source: bool) -> None:
     print("\n".join(line for line in listing.splitlines() if line.endswith("kernel")))
 
     if not rc or rc.group(1) != "0":
-        raise SystemExit(f"buildkernel failed (rc={rc.group(1) if rc else '?'})")
+        # A failed build must say why; the serial transcript is the only place
+        # config(8) and compiler diagnostics appear.
+        tail = "\n".join(output.splitlines()[-40:])
+        raise SystemExit(f"buildkernel failed (rc={rc.group(1) if rc else '?'})\n"
+                         f"--- last 40 lines ---\n{tail}")
     print("build  : ZHAOXU kernel built inside the VM")
 
 
@@ -376,6 +483,72 @@ def build_resume() -> None:
         run_build(console, fetch_source=False)
     finally:
         console.sock.close()
+
+
+def start_headless() -> None:
+    """Boot the VM headless and leave it running for later serial commands."""
+    try:
+        probe = socket.create_connection(("127.0.0.1", SERIAL_PORT), timeout=1)
+        probe.close()
+        print(f"vm     : already running on serial {SERIAL_PORT}")
+        return
+    except OSError:
+        pass
+    start_qemu(serial=f"tcp:127.0.0.1:{SERIAL_PORT},server=on,wait=off")
+    console = connect_serial()
+    try:
+        login(console)
+    finally:
+        console.sock.close()
+    print(f"vm     : running; serial tcp:127.0.0.1:{SERIAL_PORT}")
+
+
+def link_image() -> None:
+    """Rename colliding globals and link the combined image inside the guest."""
+    http = subprocess.Popen(
+        [sys.executable, "-m", "http.server", str(LINK_PORT), "--directory", str(ROOT)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    console = connect_serial()
+    try:
+        login(console)
+        print("guest  : serial root shell")
+        # The owner directive requires VFS, TCP/IP, cdev, pf and NFS from
+        # FreeBSD; confirm their objects are in the built kernel.
+        # The FreeBSD cdev layer is kern_conf.c; pflog compiles as if_pflog.o.
+        objects = ("vfs_subr.o kern_conf.o tcp_input.o udp_usrreq.o pf.o "
+                   "if_pflog.o tmpfs_vfsops.o ffs_vfsops.o devfs_vfsops.o "
+                   "nfs_commonkrpc.o")
+        names = objects.split()
+        listing = console.run(
+            "cd /usr/obj/usr/src/amd64.amd64/sys/ZHAOXU && "
+            f"ls -1 {objects} 2>/dev/null | wc -l; echo OBJ_DONE",
+            "OBJ_DONE", 60)
+        counts = re.findall(r"^\s*(\d+)\s*$", listing, re.MULTILINE)
+        found = int(counts[-1]) if counts else 0
+        print(f"guest  : subsystem objects {found}/{len(names)} present")
+        if found != len(names):
+            print("guest  : some subsystem objects are missing")
+        console.run(
+            f"fetch -q -o /tmp/freebsd-link.sh "
+            f"http://10.0.2.2:{LINK_PORT}/tools/freebsd-link.sh; echo FETCH_RC=$?",
+            r"FETCH_RC=", 60)
+        console.run(
+            f"fetch -q -o /tmp/kernel.ld "
+            f"http://10.0.2.2:{LINK_PORT}/kernel/linker.ld; echo SCRIPT_RC=$?",
+            r"SCRIPT_RC=", 60)
+        output = console.run(
+            "sh /tmp/freebsd-link.sh --script /tmp/kernel.ld "
+            "--out /tmp/os5p.elf; echo LINK_DONE=$?",
+            r"LINK_DONE=\d+", LINK_TIMEOUT)
+        print("\n".join(line for line in output.splitlines()
+                        if line.startswith(("freebsd-link:", "LINK=", "warning",
+                                            "-rwx")) or " error:" in line))
+        if re.search(r"LINK=0", output) is None:
+            raise SystemExit("combined link failed")
+    finally:
+        console.sock.close()
+        http.terminate()
 
 
 def build_headless() -> None:
@@ -428,8 +601,12 @@ def main(argv: list[str]) -> int:
         serial_debug()
     elif mode == "--build-live":
         build_live()
+    elif mode == "--start":
+        start_headless()
     elif mode == "--build-resume":
         build_resume()
+    elif mode == "--link":
+        link_image()
     elif mode == "--build":
         build_headless()
     elif mode == "--probe":
@@ -437,7 +614,8 @@ def main(argv: list[str]) -> int:
     else:
         raise SystemExit("usage: freebsd-vm.py --gui|--shot|--keys|--keys-file|"
                          "--key|--login|--powerdown|--serial-login|--serial-cmd|"
-                         "--serial-debug|--build-live|--build-resume|--build|--probe")
+                         "--serial-debug|--start|--build-live|--build-resume|"
+                         "--build|--link|--probe")
     return 0
 
 

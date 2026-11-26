@@ -1,0 +1,7 @@
+# The build runs on WSL2, so text files must keep LF in the working tree.
+# Git's Windows checkout defaults (core.autocrlf) used to rewrite the
+# vendored bash configure script to CRLF, which made execve fail with ENOENT.
+* text=auto eol=lf
+
+# PowerShell scripts are the one Windows-native text format.
+*.ps1 text eol=crlf

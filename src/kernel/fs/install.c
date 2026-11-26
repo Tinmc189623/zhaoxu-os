@@ -11,9 +11,11 @@
  *   GPT: LBA0 stage1 + protective MBR, LBA1/2 header+entries, stage2 at
  *        LBA34, gap, ESP at LBA 2048, ext4 root, backup GPT at the end.
  *
- * Limine 12 reads FAT and ISO9660 only, so KERNEL.ELF, KERNEL.BIN,
- * MiSans.ttf and WALL.RGB live on the ESP; the ext4 root carries the
- * installed filesystem and no boot files.
+ * Limine 12 reads FAT and ISO9660 only, so KERNEL.ELF, MiSans.ttf and
+ * WALL.RGB live under /boot/limine on the ESP (the layout in RULES.md's ESP
+ * example); the ext4 root carries the installed filesystem and no boot
+ * files.  The boot chain is firmware -> Limine -> boot/limine/KERNEL.ELF
+ * (rule 31); no flat kernel image is loaded.
  */
 #include <block.h>
 #include <boot.h>
@@ -52,8 +54,11 @@
 #define GPT_BACKUP_SECTORS 33u
 
 #define KERNEL_VMA 0xffffffff80000000ULL
-#define KERNEL_MAP_SIZE 0x01000000ULL
 #define KERNEL_FILE_HEADER 0x1000u
+
+/* End of the linked image; the installer snapshots KERNEL_VMA..__kernel_end
+ * because the medium carries no flat kernel copy any more (rule v1.14.3). */
+extern char __kernel_end[];
 
 static const u8 g_guid_esp[16] = {
     0x28, 0x73, 0x2A, 0xC1, 0x1F, 0xF8, 0xD2, 0x11,
@@ -198,7 +203,7 @@ static u8 *build_kernel_elf(const u8 *image, u64 size, u64 *file_size)
     put_le64(header + 16, KERNEL_VMA);
     put_le64(header + 24, KERNEL_VMA);
     put_le64(header + 32, size);
-    put_le64(header + 40, KERNEL_MAP_SIZE);
+    put_le64(header + 40, (size + 0x1FFFFFULL) & ~0x1FFFFFULL);
     put_le64(header + 48, 0x1000);
 
     memcpy(file + KERNEL_FILE_HEADER, image, (usize)size);
@@ -298,28 +303,28 @@ static int build_limine_config(char *buffer, usize capacity, int gpt,
                                int font_present, int wallpaper_present)
 {
     int esp_partition = gpt ? 2 : 1;
-    char modules[3][96];
+    char modules[2][96];
     int count = 0;
-    ksnprintf(modules[count++], sizeof(modules[0]),
-              "    module_path: boot(%d):/KERNEL.BIN\n", esp_partition);
     if (font_present)
         ksnprintf(modules[count++], sizeof(modules[0]),
-                  "    module_path: boot(%d):/MiSans.ttf\n", esp_partition);
+                  "    module_path: boot(%d):/boot/limine/MiSans.ttf\n",
+                  esp_partition);
     if (wallpaper_present)
         ksnprintf(modules[count++], sizeof(modules[0]),
-                  "    module_path: boot(%d):/WALL.RGB\n", esp_partition);
+                  "    module_path: boot(%d):/boot/limine/WALL.RGB\n",
+                  esp_partition);
 
     int written = ksnprintf(
         buffer, capacity,
         "timeout: 0\n"
         "serial: yes\n\n"
-        "/Zhaoxu OS\n"
+        "/Start\n"
         "    protocol: limine\n"
-        "    path: boot(%d):/KERNEL.ELF\n"
-        "%s%s%s"
+        "    path: boot(%d):/boot/limine/KERNEL.ELF\n"
+        "%s%s"
         "    resolution: 1920x1080x32\n",
         esp_partition, modules[0],
-        count > 1 ? modules[1] : "", count > 2 ? modules[2] : "");
+        count > 1 ? modules[1] : "");
     return written > 0 && (usize)written < capacity ? 0 : -1;
 }
 
@@ -612,17 +617,6 @@ int install_run(int target_disk, int gpt, const struct install_layout *layout,
             (unsigned long long)data_lba, (unsigned long long)total,
             gpt ? "GPT" : "MBR");
 
-    const struct boot_info *bi = boot_get_info();
-    const u8 *kernel = (const u8 *)(uintptr_t)(bi->boot_image_phys
-                                                    ? bi->boot_image_phys
-                                                    : bi->kernel_phys_base);
-    u64 kernel_bytes = bi->boot_image_size ? bi->boot_image_size
-                                           : bi->kernel_size;
-    if (!kernel || kernel_bytes == 0 || kernel_bytes > KERNEL_MAX_BYTES) {
-        set_error("running kernel image is unavailable or too large");
-        return -1;
-    }
-
     u8 *loader = NULL;
     u64 loader_bytes = 0;
     u8 *bios_sys = NULL;
@@ -651,6 +645,19 @@ int install_run(int target_disk, int gpt, const struct install_layout *layout,
         !bios_hdd || bios_hdd_bytes <= SECTOR_SIZE ||
         bios_hdd_bytes > LIMINE_BIOS_HDD_MAX) {
         set_error("embedded Limine BIOS image is missing or too large");
+        goto fail;
+    }
+    /* The running image is the only kernel copy on the medium: snapshot its
+     * mapped window and wrap it in a one-segment ELF for the ESP. */
+    const struct boot_info *bi = boot_get_info();
+    if (!bi || !bi->kernel_virt_base) {
+        set_error("running kernel image is unavailable");
+        goto fail;
+    }
+    const u8 *kernel = (const u8 *)(uintptr_t)bi->kernel_virt_base;
+    u64 kernel_bytes = (u64)(uintptr_t)__kernel_end - bi->kernel_virt_base;
+    if (kernel_bytes == 0 || kernel_bytes > KERNEL_MAX_BYTES) {
+        set_error("running kernel image is unavailable or too large");
         goto fail;
     }
     kernel_file = build_kernel_elf(kernel, kernel_bytes, &kernel_file_size);
@@ -702,24 +709,20 @@ int install_run(int target_disk, int gpt, const struct install_layout *layout,
 
     /* Everything Limine must read goes on the ESP: it has no ext4 driver,
      * so the root volume only carries the filesystem, not boot files. */
-    struct fat32_boot_file boot_files[4];
+    struct fat32_boot_file boot_files[3];
     u32 boot_file_count = 0;
-    boot_files[boot_file_count].path = "/KERNEL.ELF";
+    boot_files[boot_file_count].path = "/boot/limine/KERNEL.ELF";
     boot_files[boot_file_count].data = kernel_file;
     boot_files[boot_file_count].size = kernel_file_size;
     boot_file_count++;
-    boot_files[boot_file_count].path = "/KERNEL.BIN";
-    boot_files[boot_file_count].data = kernel;
-    boot_files[boot_file_count].size = kernel_bytes;
-    boot_file_count++;
     if (font_present) {
-        boot_files[boot_file_count].path = "/MiSans.ttf";
+        boot_files[boot_file_count].path = "/boot/limine/MiSans.ttf";
         boot_files[boot_file_count].data = font;
         boot_files[boot_file_count].size = font_size;
         boot_file_count++;
     }
     if (wallpaper_present) {
-        boot_files[boot_file_count].path = "/WALL.RGB";
+        boot_files[boot_file_count].path = "/boot/limine/WALL.RGB";
         boot_files[boot_file_count].data = wallpaper;
         boot_files[boot_file_count].size = wallpaper_size;
         boot_file_count++;
@@ -732,10 +735,9 @@ int install_run(int target_disk, int gpt, const struct install_layout *layout,
     u32 step = 0;
     if (progress)
         progress(context, step, steps);
-    kprintf("[install] start t=%llu, kernel %llu bytes, loader %llu, "
-            "bios.sys %llu, bios.hdd %llu\n",
+    kprintf("[install] start t=%llu, loader %llu, bios.sys %llu, "
+            "bios.hdd %llu\n",
             (unsigned long long)timer_ticks(),
-            (unsigned long long)kernel_bytes,
             (unsigned long long)loader_bytes,
             (unsigned long long)bios_sys_bytes,
             (unsigned long long)bios_hdd_bytes);

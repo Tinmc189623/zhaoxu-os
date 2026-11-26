@@ -1,0 +1,6 @@
+# Shared library sonames for the port.  The Linux tree contributes the same
+# two entries; without them soversions.i never lists libc/libm and the
+# generated MODULE_* header has no MODULE_libc (glibc builds with
+# -Werror=undef, so every module name must exist).
+libm=6
+libc=6

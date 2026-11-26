@@ -167,7 +167,7 @@ int dev_start(void)
     argument[length] = 0;
 
     char *argv[1] = {argument};
-    u64 pid = process_spawn("/bin/drivers", 1, argv);
+    u64 pid = process_spawn("/bin/drivers.udrv", 1, argv);
     if (!pid)
         return -1;
 

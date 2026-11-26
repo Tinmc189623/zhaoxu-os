@@ -254,6 +254,13 @@ int kprintf(const char *fmt, ...)
     va_start(ap, fmt);
     int result = kvsnprintf(buffer, sizeof(buffer), fmt, ap);
     va_end(ap);
+    /* In the kernel the screen sink can be muted while the setup disc's
+     * framebuffer console owns it; user-space builds only have the VFS
+     * console path. */
+#ifdef ZHAOXU_KERNEL_BUILD
+    console_write_kernel(buffer);
+#else
     console_write(buffer);
+#endif
     return result;
 }

@@ -1,0 +1,5 @@
+# /etc/profile: system-wide shell startup for login shells.
+PATH=/bin:/usr/bin:/usr/local/bin
+export PATH
+LANG=zh_CN.UTF-8
+export LANG

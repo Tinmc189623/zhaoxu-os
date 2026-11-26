@@ -104,6 +104,14 @@ def prepare() -> None:
     run(["cp", "-a", f"{VENDORED}/.", str(SOURCE)])
     patch_network_fallback()
 
+    # The vendored tree is normalized to LF at checkout, which updates source
+    # mtimes; keep the shipped configure newer than its inputs so make does not
+    # try to regenerate it (autoconf is not part of the build host).
+    for generated in ("configure", "config.h.in", "buildconf.h"):
+        path = SOURCE / generated
+        if path.is_file():
+            path.touch()
+
     targets = [f"build/newlib/{name}.o" for name in POSIX_NAMES]
     targets.append("build/newlib/crt0.o")
     run(["make", "-C", str(REPO), f"-j{os.cpu_count() or 4}", *targets])

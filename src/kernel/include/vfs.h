@@ -1,6 +1,7 @@
 #ifndef ZHAOXU_VFS_H
 #define ZHAOXU_VFS_H
 
+#include <personality/freebsd/core_abi.h>
 #include <types.h>
 
 /* Largest file a single write may create through the VFS.  The ext4 service
@@ -28,7 +29,16 @@ struct vfs_fs_ops {
                 u64 capacity, u64 *read_out);
     int (*write)(void *private, const char *rel, const u8 *data, u64 size);
     int (*unlink)(void *private, const char *rel);
+    int (*mkdir)(void *private, const char *rel);
+    int (*rmdir)(void *private, const char *rel);
+    int (*rename)(void *private, const char *from, const char *to);
 };
+
+/* Rule 51: VFS belongs to the BSD layer.  Once the personality's vnode layer
+ * is running it registers this provider and every path operation below is
+ * routed there; until then the core provider serves the live root. */
+int vfs_set_provider(const struct zx_vfs_provider *provider);
+const char *vfs_provider_name(void);
 
 int vfs_init(void);
 int vfs_mount_data(void);
@@ -44,6 +54,9 @@ int vfs_read_into(const char *path, u8 *dst, u64 cap, u64 *read_out);
 int vfs_stat(const char *path, int *is_dir, u64 *size);
 int vfs_write_file(const char *path, const u8 *data, u64 size);
 int vfs_unlink(const char *path);
+int vfs_mkdir(const char *path);
+int vfs_rmdir(const char *path);
+int vfs_rename(const char *from, const char *to);
 int vfs_open(const char *path);
 long vfs_read(int fd, void *buffer, u64 count);
 long vfs_seek(int fd, long offset, int whence);

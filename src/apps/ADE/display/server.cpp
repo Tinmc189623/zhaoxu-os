@@ -331,6 +331,7 @@ void ade_display_init(void)
     long welcome = sys_spawn("/bin/apps/welcome.zxe");
     long calc = sys_spawn("/bin/apps/calc.zxe");
     long installer = sys_spawn("/bin/apps/install.zxe");
+    long terminal = sys_spawn("/bin/apps/terminal.zxe");
     kprintf("[aqua] display server listening, welcome %ld, calc %ld, "
             "install %ld\n",
             welcome, calc, installer);

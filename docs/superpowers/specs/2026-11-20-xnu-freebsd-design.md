@@ -122,16 +122,73 @@ XNU's BSD layer consumes Mach:
 | Console (`cn(4)`) | core UART / serial | FreeBSD's `cn` driver writes through the core console |
 | System calls | trap entry | a personality selector routes the FreeBSD syscall table to the personality (§10) |
 | Device access | IO/287 | disk, network and input drivers attach through IO/287 (§5); the personality consumes the resulting nodes instead of attaching hardware itself |
+| VFS (rule 51) | core service table | BSD's vnode layer owns the namespace; the personality registers a `zx_vfs_provider` (`core_abi.h` v2) and the core's `vfs_*` path operations route to it |
 
 FreeBSD is **not** given raw control of the boot CPU, the CR3 root, or the IDT;
 the core retains those and services the personality. This is the XNU discipline:
 BSD does not own Mach's VM or scheduler, it uses them.
 
+Networking follows rule 51 as well: the network stack is FreeBSD's
+`sys/net`/`sys/netinet`/`sys/netinet6`, statically linked into the
+OS_5P image, not a Zhaoxu implementation and not a userland stack.
+Ring3 programs reach it through socket syscalls routed to the BSD
+socket layer once the machine port runs; toybox's INET surface is
+therefore declarations today and real sockets later.
+
+VFS follows rule 51: the namespace and file operations belong to the BSD
+vnode layer, not to the core. `kernel/fs/vfs.c` keeps the core's own mount
+providers (initramfs, ramfs, tmpfs, FAT32) only as a transitional provider
+while the personality boots. `vfs_set_provider()` is the handover point:
+the personality calls the service table's `vfs_register` with a
+`struct zx_vfs_provider`, and from then on `vfs_stat`, `vfs_read_at`,
+`vfs_read_into`, `vfs_read_all`, `vfs_list`, `vfs_write_file` and
+`vfs_unlink` route to BSD. The ABI is version 4 (v3 added `mkdir`/`rmdir`,
+v4 added `rename`); the v1 table had no VFS slot.
+
+Owner directive (2026-11-25): **VFS, TCP/IP, cdev, pf and NFS are FreeBSD
+code**. The BSD vnode layer supplies the namespace; `sys/net`, `sys/netinet`,
+`sys/netinet6` supply IP; `sys/sys/cdev.h` plus `sys/kern/subr_cdev.c` supply
+character devices through the FreeBSD cdevsw table; `sys/netpfil/pf` supplies
+the packet filter; `sys/fs/nfs` (`nfsclient`, `nfsserver`, `nfscommon`) supplies
+NFS. None of these may be reimplemented in the core. The existing AF_UNIX
+socket layer in `kernel/ipc` is interprocess plumbing, not an IP stack, and the
+core VFS providers remain only as the pre-personality transitional path until
+the BSD provider registers. `nfsserver`/`nfsd` and pf keep their FreeBSD
+licences (BSD-2-Clause/BSD-3-Clause); the CDDL exclusion of §4.2 still applies
+to ZFS/DTrace only.
+
+### 4.0 VFS hand-over slices
+
+The provider entry points already exist in `core_abi.h` v4 (`list`, `stat`,
+`read_at`, `write_file`, `unlink`, `mkdir`, `rmdir`, `rename`). The hand-over is
+built in slices, each verified in the VM before the next:
+
+1. `freebsd_vfs_provider` in `kernel/personality/freebsd/vfs.c` answers every
+   provider entry through FreeBSD's kernel helpers (`kern_statat`,
+   `kern_openat`, `kern_pread`, `kern_pwrite`, `kern_mkdirat`,
+   `kern_frmdirat`, `kern_renameat`, `kern_funlinkat`,
+   `kern_getdirentries`).  It compiles inside the 15.1 tree
+   (`tools/freebsd-vfs-check.sh`, `VFS_CC=0`).  The handover waits for the
+   `vfs_mounted` event with `MNT_ROOTFS`: all SYSINITs run before the init
+   kthread calls `vfs_mountroot()`, and 15.1 has no `SI_SUB_MOUNTROOT`.
+   Verified at runtime: the combined image boots, prints the handoff and
+   `OS_5P: FreeBSD personality executing` / `console table bound`, so FreeBSD
+   port code runs inside OS_5P.  The provider registration itself still waits
+   for `mi_startup` and the root mount.
+2. The remaining slices exercise these entries under the running personality
+   and extend `list`/attribute reporting as the port reaches `mountroot`.
+3. `devfs` publishes the FreeBSD cdev nodes; device traffic stays on IO/287 at
+   the hardware edge.
+4. After the machine port reaches `mi_startup`, `sys/netinet` sockets are
+   exposed through the syscall table; pf and the NFS client/server are
+   configured through FreeBSD's own ioctls and mount path, never through a
+   Zhaoxu reimplementation.
+
 ### 4.1 Subsystems in scope
 
 `sys/kern`, `sys/vm`, `sys/ufs` (FFS1/FFS2), `sys/geom`, `sys/fs` (`tmpfs`,
-`nullfs`, `devfs`), `sys/net`, `sys/netinet`, `sys/netinet6`, `sys/cam`,
-`sys/security` (MAC framework, Capsicum). `newbus` is kept only for
+`nullfs`, `devfs`, `nfs`), `sys/net`, `sys/netinet`, `sys/netinet6`,
+`sys/netpfil/pf`, `sys/cam`, `sys/security` (MAC framework, Capsicum). `newbus` is kept only for
 pseudo-devices internal to the personality (§5.3); real hardware attaches
 through IO/287.
 
@@ -167,6 +224,10 @@ FreeBSD and not a modified copy of IOKit.
 
 ### 5.2 Implementation constraints
 
+- **Names.** Every symbol IO/287 exports carries the `io287_` prefix. The core
+  uses `yuanshuo_` for the C string family and the other globals FreeBSD also
+  defines, so the three parts of `OS_5P` never meet on a plain name; the link
+  tool reports any remaining collision instead of letting the linker pick one.
 - **Freestanding C++.** No exceptions, no RTTI, no STL, no C++ runtime library —
   the kernel rule that only the Ring3 font sources may use SSE still applies.
   Static constructors do not run automatically in a linked kernel image; IO/287
@@ -311,9 +372,64 @@ five `set_*` sections. Slice 3 adds `personality_freebsd.h`, a versioned
 `freebsd_pmap_init()`, which maps, writes and reads back a probe word in the
 granted VM window. Slice 4 moves that contract into `core_abi.h` with portable
 types so both kernels compile it, and `probe.c` builds inside the 15.1 tree
-with the pmap surface visible (`PROBE=0`). The machine port itself — pmap
-ownership over the core VMM, interrupts, timer, console backend — is still
-unstarted.
+with the pmap surface visible (`PROBE=0`). Slice 5 adds `pmap_glue.c`, the
+first port-side source: it takes the service table, checks version and page
+size, and relocates with `pmap.o` (`ld.lld -r`, `RELOC=0`) without changing the
+171-symbol dependency surface. Slice 6 merges the whole FreeBSD kernel object
+set with the glue into one relocatable object; only 64 symbols stay undefined,
+all linker-generated (`__start_set_*`/`__stop_set_*`, `__build_id_*`,
+`_DYNAMIC`, `_end`, `_etext`, `brsection`, undefined-weak ZSTD hooks), and the
+core linker script now provides them. Slice 7 settles symbol isolation: of
+13,287 FreeBSD globals and 546 Yuanshuo globals, exactly 19 collide (the C
+library string family, `shm_*`, `tty_ioctl`); `llvm-objcopy
+--prefix-symbols=bsd_` moves every FreeBSD global into the `bsd_` namespace
+without touching the 64 linker symbols. Slice 8 shows why prefixing is the
+wrong tool: it also renames references to linker-provided symbols, so the
+strategy becomes `--redefine-syms` on the 19 collisions only. After that, the
+merged set plus the Yuanshuo objects link down to three names: the build-id
+pair resolves with `--defsym`, `set_*` symbols materialise from orphan
+sections, and `brsection` remains unresolved against every definition tried so
+far. Slice 9 shows the name is not even present in the merged object's symbol
+table, so lld is reporting a reference it cannot have read from that table;
+the same diagnostic survives a script `PROVIDE`, `--defsym`, a defining object
+and an objcopy rename. Slice 10 links the original objects directly and narrows
+the remainder to that single name. Slice 11 finds the cause: the identifier is
+`brwsection` in `pmap.c`, and the misspelling `brsection` in the script was
+the whole problem. With `PROVIDE(brwsection = .)` the direct link of 1,069
+FreeBSD objects and 80 Yuanshuo objects completes with zero undefined symbols
+(a 73 MB image with debug info); 19 duplicate globals are resolved with
+`--allow-multiple-definition` until per-object renames replace it. Slice 12
+sizes the real image and makes the window fit it: text 5,588,168 B, rodata
+802,104 B, data 702,024 B and bss 84,161,920 B, ending at `__kernel_end`
+`0xffffffff85885580`. `KERNEL_STACK_TOP` moves to `0xffffffff87f00000`, which
+gives the image a 128 MiB window with the ASSERT holding it 2 MiB below the
+boot-stack mapping, and the same 1,069 + 80 objects now link with `LINK=0`
+under the shipped script and no warnings. The first layout used a 2 MiB-aligned
+top (`0xffffffff88000000`) and the ISO stopped at Limine: `limine_boot` maps
+the 2 MiB page that holds the stack top, and an aligned top selects the page
+above it, so the first push faulted. The mapping now derives the window from
+the top's last byte. The sysinit sets resolve as
+`__start_set_sysinit_set`/`__stop_set_sysinit_set` around the FreeBSD table.
+The image no longer needs a split layout; the machine port itself — pmap
+ownership implemented, interrupts, timer, `cn(4)` console backend — is what
+still blocks booting it. Slice 13 removes the provisional
+`--allow-multiple-definition`: `tools/freebsd-link.sh` derives the collision
+set from the objects themselves, renames the core side's copies with a `core_`
+prefix through `llvm-objcopy --redefine-syms` into a mirror directory, and
+links the renamed set with the shipped script — `19 collision(s)`, `renamed 80
+core object(s)`, `LINK=0`, 73,185,056 bytes, only weak ZSTD trace hooks
+undefined. FreeBSD's objects stay byte-identical to its build; `--rename-side
+bsd` exists for completeness but touches 1,069 objects and is far slower. Slice
+14 moves the rename into the source: the core's 14 C string functions and
+`lapic_eoi`, `kthread_exit`, `shm_map`, `shm_unmap`, `tty_ioctl` are
+`yuanshuo_*`, and `string.h` applies the aliases only to kernel translation
+units, so Ring3 code that links the same `string.c` keeps the plain names. The
+tool now reports `0 collision(s)` and links with `LINK=0` (73,186,264 bytes)
+without rewriting an object; FreeBSD's IFUNC `memcpy` and `yuanshuo_memcpy`
+coexist. The first port-side console backend, `port.c`, registers a cn(4)
+device whose `cn_putc` calls the service table's `console_write`, and
+`freebsd_personality_main` is a strong symbol in the image; executing it still
+waits for the machine port.
 
 ## 10. Bring-up Staging (M3–M5)
 
@@ -454,4 +570,4 @@ engineering order, not a reduction of the target.
 
 ---
 
-Copyright © 2026 Nexsteaduser. All Rights Reserved.
+Copyright (C) 2026 Nexsteaduser, Nexlyh, Tinmc189623. All Rights Reserved.

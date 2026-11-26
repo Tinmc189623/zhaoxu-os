@@ -1,0 +1,10 @@
+# Machine+OS port directory.  glibc's sysdeps search only recognises an OS
+# through a machine/os directory like this one; the shared OS pieces live in
+# sysdeps/unix/sysv/zhaoxu and the x86_64 tree supplies the machine code.
+# The nptl subdirectories are normally pulled in by the Linux port, so the
+# zhaoxu port lists them explicitly (TLS block layout, pthread types).
+unix/sysv/zhaoxu
+x86/nptl
+x86_64/64/nptl
+x86_64/nptl
+x86_64

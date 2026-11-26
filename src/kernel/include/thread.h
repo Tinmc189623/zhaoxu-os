@@ -15,7 +15,7 @@ enum thread_state {
     THREAD_DEAD
 };
 
-#define KERNEL_BOOT_STACK_TOP 0xffffffff80f00000ULL
+#define KERNEL_BOOT_STACK_TOP 0xffffffff87f00000ULL
 
 struct address_space;
 struct process;
@@ -29,6 +29,11 @@ struct thread {
     usize stack_size;
     u64 kernel_stack_top;    /* TSS rsp0 while this thread runs */
     u64 cr3;                 /* 0 = kernel address space */
+    u64 fs_base;             /* Ring3 TLS base, written to MSR 0xC0000100 */
+    u64 futex_key;           /* physical word while blocked in a futex wait */
+    u8 futex_woken;          /* 1 when a waker (not the timeout) released it */
+    u64 clear_child_tid;     /* user word zeroed when this thread exits */
+    i32 last_error;          /* errno recorded for the next SYS_LAST_ERROR */
     struct address_space *space;
     struct process *proc;
     void (*entry)(void *);
@@ -62,9 +67,15 @@ struct thread *kthread_create_ctx(const char *name, void (*entry)(void *),
                                   void *arg, i32 affinity, u64 cr3,
                                   struct address_space *space,
                                   struct process *proc);
+int sched_futex_wait(u64 key, u64 address, u32 expected, u32 bitset,
+                     u64 deadline_tick);
+int sched_futex_wake(u64 key, int count);
+void sched_wake_process(struct process *process);
+void thread_set_fs_base(struct thread *thread, u64 value);
+u64 thread_get_fs_base(const struct thread *thread);
 void thread_yield(void);
 void thread_sleep_ms(u32 ms);
-void kthread_exit(void) __attribute__((noreturn));
+void yuanshuo_kthread_exit(void) __attribute__((noreturn));
 
 u32 sched_thread_count(void);
 const struct thread *sched_thread_info(u32 index);

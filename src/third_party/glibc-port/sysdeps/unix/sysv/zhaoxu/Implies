@@ -1,0 +1,8 @@
+# Directories searched after sysdeps/unix/sysv/zhaoxu.  NPTL is required:
+# glibc's headers and csu assume the pthread types, semaphore and TLS
+# definitions even for single-threaded programs.  nptl/Implies pulls in
+# sysdeps/pthread.  The GNU and inet trees provide the rest of the generic
+# Unix pieces.
+nptl
+gnu
+unix/inet

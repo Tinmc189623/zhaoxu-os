@@ -11,8 +11,10 @@ version.cfg is the single source of truth.  Its schema is:
     name_cn        = null          optional Chinese OS name
     kernel         = "Yuanshuo"    kernel display name             (required)
     kernel_cn      = null          optional Chinese kernel name
-    os_version     = 0.5.0         OS version: README, motd, ISO   (required)
-    kernel_version = 0.5.0         kernel version: version.h       (required)
+    os_version     = 0.5.0         OS version: README, ISO         (required)
+    os_5p_kernel_version = 0.5.0   hybrid kernel version: version.h (required;
+                                   the older key `kernel_version` is accepted)
+    yuanshuo_version = 0.5.0       microkernel version              (optional)
     build_date     = "2026-11-16"  build date, YYYY-MM-DD           (required)
     codename       = "Yuanshuo"    release codename                (required)
 
@@ -88,20 +90,26 @@ def main() -> int:
     cfg = parse_cfg(CFG_PATH)
 
     # The retired keys are rejected loudly instead of silently ignored.
-    if "version" in cfg and not ("os_version" in cfg and "kernel_version" in cfg):
-        fail("version.cfg: use 'os_version' and 'kernel_version', not 'version'")
+    if "version" in cfg and not ("os_version" in cfg and
+                                 ("os_5p_kernel_version" in cfg or
+                                  "kernel_version" in cfg)):
+        fail("version.cfg: use 'os_version' and 'os_5p_kernel_version', not "
+             "'version'")
     if "build" in cfg and "build_date" not in cfg:
         fail("version.cfg: use 'build_date' (YYYY-MM-DD), not 'build'")
 
     os_version = required(cfg, "os_version")
-    kernel_version = required(cfg, "kernel_version")
+    kernel_version = cfg.get("os_5p_kernel_version") or cfg.get("kernel_version")
+    if not kernel_version:
+        fail("version.cfg: missing 'os_5p_kernel_version'")
     build_date = required(cfg, "build_date")
     codename = required(cfg, "codename")
     kernel = required(cfg, "kernel")
     name = required(cfg, "name")
     name_cn = cfg.get("name_cn") or name
 
-    for key, value in (("os_version", os_version), ("kernel_version", kernel_version)):
+    for key, value in (("os_version", os_version),
+                       ("os_5p_kernel_version", kernel_version)):
         if not re.fullmatch(r"\d+(\.\d+)+", value):
             fail(f"version.cfg: {key} '{value}' is not a dotted version")
 
@@ -132,20 +140,53 @@ def main() -> int:
         ],
     )
 
-    patch(
-        SRC / "initramfs" / "etc" / "motd",
-        [
-            (rf'Welcome to {re.escape(name)} [0-9.]+ "[^"]*"( \([^)]*\))?\.',
-             f'Welcome to {name} {os_version} "{codename}" (build {build_date}).'),
-            (r"^欢迎使用[^\n]*? [0-9.]+（[^）]*）",
-             f"欢迎使用 {name_cn} {os_version}（构建 {build_date}）"),
-        ],
-    )
-
+    # The shell banner (motd) intentionally carries no OS name or version:
+    # rule 57 forbids showing them at boot, so it is not a version surface.
     patch(
         SRC / "initramfs" / "etc" / "version",
         [(rf"\A{re.escape(name)}[^\n]*",
           f'{name} {os_version} "{codename}" build {build_date}')],
+    )
+
+    patch(
+        SRC / "initramfs" / "etc" / "os-release",
+        [
+            (r'^PRETTY_NAME=".*"$',
+             f'PRETTY_NAME="{name} {os_version} 「{codename}」 (build {build_date})"'),
+            (r'^VERSION=".*"$', f'VERSION="{os_version} 「{codename}」"'),
+            (r"^VERSION_ID=.*$", f"VERSION_ID={os_version}"),
+            (r"^VERSION_CODENAME=.*$", f"VERSION_CODENAME={codename}"),
+            (r"^BUILD_ID=.*$", f"BUILD_ID={build_date}"),
+            (r"^KERNEL_NAME=.*$", f"KERNEL_NAME={kernel}"),
+            (r"^KERNEL_VERSION=.*$", f"KERNEL_VERSION={kernel_version}"),
+        ],
+    )
+
+    patch(
+        SRC / "initramfs" / "etc" / "initrd-release",
+        [
+            (r'^PRETTY_NAME=".*"$',
+             f'PRETTY_NAME="{name} {os_version} 「{codename}」 initramfs '
+             f'(build {build_date})"'),
+            (r'^VERSION=".*"$', f'VERSION="{os_version} 「{codename}」"'),
+            (r"^VERSION_ID=.*$", f"VERSION_ID={os_version}"),
+            (r"^VERSION_CODENAME=.*$", f"VERSION_CODENAME={codename}"),
+            (r"^BUILD_ID=.*$", f"BUILD_ID={build_date}"),
+            (r"^KERNEL_NAME=.*$", f"KERNEL_NAME={kernel}"),
+            (r"^KERNEL_VERSION=.*$", f"KERNEL_VERSION={kernel_version}"),
+        ],
+    )
+
+    patch(
+        SRC / "initramfs" / "etc" / "issue",
+        [(r"^Zhaoxu OS [0-9.]+ 「[^」]*」 \\n \\l$",
+          f"{name} {os_version} 「{codename}」 \\n \\l")],
+    )
+
+    patch(
+        SRC / "initramfs" / "etc" / "issue.net",
+        [(r"^Zhaoxu OS [0-9.]+ 「[^」]*」$",
+          f"{name} {os_version} 「{codename}」")],
     )
 
     patch(

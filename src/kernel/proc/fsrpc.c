@@ -341,7 +341,7 @@ int fs_service_start(void)
         argument[len++] = digits[(control >> shift) & 0xF];
     argument[len] = 0;
     char *argv[1] = {argument};
-    if (!process_spawn("/bin/ext4fs", 1, argv))
+    if (!process_spawn("/bin/ext4fs.udrv", 1, argv))
         return -1;
 
     for (int waited = 0; waited < FS_WAIT_MS; waited++) {

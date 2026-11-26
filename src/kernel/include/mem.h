@@ -47,6 +47,8 @@ void vmm_space_destroy(struct address_space *space);
 int vmm_space_map_page(struct address_space *space, u64 virtual_address,
                        u64 physical_address, u64 flags);
 u64 vmm_space_unmap_page(struct address_space *space, u64 virtual_address);
+int vmm_space_protect_page(struct address_space *space, u64 virtual_address,
+                           u64 flags);
 u64 vmm_space_get_physical(struct address_space *space, u64 virtual_address);
 int vmm_space_page_is_user(struct address_space *space, u64 virtual_address);
 void vmm_space_activate(struct address_space *space);

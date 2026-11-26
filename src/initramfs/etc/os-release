@@ -1,0 +1,16 @@
+# os-release(5) for Zhaoxu OS.  Synced from version.cfg by tools/version.py.
+NAME="Zhaoxu OS"
+ID=zhaoxu
+ID_LIKE=unix
+PRETTY_NAME="Zhaoxu OS 0.8.0 「Cedar」 (build 2026-11-27)"
+VERSION="0.8.0 「Cedar」"
+VERSION_ID=0.8.0
+VERSION_CODENAME=Cedar
+BUILD_ID=2026-11-27
+KERNEL_NAME=Yuanshuo
+KERNEL_VERSION=0.8.0
+HOME_URL="https://github.com/Tinmc189623/zhaoxu-os"
+DOCUMENTATION_URL="https://github.com/Tinmc189623/zhaoxu-os/blob/main/docs/INSTALL.md"
+SUPPORT_URL="mailto:admin@nexsteaduser.com"
+BUG_REPORT_URL="https://github.com/Tinmc189623/zhaoxu-os/issues"
+# Copyright © 2026 Nexsteaduser. All Rights Reserved.

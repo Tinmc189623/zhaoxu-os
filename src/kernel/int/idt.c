@@ -3,12 +3,15 @@
 #include <idt.h>
 #include <io.h>
 #include <kprintf.h>
+#include <panic.h>
 #include <personality.h>
 #include <process.h>
+#include <splash.h>
 #include <string.h>
 #include <thread.h>
 #include <timer.h>
 #include <types.h>
+#include <zsignal.h>
 
 struct idt_entry {
     u16 offset_low;
@@ -121,25 +124,15 @@ static void exception_panic(struct interrupt_frame *f)
     if (f->vector == 14)
         __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
 
-    console_set_color(COLOR_LIGHT_RED, COLOR_BLACK);
-    kprintf("\n*** KERNEL EXCEPTION ***\n");
-    kprintf("  vector : %u  %s\n", (u32)f->vector,
-            f->vector < 32 ? exception_names[f->vector] : "Unknown");
-    kprintf("  error  : 0x%llx\n", f->error);
-    if (f->vector == 14)
-        kprintf("  cr2    : 0x%llx\n", cr2);
-    kprintf("  rip    : 0x%llx  cs:0x%llx  rflags:0x%llx\n",
-            f->rip, f->cs, f->rflags);
-    kprintf("  rsp    : 0x%llx  ss:0x%llx\n", f->rsp, f->ss);
-    kprintf("  rax=%llx rbx=%llx rcx=%llx rdx=%llx\n",
-            f->rax, f->rbx, f->rcx, f->rdx);
-    kprintf("  rsi=%llx rdi=%llx rbp=%llx\n", f->rsi, f->rdi, f->rbp);
-    console_reset_color();
-    kprintf("System halted.\n");
-
+    /* Register dump first so the serial log keeps a plain-text report even
+     * when no framebuffer is attached. */
+    kprintf("[panic] vector %u %s error 0x%llx rip 0x%llx\n", (u32)f->vector,
+            f->vector < 32 ? exception_names[f->vector] : "Unknown", f->error,
+            f->rip);
     interrupts_disable();
-    for (;;)
-        hlt();
+    panic_red_screen((u32)f->vector,
+                     f->vector < 32 ? exception_names[f->vector] : "Unknown",
+                     f->error, f->rip, cr2, f->vector == 14);
 }
 
 static void irq_dispatch(struct interrupt_frame *f)
@@ -173,13 +166,18 @@ void interrupt_dispatch(struct interrupt_frame *f)
     }
     if (f->vector == APIC_VECTOR_TIMER) {
         timer_irq();
+        splash_tick();
         personality_timer_tick();
-        lapic_eoi();
+        yuanshuo_lapic_eoi();
+        /* Deliver a signal raised by another process before preemption can
+         * switch CR3 away from the interrupted address space. */
+        if ((f->cs & 3) == 3 && process_active())
+            signal_deliver(process_current(), f);
         sched_maybe_preempt();
         return;
     }
     if (f->vector == APIC_VECTOR_RESCHED) {
-        lapic_eoi();
+        yuanshuo_lapic_eoi();
         sched_maybe_preempt();
         return;
     }
@@ -187,8 +185,11 @@ void interrupt_dispatch(struct interrupt_frame *f)
         return;
 
     if (f->vector < 32) {
-        if ((f->cs & 3) == 3 && process_active())
+        if ((f->cs & 3) == 3 && process_active()) {
+            /* Returns with the handler frame installed, or never returns. */
             process_handle_exception(f);
+            return;
+        }
         exception_panic(f);
     } else if (f->vector < 48) {
         irq_dispatch(f);

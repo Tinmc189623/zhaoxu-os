@@ -32,11 +32,7 @@ struct boot_info {
     u64 wallpaper_size;
     u64 efi_runtime_services; /* UEFI RuntimeServices table, 0 on BIOS */
     u64 efi_system_table;     /* UEFI SystemTable, 0 on BIOS */
-    /* Flat image used by the installer; Limine passes it as a KERNEL.BIN
-     * module.  Older loaders leave these zero and the installer falls back to
-     * kernel_phys_base/kernel_size. */
-    u64 boot_image_phys;
-    u64 boot_image_size;
+    u64 install_mode;         /* boot cmdline asked for setup, not the desktop */
 } __attribute__((packed));
 
 #define BOOT_FLAG_HIGHER_HALF 1u

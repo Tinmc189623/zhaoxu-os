@@ -85,6 +85,73 @@ typedef unsigned long long u64;
 #define SYS_IOCTL            76
 #define SYS_STAT             77
 #define SYS_GETPPID          78
+#define SYS_CONSOLE_COLOR    79
+#define SYS_PTY              80
+#define SYS_KLOG             81
+#define SYS_MKDIR            82
+#define SYS_RMDIR            83
+#define SYS_RENAME           84
+#define SYS_BRK              85
+#define SYS_MPROTECT         86
+#define SYS_MADVISE          87
+#define SYS_ARCH_PRCTL       88
+#define SYS_FUTEX            92
+#define SYS_SET_TID_ADDRESS  89
+#define SYS_GETTID           90
+#define SYS_EXIT_GROUP       91
+#define SYS_RT_SIGACTION     93
+#define SYS_RT_SIGPROCMASK   94
+#define SYS_RT_SIGRETURN     95
+#define SYS_TGKILL           96
+#define SYS_KILL             97
+#define SYS_GETRANDOM        98
+#define SYS_CLOCK_GETTIME    99
+#define SYS_SET_ROBUST_LIST  100
+#define SYS_PRLIMIT64        101
+#define SYS_GETRLIMIT        102
+#define SYS_UNAME            103
+#define SYS_ACCESS           104
+#define SYS_READLINK         105
+#define SYS_LAST_ERROR       112
+
+#define CLOCK_REALTIME  0
+#define CLOCK_MONOTONIC 1
+#define RLIMIT_NOFILE   7
+
+struct zos_rlimit64 {
+    unsigned long current;
+    unsigned long maximum;
+};
+
+struct zos_utsname {
+    char sysname[65];
+    char nodename[65];
+    char release[65];
+    char version[65];
+    char machine[65];
+    char domainname[65];
+};
+
+#define SIGUSR1 10
+#define SIGUSR2 12
+#define SA_SIGINFO   0x00000004UL
+#define SA_RESTORER  0x04000000UL
+
+struct zos_sigaction {
+    unsigned long handler;
+    unsigned long flags;
+    unsigned long restorer;
+    unsigned long mask;
+};
+
+#define ARCH_SET_FS 0x1002
+#define ARCH_GET_FS 0x1003
+
+#define FUTEX_WAIT        0
+#define FUTEX_WAKE        1
+#define FUTEX_WAIT_BITSET 9
+#define FUTEX_WAKE_BITSET 10
+#define FUTEX_PRIVATE_FLAG 128
 
 /* Terminal ABI mirrored from kernel/include/tty.h. */
 struct termios {
@@ -244,6 +311,19 @@ static inline long syscall4(long number, long a, long b, long c, long d)
     __asm__ volatile("int $0x80"
                      : "=a"(result)
                      : "a"(number), "D"(a), "S"(b), "d"(c), "r"(r10)
+                     : "rcx", "r11", "memory");
+    return result;
+}
+
+static inline long syscall5(long number, long a, long b, long c, long d,
+                            long e)
+{
+    register long r10 __asm__("r10") = d;
+    register long r8 __asm__("r8") = e;
+    long result;
+    __asm__ volatile("int $0x80"
+                     : "=a"(result)
+                     : "a"(number), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8)
                      : "rcx", "r11", "memory");
     return result;
 }
@@ -619,6 +699,121 @@ static inline long sys_munmap(void *address, unsigned long length)
     return syscall3(SYS_MUNMAP, (long)address, length, 0);
 }
 
+/* Query (NULL) or move the program break. */
+static inline long sys_brk(void *address)
+{
+    return syscall3(SYS_BRK, (long)address, 0, 0);
+}
+
+/* Change protection on an existing mapping; returns 0 or -errno. */
+static inline long sys_mprotect(void *address, unsigned long length, int prot)
+{
+    return syscall3(SYS_MPROTECT, (long)address, length, prot);
+}
+
+/* Advise the kernel about a mapping; returns 0 or -errno. */
+static inline long sys_madvise(void *address, unsigned long length, int advice)
+{
+    return syscall3(SYS_MADVISE, (long)address, length, advice);
+}
+
+/* Move the thread-local storage base (arch_prctl SET_FS/GET_FS). */
+static inline long sys_arch_prctl(int code, void *address)
+{
+    return syscall3(SYS_ARCH_PRCTL, code, (long)address, 0);
+}
+
+/* Sleep or wake on a shared 32-bit word (futex). */
+static inline long sys_futex(volatile int *address, int operation, int value,
+                             const struct zos_timespec *timeout, int bitset)
+{
+    return syscall5(SYS_FUTEX, (long)address, operation, value,
+                    (long)timeout, bitset);
+}
+
+/* Install or query a signal action (32-byte record, 8-byte mask). */
+static inline long sys_rt_sigaction(int signal_number,
+                                    const struct zos_sigaction *action,
+                                    struct zos_sigaction *old)
+{
+    return syscall4(SYS_RT_SIGACTION, signal_number, (long)action,
+                    (long)old, 8);
+}
+
+/* Read or change the blocked-signal mask. */
+static inline long sys_rt_sigprocmask(int how, const unsigned long *set,
+                                      unsigned long *old)
+{
+    return syscall4(SYS_RT_SIGPROCMASK, how, (long)set, (long)old, 8);
+}
+
+/* Send a signal to one process. */
+static inline long sys_kill(long pid, int signal_number)
+{
+    return syscall3(SYS_KILL, pid, signal_number, 0);
+}
+
+/* Send a signal to one thread of a process. */
+static inline long sys_tgkill(long tgid, long tid, int signal_number)
+{
+    return syscall3(SYS_TGKILL, tgid, tid, signal_number);
+}
+
+static inline long sys_gettid(void)
+{
+    return syscall3(SYS_GETTID, 0, 0, 0);
+}
+
+/* Register the word the kernel zeroes when this thread exits. */
+static inline long sys_set_tid_address(int *tid_word)
+{
+    return syscall3(SYS_SET_TID_ADDRESS, (long)tid_word, 0, 0);
+}
+
+/* End the whole process with `status`. */
+static inline long sys_exit_group(int status)
+{
+    return syscall3(SYS_EXIT_GROUP, status, 0, 0);
+}
+
+static inline long sys_getrandom(void *buffer, unsigned long length,
+                                 unsigned int flags)
+{
+    return syscall3(SYS_GETRANDOM, (long)buffer, (long)length, flags);
+}
+
+static inline long sys_clock_gettime(int clock_id, struct zos_timespec *time)
+{
+    return syscall3(SYS_CLOCK_GETTIME, clock_id, (long)time, 0);
+}
+
+static inline long sys_uname(struct zos_utsname *name)
+{
+    return syscall3(SYS_UNAME, (long)name, 0, 0);
+}
+
+static inline long sys_access(const char *path, int mode)
+{
+    return syscall3(SYS_ACCESS, (long)path, mode, 0);
+}
+
+static inline long sys_readlink(const char *path, char *buffer,
+                                unsigned long capacity)
+{
+    return syscall3(SYS_READLINK, (long)path, (long)buffer, (long)capacity);
+}
+
+static inline long sys_getrlimit(int resource, struct zos_rlimit64 *limit)
+{
+    return syscall3(SYS_GETRLIMIT, resource, (long)limit, 0);
+}
+
+/* Consume the errno recorded for the previous legacy (0-85) syscall. */
+static inline long sys_last_error(void)
+{
+    return syscall3(SYS_LAST_ERROR, 0, 0, 0);
+}
+
 static inline long sys_fcntl(long fd, int command, long argument)
 {
     return syscall3(SYS_FCNTL, fd, command, argument);
@@ -699,6 +894,39 @@ struct zos_install_config {
 static inline long sys_install_config(struct zos_install_config *config)
 {
     return syscall3(SYS_INSTALL_CONFIG, (long)config, 0, 0);
+}
+
+/* Mirrors enum console_color in kernel/include/console.h. */
+enum user_console_color {
+    USER_COLOR_BLACK = 0,
+    USER_COLOR_BLUE,
+    USER_COLOR_GREEN,
+    USER_COLOR_CYAN,
+    USER_COLOR_RED,
+    USER_COLOR_MAGENTA,
+    USER_COLOR_BROWN,
+    USER_COLOR_LIGHT_GRAY,
+    USER_COLOR_DARK_GRAY,
+    USER_COLOR_LIGHT_BLUE,
+    USER_COLOR_LIGHT_GREEN,
+    USER_COLOR_LIGHT_CYAN,
+    USER_COLOR_LIGHT_RED,
+    USER_COLOR_LIGHT_MAGENTA,
+    USER_COLOR_YELLOW,
+    USER_COLOR_WHITE
+};
+
+/* Paint the text console (setup uses white on blue, like XP setup). */
+static inline long sys_console_color(unsigned long fg, unsigned long bg)
+{
+    return syscall3(SYS_CONSOLE_COLOR, (long)fg, (long)bg, 0);
+}
+
+/* Create a pseudo-terminal pair: fds = {master_read, slave_write,
+ * slave_read, master_write}.  The child dup2()s the slave pair onto 0/1/2. */
+static inline long sys_pty(int fds[4])
+{
+    return syscall3(SYS_PTY, (long)fds, 0, 0);
 }
 
 /* Reboot the machine (keyboard-controller reset with a triple-fault fallback). */
