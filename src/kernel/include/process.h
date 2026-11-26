@@ -29,6 +29,8 @@ int process_run_image(const u8 *image, u64 size, const char *name,
 long process_fork(struct interrupt_frame *frame);
 long process_exec(struct interrupt_frame *frame, const char *path,
                   int argc, char **argv);
+struct process;
+struct process *process_current(void);
 u64 process_self_pid(void);
 struct address_space *process_current_space(void);
 int process_active(void);
@@ -37,7 +39,8 @@ const struct process_info *process_get_info(void);
 void process_thread_reaped(struct thread *thread);
 
 void syscall_dispatch(struct interrupt_frame *frame);
-void process_handle_exception(struct interrupt_frame *frame)
-    __attribute__((noreturn));
+/* Deliver a fault to a handler when one is installed; otherwise report the
+ * exception and terminate the process.  Returns only after delivery. */
+void process_handle_exception(struct interrupt_frame *frame);
 
 #endif

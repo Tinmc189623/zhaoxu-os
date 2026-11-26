@@ -88,9 +88,10 @@ CFLAGS  := $(CROSS) -m64 -std=gnu11 -O2 -g -ffreestanding -fno-pie -fno-pic \
            -Ikernel/include -Ikernel -Ikernel/font \
            -Ithird_party/limine/include
 CFLAGS += -MMD -MP
-CXXFLAGS := $(filter-out -std=gnu11,$(CFLAGS)) -std=gnu++20 \
-            -fno-exceptions -fno-rtti -fno-threadsafe-statics \
-            -fno-use-cxa-atexit
+# Marks kernel translation units: string.h renames the C library family to the
+# yuanshuo_ names the OS_5P link needs, and user programs keep the plain ones.
+CFLAGS += -DZHAOXU_KERNEL_BUILD=1
+# The kernel is C plus GAS only (rule 5); C++ is an application language.
 PROC_SELFTEST ?= 0
 DEBUG_SERIAL ?= 0
 SCHED_STATS ?= 0
@@ -113,6 +114,16 @@ POSIX_BOOT_TEST ?= 0
 CFLAGS += -DPOSIX_BOOT_TEST=$(POSIX_BOOT_TEST)
 NLIBC_BOOT_TEST ?= 0
 CFLAGS += -DNLIBC_BOOT_TEST=$(NLIBC_BOOT_TEST)
+TOYBOX_BOOT_TEST ?= 0
+CFLAGS += -DTOYBOX_BOOT_TEST=$(TOYBOX_BOOT_TEST)
+PANIC_BOOT_TEST ?= 0
+CFLAGS += -DPANIC_BOOT_TEST=$(PANIC_BOOT_TEST)
+SPLASH_BOOT_TEST ?= 0
+CFLAGS += -DSPLASH_BOOT_TEST=$(SPLASH_BOOT_TEST)
+BRK_BOOT_TEST ?= 0
+CFLAGS += -DBRK_BOOT_TEST=$(BRK_BOOT_TEST)
+ABI_BOOT_TEST ?= 0
+CFLAGS += -DABI_BOOT_TEST=$(ABI_BOOT_TEST)
 PERSONALITY_SELFTEST ?= 0
 CFLAGS += -DPERSONALITY_SELFTEST=$(PERSONALITY_SELFTEST)
 FREEBSD_PERSONALITY ?= 0
@@ -160,6 +171,31 @@ $(BUILD)/posix-%.stamp:
 	@mkdir -p $(BUILD)
 	@rm -f $(BUILD)/posix-*.stamp
 	@touch $@
+PANIC_STAMP := $(BUILD)/panic-$(PANIC_BOOT_TEST).stamp
+$(BUILD)/panic-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/panic-*.stamp
+	@touch $@
+SPLASH_STAMP := $(BUILD)/splash-$(SPLASH_BOOT_TEST).stamp
+$(BUILD)/splash-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/splash-*.stamp
+	@touch $@
+BRK_STAMP := $(BUILD)/brk-$(BRK_BOOT_TEST).stamp
+$(BUILD)/brk-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/brk-*.stamp
+	@touch $@
+ABI_STAMP := $(BUILD)/abi-$(ABI_BOOT_TEST).stamp
+$(BUILD)/abi-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/abi-*.stamp
+	@touch $@
+TOYBOX_STAMP := $(BUILD)/toybox-$(TOYBOX_BOOT_TEST).stamp
+$(BUILD)/toybox-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/toybox-*.stamp
+	@touch $@
 NLIBC_STAMP := $(BUILD)/nlibc-$(NLIBC_BOOT_TEST).stamp
 $(BUILD)/nlibc-%.stamp:
 	@mkdir -p $(BUILD)
@@ -175,7 +211,7 @@ $(BUILD)/freebsd-personality-%.stamp:
 	@mkdir -p $(BUILD)
 	@rm -f $(BUILD)/freebsd-personality-*.stamp
 	@touch $@
-$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP) $(GL_STAMP) $(VK_STAMP) $(FE_STAMP) $(POSIX_STAMP) $(NLIBC_STAMP) $(PERSONALITY_STAMP) $(FREEBSD_STAMP)
+$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP) $(GL_STAMP) $(VK_STAMP) $(FE_STAMP) $(POSIX_STAMP) $(NLIBC_STAMP) $(TOYBOX_STAMP) $(PANIC_STAMP) $(SPLASH_STAMP) $(BRK_STAMP) $(ABI_STAMP) $(PERSONALITY_STAMP) $(FREEBSD_STAMP)
 # The self-test body is compiled out unless the flag is on, so the object
 # must follow the flag as well.
 $(BUILD)/kernel/personality/selftest.o: $(PERSONALITY_STAMP)
@@ -205,7 +241,6 @@ C_SRCS := kernel/main.c \
           kernel/int/idt.c \
           kernel/int/intc_x86.c \
           kernel/drivers/timer.c \
-          kernel/drivers/hpet.c \
           kernel/mem/mmu.c \
           kernel/fs/initramfs.c \
           kernel/fs/fat32.c \
@@ -235,14 +270,27 @@ C_SRCS := kernel/main.c \
           kernel/fs/block.c \
           kernel/fs/install.c \
           kernel/lib/crc32.c \
+          kernel/lib/fbcon.c \
+          kernel/lib/fbdraw.c \
+          kernel/lib/splash.c \
+          kernel/lib/random.c \
+          kernel/lib/time.c \
           kernel/lib/inflate.c \
           kernel/crypto/sha256.c \
           kernel/crypto/aes.c \
           kernel/proc/process.c \
           kernel/proc/process_fork.c \
+          kernel/proc/elf_loader.c \
+          kernel/proc/anon.c \
+          kernel/proc/futex.c \
+          kernel/proc/signal.c \
+          kernel/proc/task_syscall.c \
+          kernel/proc/time_syscall.c \
+          kernel/proc/info_syscall.c \
           kernel/proc/zxe_loader.c \
           kernel/proc/syscall.c \
           kernel/proc/tty.c \
+          kernel/proc/pty.c \
           kernel/proc/io_syscall.c \
           kernel/proc/dev.c \
           kernel/proc/fsrpc.c \
@@ -260,6 +308,8 @@ C_SRCS := kernel/main.c \
           kernel/ipc/timerfd.c \
           kernel/ipc/epoll.c \
           kernel/lib/string.c \
+          kernel/lib/panic.c \
+          kernel/lib/klog.c \
           kernel/lib/printf.c \
           kernel/lib/console.c \
           kernel/mem/pmm.c \
@@ -292,7 +342,7 @@ $(HEADLESS_HEADER): FORCE
 
 FORCE:
 
-.PHONY: all clean run iso run-iso run-install run-bios run-install-bios version fonts host-test fsplus-test bash FORCE
+.PHONY: all clean run iso run-iso run-install run-bios run-install-bios run-disk tree-doc disk-doc version fonts host-test fsplus-test bash FORCE
 
 # The kernel is built for the ISO and the installer; Limine stays the only
 # boot manager (rules 8/31), and the installed ESP carries the kernel and
@@ -365,6 +415,13 @@ $(OUT)/%.zxe: $(BUILD)/%.uelf tools/zxe-pack.py
 	@mkdir -p $(OUT)
 	$(PYTHON) tools/zxe-pack.py $< $@
 
+# Static ET_EXEC at 1 TiB: exercises the kernel ELF path (auxv, envp, brk).
+$(OUT)/elf_test.elf: user/elf_test.c user/userlib.c user/userlib.h user/user-exec.ld
+	@mkdir -p $(OUT)
+	$(CC) $(USER_CFLAGS) -fno-pie -mcmodel=large -nostdlib -no-pie \
+	  -Wl,--build-id=none -Wl,-T,user/user-exec.ld \
+	  -Wl,-z,max-page-size=0x1000 -o $@ user/elf_test.c user/userlib.c
+
 # ---- newlib smoke program -------------------------------------------
 # newlib 4.6 must be built PIC; tools/newlib.py prepares it in the WSL home
 # directory because autoconf rejects the repository path's spaces.
@@ -378,8 +435,7 @@ NL_BUILD := $(BUILD)/newlib
 
 # POSIX glue is split by responsibility (rules 23/29): file/process syscalls,
 # termios, signals, accounts, paths, directory streams, limits and time.
-POSIX_NAMES := libgloss posix_termios posix_signal posix_account posix_path \
-               posix_dirent posix_rlimit posix_time posix_select
+POSIX_NAMES := $(notdir $(basename $(wildcard user/lib/posix/*.c)))
 POSIX_OBJS := $(addprefix $(NL_BUILD)/,$(addsuffix .o,$(POSIX_NAMES)))
 
 $(NL_BUILD)/%.o: user/lib/posix/%.c
@@ -498,9 +554,32 @@ $(BUILD)/calc_client.uelf: $(CALC_SRCS) $(WELCOME_HDRS) user/user.ld
 	$(CC) $(USER_CFLAGS) -Iuser -Iuser/lib/include -Ikernel/include \
 	  $(USER_LDFLAGS) -o $@ $(CALC_SRCS)
 
-INSTALL_SRCS := user/install_client.c user/lib/ade_client.c user/userlib.c
+# Orchestrd: PID 1 service manager (rule 31).  C++ because it is an
+# application, not kernel code (rule 5).
+ORCHESTRD_OBJS := $(BUILD)/orchestrd.o
 
-$(BUILD)/install_client.uelf: $(INSTALL_SRCS) $(WELCOME_HDRS) user/user.ld
+$(BUILD)/orchestrd.o: user/orchestrd.cpp user/userlib.h user/user.ld
+	@mkdir -p $(dir $@)
+	$(CXX) $(ADE_CXXFLAGS) -c $< -o $@
+
+$(BUILD)/orchestrd.uelf: $(ORCHESTRD_OBJS) $(BUILD)/orchestrd_userlib.o user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_LDFLAGS) -o $@ $(ORCHESTRD_OBJS) $(BUILD)/orchestrd_userlib.o
+
+$(BUILD)/orchestrd_userlib.o: user/userlib.c user/userlib.h
+	@mkdir -p $(dir $@)
+	$(CC) $(ADE_CFLAGS) -c $< -o $@
+
+TERMINAL_SRCS := user/terminal_client.c user/lib/ade_client.c user/userlib.c
+
+$(BUILD)/terminal_client.uelf: $(TERMINAL_SRCS) $(WELCOME_HDRS) user/user.ld
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -Iuser -Iuser/lib/include -Ikernel/include 	  $(USER_LDFLAGS) -o $@ $(TERMINAL_SRCS)
+
+# Setup is text mode on the kernel console: no ADE client, no compositor.
+INSTALL_SRCS := user/install_client.c user/userlib.c
+
+$(BUILD)/install_client.uelf: $(INSTALL_SRCS) user/userlib.h user/user.ld
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -Iuser -Iuser/lib/include -Ikernel/include \
 	  $(USER_LDFLAGS) -o $@ $(INSTALL_SRCS)
@@ -769,7 +848,7 @@ DRV_C_SRCS := apps/drivers/main.c apps/drivers/glue.c apps/drivers/keyboard.c \
               apps/drivers/ehci.c apps/drivers/ohci.c \
               apps/drivers/i2c_dw.c apps/drivers/spi_pch.c \
               apps/drivers/thermal.c apps/drivers/virtio_gpu.c \
-              kernel/drivers/ahci_log.c \
+              apps/drivers/ahci_log.c \
               kernel/lib/printf.c user/userlib.c
 DRV_OBJS := $(patsubst %.c,$(DRV_BUILD)/%.o,$(DRV_C_SRCS)) $(DRV_ADA_OBJS)
 DRV_DEPS := $(DRV_OBJS:.o=.d)
@@ -797,14 +876,29 @@ $(BUILD)/drivers.uelf: $(DRV_OBJS) user/user.ld
 # ---- initramfs -------------------------------------------------------
 RAMFS := $(BUILD)/initramfs
 RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/aqua $(RAMFS)/bin/bash \
-               $(RAMFS)/bin/drivers $(RAMFS)/bin/ext4fs $(RAMFS)/bin/display \
+               $(RAMFS)/bin/drivers.udrv/manifest \
+               $(RAMFS)/bin/drivers.udrv/executable \
+               $(RAMFS)/bin/ext4fs.udrv/manifest \
+               $(RAMFS)/bin/ext4fs.udrv/executable \
+               $(RAMFS)/bin/display.udrv/manifest \
+               $(RAMFS)/bin/display.udrv/executable \
                $(RAMFS)/bin/wayland $(RAMFS)/bin/wldemo \
                $(RAMFS)/bin/apps/welcome.zxe $(RAMFS)/bin/apps/calc.zxe \
                $(RAMFS)/bin/apps/install.zxe \
+               $(RAMFS)/bin/apps/terminal.zxe \
+               $(RAMFS)/bin/orchestrd \
                $(RAMFS)/boot/limine/BOOTX64.EFI \
                $(RAMFS)/boot/limine/limine-bios.sys \
                $(RAMFS)/boot/limine/limine-bios-hdd.bin \
-               $(RAMFS)/etc/motd $(RAMFS)/etc/version \
+               $(RAMFS)/etc/motd $(RAMFS)/etc/version $(RAMFS)/etc/os-release \
+$(RAMFS)/etc/initrd-release $(RAMFS)/etc/issue $(RAMFS)/etc/issue.net \
+$(RAMFS)/etc/hostname $(RAMFS)/etc/machine-id $(RAMFS)/etc/machine-info \
+$(RAMFS)/etc/timezone $(RAMFS)/etc/localtime $(RAMFS)/etc/hostid \
+$(RAMFS)/etc/vconsole.conf $(RAMFS)/etc/locale.conf $(RAMFS)/etc/shells \
+$(RAMFS)/etc/passwd $(RAMFS)/etc/group $(RAMFS)/etc/shadow \
+$(RAMFS)/etc/hosts $(RAMFS)/etc/nsswitch.conf $(RAMFS)/etc/resolv.conf \
+$(RAMFS)/etc/fstab $(RAMFS)/etc/profile $(RAMFS)/etc/securetty \
+$(RAMFS)/usr/share/zoneinfo/UTC $(RAMFS)/usr/share/zoneinfo/Asia/Shanghai \
                $(RAMFS)/mnt \
                $(RAMFS)/data/HELLO.TXT $(RAMFS)/data/HELLO.ZXE \
                $(RAMFS)/data/HELLO.ELF \
@@ -827,11 +921,25 @@ ifeq ($(NLIBC_BOOT_TEST),1)
 RAMFS_FILES += $(RAMFS)/data/NLIB_HELLO.ZXE $(RAMFS)/data/NCURSES_HELLO.ZXE
 endif
 
+ifeq ($(BRK_BOOT_TEST),1)
+RAMFS_FILES += $(RAMFS)/data/BRK_TEST.ZXE
+endif
+
+ifeq ($(ABI_BOOT_TEST),1)
+RAMFS_FILES += $(RAMFS)/data/ANON_TEST.ZXE $(RAMFS)/data/TLS_TEST.ZXE \
+               $(RAMFS)/data/FUTEX_TEST.ZXE $(RAMFS)/data/SIGNAL_TEST.ZXE \
+               $(RAMFS)/data/INFO_TEST.ZXE $(RAMFS)/data/ELF_TEST.BIN
+endif
+
 $(RAMFS)/usr/share/cursors/%: initramfs/usr/share/cursors/%
 	@mkdir -p $(dir $@)
 	cp $< $@
 
 $(RAMFS)/usr/share/terminfo/%: initramfs/usr/share/terminfo/%
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/usr/share/zoneinfo/%: initramfs/usr/share/zoneinfo/%
 	@mkdir -p $(dir $@)
 	cp $< $@
 
@@ -847,17 +955,74 @@ $(RAMFS)/bin/bash: $(OUT)/bash.elf
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-$(RAMFS)/bin/drivers: $(OUT)/drivers.zxe
+# toybox 0.8.12, the full untrimmed configuration (rule 39).  Its build needs
+# clang/lld and the newlib install from tools/newlib.py, so the ISO only takes
+# it when asked: make TOYBOX=1 iso.
+ifeq ($(TOYBOX),1)
+RAMFS_FILES += $(RAMFS)/bin/toybox
+endif
+
+TOYBOX_SOURCES := $(wildcard user/lib/posix/*.c) \
+                  $(wildcard user/lib/posix/include/*.h) \
+                  $(wildcard user/lib/posix/include/*/*.h) \
+                  $(wildcard third_party/bsd-regex/*) \
+                  third_party/bsd-regex-port/include/collate.h \
+                  $(wildcard third_party/freebsd-libcrypt/*/*) \
+                  $(wildcard third_party/freebsd-libcrypt-port/*/*) \
+                  $(wildcard third_party/freebsd-libcrypt-port/include/sys/*)
+
+$(OUT)/toybox.zxe: tools/toybox-build.sh $(TOYBOX_SOURCES)
+	@test -d $(HOME)/toybox/src || { \
+	  echo "toybox sources are missing at $(HOME)/toybox; unpack toybox 0.8.12 there"; \
+	  exit 1; }
+	sh tools/toybox-build.sh
+	$(PYTHON) tools/zxe-pack.py $(HOME)/toybox/src/toybox $@
+
+$(RAMFS)/bin/toybox: $(OUT)/toybox.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-$(RAMFS)/bin/ext4fs: $(OUT)/ext4fs.zxe
+# Rule 49: the Ring3 driver set is a .udrv bundle whose executable is a ZXE.
+DRIVER_BUNDLE := $(OUT)/drivers.udrv
+$(DRIVER_BUNDLE)/manifest: $(OUT)/drivers.zxe tools/udrv-pack.py
+	$(PYTHON) tools/udrv-pack.py --name drivers --version 1 \
+	  $(OUT)/drivers.zxe $(DRIVER_BUNDLE)
+
+$(RAMFS)/bin/drivers.udrv/manifest: $(DRIVER_BUNDLE)/manifest
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-$(RAMFS)/bin/display: $(OUT)/display.zxe
+$(RAMFS)/bin/drivers.udrv/executable: $(DRIVER_BUNDLE)/manifest
+	@mkdir -p $(dir $@)
+	cp $(DRIVER_BUNDLE)/executable $@
+
+# The filesystem and display services are userland drivers too (rule 49):
+# they ship as .udrv bundles, not as bare ZXE files.
+EXT4FS_BUNDLE := $(OUT)/ext4fs.udrv
+$(EXT4FS_BUNDLE)/manifest: $(OUT)/ext4fs.zxe tools/udrv-pack.py
+	$(PYTHON) tools/udrv-pack.py --name ext4fs --version 1 \
+	  $(OUT)/ext4fs.zxe $(EXT4FS_BUNDLE)
+
+$(RAMFS)/bin/ext4fs.udrv/manifest: $(EXT4FS_BUNDLE)/manifest
 	@mkdir -p $(dir $@)
 	cp $< $@
+
+$(RAMFS)/bin/ext4fs.udrv/executable: $(EXT4FS_BUNDLE)/manifest
+	@mkdir -p $(dir $@)
+	cp $(EXT4FS_BUNDLE)/executable $@
+
+DISPLAY_BUNDLE := $(OUT)/display.udrv
+$(DISPLAY_BUNDLE)/manifest: $(OUT)/display.zxe tools/udrv-pack.py
+	$(PYTHON) tools/udrv-pack.py --name display --version 1 \
+	  $(OUT)/display.zxe $(DISPLAY_BUNDLE)
+
+$(RAMFS)/bin/display.udrv/manifest: $(DISPLAY_BUNDLE)/manifest
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/bin/display.udrv/executable: $(DISPLAY_BUNDLE)/manifest
+	@mkdir -p $(dir $@)
+	cp $(DISPLAY_BUNDLE)/executable $@
 
 $(RAMFS)/bin/wayland: $(OUT)/wayland.zxe
 	@mkdir -p $(dir $@)
@@ -884,6 +1049,14 @@ $(RAMFS)/bin/apps/welcome.zxe: $(OUT)/welcome_client.zxe
 	cp $< $@
 
 $(RAMFS)/bin/apps/calc.zxe: $(OUT)/calc_client.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/bin/apps/terminal.zxe: $(OUT)/terminal_client.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/bin/orchestrd: $(OUT)/orchestrd.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
@@ -948,6 +1121,41 @@ $(RAMFS)/data/POSIX_TEST.ZXE: $(OUT)/positest.zxe
 	@mkdir -p $(dir $@)
 	cp $< $@
 
+# Program-break regression (SYS_BRK).
+$(RAMFS)/data/BRK_TEST.ZXE: $(OUT)/brk_test.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+# Anonymous mapping regression (SYS_MMAP/SYS_MUNMAP/SYS_MPROTECT).
+$(RAMFS)/data/ANON_TEST.ZXE: $(OUT)/anon_test.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+# TLS base regression (SYS_ARCH_PRCTL).
+$(RAMFS)/data/TLS_TEST.ZXE: $(OUT)/tls_test.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+# Futex wait/wake regression (SYS_FUTEX).
+$(RAMFS)/data/FUTEX_TEST.ZXE: $(OUT)/futex_test.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+# Signal delivery regression (SYS_RT_SIGACTION..SYS_KILL).
+$(RAMFS)/data/SIGNAL_TEST.ZXE: $(OUT)/signal_test.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+# Task, clock and information syscalls (89-112).
+$(RAMFS)/data/INFO_TEST.ZXE: $(OUT)/info_test.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+# Static ELF startup regression (auxv, envp, brk).
+$(RAMFS)/data/ELF_TEST.BIN: $(OUT)/elf_test.elf
+	@mkdir -p $(dir $@)
+	cp $< $@
+
 # newlib smoke test (printf/malloc through libgloss + crt0).
 $(RAMFS)/data/NLIB_HELLO.ZXE: $(OUT)/nlib_hello.zxe
 	@mkdir -p $(dir $@)
@@ -962,10 +1170,27 @@ $(RAMFS)/data/DOCS/INFO.TXT: initramfs/data/info.txt
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-$(OUT)/initramfs.tar: $(RAMFS_FILES)
+# Rule 48: the live root carries the FHS 3.0+ top-level layout, empty until a
+# service populates a directory.
+FHS_DIRS := $(RAMFS)/boot $(RAMFS)/dev $(RAMFS)/home $(RAMFS)/home/user \
+            $(RAMFS)/lib \
+            $(RAMFS)/lib64 $(RAMFS)/media $(RAMFS)/opt $(RAMFS)/proc \
+            $(RAMFS)/root $(RAMFS)/run $(RAMFS)/sbin $(RAMFS)/srv \
+            $(RAMFS)/sys $(RAMFS)/tmp $(RAMFS)/var \
+            $(RAMFS)/usr/bin $(RAMFS)/usr/sbin $(RAMFS)/usr/lib \
+            $(RAMFS)/usr/lib64 $(RAMFS)/usr/share $(RAMFS)/usr/include \
+            $(RAMFS)/usr/local \
+            $(RAMFS)/var/log $(RAMFS)/var/cache $(RAMFS)/var/spool \
+            $(RAMFS)/var/tmp
+$(FHS_DIRS):
+	@mkdir -p $@
+
+$(OUT)/initramfs.tar: $(RAMFS_FILES) $(FHS_DIRS)
 	@mkdir -p $(OUT)
-	# Drop the retired shell from trees produced before its removal.
-	@rm -f $(RAMFS)/bin/8sh
+	# Drop the retired shell and the pre-bundle driver copy from trees
+	# produced before they were replaced.
+	@rm -f $(RAMFS)/bin/8sh $(RAMFS)/bin/drivers \
+	  $(RAMFS)/bin/ext4fs $(RAMFS)/bin/display
 	$(TAR) $(TAR_FORMAT) $(TAR_OWNER) -cf $@ -C $(RAMFS) .
 
 # The BIOS stage 2 stages the whole kernel below the EBDA (448 KiB), and the
@@ -1031,10 +1256,6 @@ $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/%.o: %.cpp
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-
 $(BUILD)/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(CC) $(CROSS) -m64 -c $< -o $@
@@ -1064,7 +1285,7 @@ clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin \
 	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/aqua.zxe \
 	       $(OUT)/bash.elf $(OUT)/initramfs.tar $(OUT)/initramfs.z \
-	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu-os_x86-64_*_ld.iso \
+	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu-os_x64_*_ld.iso \
 	       $(OUT)/*.patched $(OUT)/target.img
 
 ifeq ($(ZOS_HOST),macos)
@@ -1099,7 +1320,7 @@ $(TARGET_IMG):
 run: run-iso
 
 # ---- UEFI ISO --------------------------------------------------------
-# Rule 11: ISO files are named zhaoxu-os_x86-64_{version}_{build-date}_ld.iso.
+# Rule 11: ISO files are named zhaoxu-os_x64_{version}_{build-date}_ld.iso.
 # version.cfg is the single source; version.h holds the synced macros.  Read
 # all five values with one Python call so the ISO metadata matches the build.
 VERSION_FIELDS := $(shell $(PYTHON) -c 'import re;q=chr(34);h=open("kernel/include/version.h").read();print(" ".join(re.search("ZHAOXU_"+k+"[ \\t]+"+q+"([^"+q+"]+)"+q,h).group(1) for k in ("VERSION","CODENAME","KERNEL","KERNEL_VERSION","BUILD")))')
@@ -1108,7 +1329,7 @@ ZHAOXU_CODENAME := $(word 2,$(VERSION_FIELDS))
 ZHAOXU_KERNEL := $(word 3,$(VERSION_FIELDS))
 ZHAOXU_KERNEL_VERSION := $(word 4,$(VERSION_FIELDS))
 ZHAOXU_BUILD := $(word 5,$(VERSION_FIELDS))
-ISO := $(OUT)/zhaoxu-os_x86-64_$(ZHAOXU_VERSION)_$(ZHAOXU_BUILD)_ld.iso
+ISO := $(OUT)/zhaoxu-os_x64_$(ZHAOXU_VERSION)_$(ZHAOXU_BUILD)_ld.iso
 ISO_ROOT := $(BUILD)/iso
 LIMINE_DIR := third_party/limine
 LIMINE_BINS := $(LIMINE_DIR)/bin/limine-bios.sys \
@@ -1117,37 +1338,51 @@ LIMINE_BINS := $(LIMINE_DIR)/bin/limine-bios.sys \
                $(LIMINE_DIR)/bin/BOOTX64.EFI
 LIMINE_CONF := boot/limine.conf
 
+# The shipped ISO is a setup disc: its entry passes "install".  Boot-time
+# tests override the staged cmdline with make ISO_CMDLINE= and get the normal
+# kernel path instead.  The stamp forces the ISO to rebuild for each value.
+ISO_CMDLINE ?= install
+ISO_CMDLINE_STAMP := $(BUILD)/iso-cmdline-$(if $(ISO_CMDLINE),$(ISO_CMDLINE),empty).stamp
+$(ISO_CMDLINE_STAMP):
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/iso-cmdline-*.stamp
+	@touch $@
+
 # Rule 8/31: Limine is the only boot manager.  The hybrid ISO uses Limine's
 # BIOS and UEFI El Torito images; the kernel is loaded through the Limine boot
 # protocol, with the flat image and desktop assets as Limine modules.
 $(ISO): $(OUT)/kernel.elf $(OUT)/initramfs.tar $(OUT)/drivers.zxe \
         $(FONT_FILES) $(WALLPAPER_RAW) $(LIMINE_BINS) $(LIMINE_CONF) \
-        $(BUILD)/limine-host tools/kernel-flat.py tools/iso-manifest.py
+        $(BUILD)/limine-host tools/iso-manifest.py $(ISO_CMDLINE_STAMP)
 	@rm -rf $(ISO_ROOT)
-	@mkdir -p $(ISO_ROOT)/install $(ISO_ROOT)/casper
+	@mkdir -p $(ISO_ROOT)/casper
 	@mkdir -p $(ISO_ROOT)/boot/limine $(ISO_ROOT)/EFI/BOOT
 	@mkdir -p $(ISO_ROOT)/dists/jammy/main $(ISO_ROOT)/dists/jammy/restricted \
 	          $(ISO_ROOT)/dists/jammy/universe $(ISO_ROOT)/dists/jammy/multiverse
 	@mkdir -p $(ISO_ROOT)/pool/main $(ISO_ROOT)/pool/restricted \
 	          $(ISO_ROOT)/pool/universe $(ISO_ROOT)/pool/multiverse
+	@mkdir -p $(ISO_ROOT)/amd64 $(ISO_ROOT)/preseed $(ISO_ROOT)/.disk
 	cp $(LIMINE_DIR)/bin/limine-bios.sys $(ISO_ROOT)/boot/limine/
 	cp $(LIMINE_DIR)/bin/limine-bios-cd.bin $(ISO_ROOT)/boot/limine/
 	cp $(LIMINE_DIR)/bin/limine-uefi-cd.bin $(ISO_ROOT)/boot/limine/
 	cp $(LIMINE_DIR)/bin/BOOTX64.EFI $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
 	cp $(LIMINE_CONF) $(ISO_ROOT)/boot/limine/limine.conf
 	cp $(LIMINE_CONF) $(ISO_ROOT)/EFI/BOOT/limine.conf
+	@if [ -z "$(ISO_CMDLINE)" ]; then \
+	  sed -i '/^    cmdline: install/d' $(ISO_ROOT)/boot/limine/limine.conf \
+	    $(ISO_ROOT)/EFI/BOOT/limine.conf; \
+	elif [ "$(ISO_CMDLINE)" != "install" ]; then \
+	  sed -i 's|^    cmdline: install.*|    cmdline: $(ISO_CMDLINE)|' \
+	    $(ISO_ROOT)/boot/limine/limine.conf $(ISO_ROOT)/EFI/BOOT/limine.conf; \
+	fi
+	cp $(OUT)/kernel.elf $(ISO_ROOT)/boot/limine/kernel.elf
 	cp $(OUT)/kernel.elf $(ISO_ROOT)/casper/kernel.elf
 	cp $(OUT)/initramfs.tar $(ISO_ROOT)/casper/initrd.img
-	cp $(OUT)/drivers.zxe $(ISO_ROOT)/casper/vga.ko
-	$(PYTHON) tools/kernel-flat.py $(OUT)/kernel.elf $(ISO_ROOT)/casper/kernel.bin
+	cp $(OUT)/drivers.zxe $(ISO_ROOT)/casper/vga10h.kext
 	cp initramfs/data/MiSans-Regular.ttf $(ISO_ROOT)/boot/limine/MiSans.ttf
 	cp $(WALLPAPER_RAW) $(ISO_ROOT)/boot/limine/WALL.RGB
 	$(MKSQUASHFS) $(BUILD)/initramfs $(ISO_ROOT)/casper/filesystem.squashfs \
 	  -noappend -comp gzip -no-progress >/dev/null
-	cp $(ISO_ROOT)/casper/kernel.bin $(ISO_ROOT)/install/KERNEL.BIN
-	cp $(OUT)/kernel.elf $(ISO_ROOT)/install/KERNEL.ELF
-	cp initramfs/data/MiSans-Regular.ttf $(ISO_ROOT)/install/MiSans.ttf
-	cp initramfs/data/Inter-Regular.otf $(ISO_ROOT)/install/Inter.otf
 	$(PYTHON) tools/iso-manifest.py $(ISO_ROOT) $(ZHAOXU_VERSION) \
 	  $(ZHAOXU_CODENAME) $(ZHAOXU_KERNEL) $(ZHAOXU_KERNEL_VERSION) \
 	  $(ZHAOXU_BUILD)
@@ -1158,6 +1393,15 @@ $(ISO): $(OUT)/kernel.elf $(OUT)/initramfs.tar $(OUT)/drivers.zxe \
 	$(BUILD)/limine-host bios-install $@
 
 iso: $(ISO)
+
+# Regenerate docs/PROJECT_TREE.md from the tree on disk.
+tree-doc:
+	$(PYTHON) tools/tree-doc.py
+
+# Document the on-disk layout of one installed image (default: the debug
+# disk).  IMG=out/other.img selects a different one, read-only.
+disk-doc:
+	$(PYTHON) tools/disk-doc.py $(if $(IMG),$(IMG),$(OUT)/target.img)
 
 # The CD lives on ide.0; run-install adds one blank target on ide.1.
 QEMU_CD := -drive if=none,id=zcd,format=raw,media=cdrom,readonly=on,file=$(ISO) \
@@ -1185,6 +1429,21 @@ run-install: $(ISO) $(TARGET_IMG)
 	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
 	  -drive if=pflash,format=raw,unit=1,file=$(OUT)/OVMF_VARS.fd \
 	  $(QEMU_CD) $(QEMU_TARGET_DISK) -boot order=d \
+	  -net none -serial stdio -monitor $(QEMU_MONITOR) $(QEMU_DISPLAY) -no-reboot
+
+# Feature debugging boots one installed disk image, never the read-only ISO.
+# out/target.img is the single debug image: install once with run-install,
+# then boot it directly here.  Do not create a second disk image per test.
+run-disk:
+	@test -f $(TARGET_IMG) || \
+	  { echo "no $(TARGET_IMG): run 'make run-install' once to install"; exit 1; }
+	@test -n "$(OVMF_CODE)" -a -n "$(OVMF_VARS)" || \
+	  { echo "OVMF not found; set OVMF_CODE/OVMF_VARS or run: python3 tools/build.py --check"; exit 1; }
+	cp $(OVMF_VARS) $(OUT)/OVMF_VARS.fd
+	$(QEMU) -M $(QEMU_MACHINE) -m $(QEMU_MEM) -smp $(QEMU_SMP) \
+	  -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
+	  -drive if=pflash,format=raw,unit=1,file=$(OUT)/OVMF_VARS.fd \
+	  $(QEMU_TARGET_DISK) -boot order=c \
 	  -net none -serial stdio -monitor $(QEMU_MONITOR) $(QEMU_DISPLAY) -no-reboot
 
 # Legacy BIOS: SeaBIOS boots the El Torito image (ZhaoxuBootloader stage 1).

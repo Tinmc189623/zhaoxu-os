@@ -9,5 +9,6 @@ u32 timer_hz(void);
 void timer_irq(void);
 void timer_sleep_ms(u32 ms);
 u64 timer_uptime_seconds(void);
+u64 timer_now_ns(void);
 
 #endif

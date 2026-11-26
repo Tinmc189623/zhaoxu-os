@@ -19,6 +19,9 @@ int wramfs_read(struct wramfs *fs, const char *rel, u64 offset, void *buffer,
 int wramfs_write(struct wramfs *fs, const char *rel, const u8 *data,
                  u64 size);
 int wramfs_unlink(struct wramfs *fs, const char *rel);
+int wramfs_mkdir(struct wramfs *fs, const char *rel);
+int wramfs_rmdir(struct wramfs *fs, const char *rel);
+int wramfs_rename(struct wramfs *fs, const char *from, const char *to);
 
 /* Mount a fresh ramfs at `path`. */
 int ramfs_mount_at(const char *path, const char *type);

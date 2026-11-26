@@ -112,7 +112,7 @@ u64 shm_create(u64 size)
     return id;
 }
 
-u64 shm_map(u64 id)
+u64 yuanshuo_shm_map(u64 id)
 {
     u64 pid = process_self_pid();
     if (!pid)
@@ -172,7 +172,7 @@ u64 shm_map(u64 id)
     return address;
 }
 
-int shm_unmap(u64 id)
+int yuanshuo_shm_unmap(u64 id)
 {
     u64 pid = process_self_pid();
     if (!pid)

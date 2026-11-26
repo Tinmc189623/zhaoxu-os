@@ -36,6 +36,19 @@ compiled, and what is still missing. It is not a promise of dates.
    metadata and README must agree before the next release; rule 22 governs
    when a build/version changes.
 
+### Rule gaps still open
+
+| Rule | What it requires | Current state |
+| --- | --- | --- |
+| 45 | btrfs as the default file system | The installer formats ext4 (`ZHAOXUROOT`); no btrfs implementation exists in the kernel or the Ring3 disk services |
+| 1 | csh as the default shell | GNU bash 5.3 is `/bin/bash`; csh is not ported |
+| 5 | SPARK-proven drivers | Ring3 drivers are Ada + C; `gnatprove` is not installed and no proof runs |
+| 37/38 | Vulkan as the desktop renderer, complete OpenGL 1.1 | Software Vulkan ICD has no WSI; the desktop stays on the ZOS raster path; GL 1.1 is partial |
+| 32 | ZAF on Skia | ZAF is not on Skia |
+
+These are tracked here rather than claimed as done; the ISO layout (the media
+section of `RULES.md`) is now checked mechanically by `tools/iso-check.py`.
+
 ## Next: desktop and graphics
 
 1. **Wayland/GBM/KMS M1+.** Finish the Ring3 `/bin/display` KMS service,
@@ -66,13 +79,28 @@ compiled, and what is still missing. It is not a promise of dates.
   verified by `PERSONALITY_SELFTEST=1` serial markers) are done; M2 has its
   build driver (`tools/freebsd-personality.py`: fetch, checksum, overlay) and a
   native `buildkernel KERNCONF=ZHAOXU` inside the FreeBSD 15.1 VM completes in
-  162 s (`kernel` 13.3 MB). Slices 1–4 of the port are in: a
+  162 s (`kernel` 13.3 MB). Slices 1–7 of the port are in: a
   `FREEBSD_PERSONALITY` gate with a weak boot seam, the linker-side symbols the
-  FreeBSD objects need (`_end`, `brsection`, `set_*` sections), the versioned
-  `zx_core_services` table with `freebsd_pmap_init()`, and a shared
-  `core_abi.h` that compiles in both kernels (`probe.c` builds inside the 15.1
-  tree, `PROBE=0`). The pmap study shows 154 of `pmap.o`'s 171 externals
-  resolve inside the FreeBSD objects. The WSL2 cross `kernel-toolchain` still fails, and the machine port
+  FreeBSD objects need (`_end`, `_etext`, `_DYNAMIC`, `brsection`, `set_*`),
+  the versioned `zx_core_services` table with `freebsd_pmap_init()`, a shared
+  `core_abi.h` that compiles in both kernels (`probe.c`, `PROBE=0`), and
+  `pmap_glue.c`, the first port-side source. The full FreeBSD kernel object set
+  plus the glue relocates into one object with only 64 linker-provided symbols
+  left; 154 of `pmap.o`'s 171 externals resolve inside the FreeBSD objects.
+  Symbol isolation: 19 collisions between 13,287 FreeBSD and 546 Yuanshuo
+  globals, handled at link time with `--allow-multiple-definition` (objcopy
+  transforms of the merged object are ruled out; they manufacture phantom
+  undefined names). The direct link of 1,069 FreeBSD objects plus the 80
+  Yuanshuo objects now completes with zero undefined symbols; the blocker was
+  the misspelled `brsection` (the real symbol is `brwsection`). The test image
+  is 73 MB with debug info (text 5.6 MB, rodata 0.8 MB, data 0.7 MB, bss
+  84 MB, ending at `0xffffffff85885580`); `KERNEL_STACK_TOP` moved to
+  `0xffffffff87f00000` so that image now links with `LINK=0` under the shipped
+  script and ASSERT, and the default ISO still boots to `Boot complete`.
+  The 19 duplicate globals are separated in the source: the core's copies are
+  `yuanshuo_*`, and `tools/freebsd-link.sh` now reports `0 collision(s)` and
+  links without `--allow-multiple-definition` or any object rewriting.
+  The WSL2 cross `kernel-toolchain` still fails, and the machine port
   plus IO/287 are not started. M3's core half (boot handoff
   and console service) is in and covered by the self-test; the personality
   still cannot reach `mi_startup` without the M2 port. M4–M5 bring up
@@ -103,4 +131,4 @@ compiled, and what is still missing. It is not a promise of dates.
 
 ---
 
-Copyright © 2026 Nexsteaduser. All Rights Reserved. Email: admin@nexsteaduser.com
+Copyright (C) 2026 Nexsteaduser, Nexlyh, Tinmc189623. All Rights Reserved. Email: admin@nexsteaduser.com

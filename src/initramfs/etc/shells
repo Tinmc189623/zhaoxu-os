@@ -1,0 +1,3 @@
+# /etc/shells: valid login shells.
+# /bin/csh is added when the csh port lands; rule 1 makes it the default.
+/bin/bash

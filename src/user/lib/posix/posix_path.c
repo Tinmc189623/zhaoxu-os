@@ -2,7 +2,10 @@
  *
  * ZOS has no working-directory state yet, so chdir/getcwd report the root
  * and dirname/basename implement the POSIX string rules. */
+#include "posix_glue.h"
+
 #include <errno.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -117,13 +120,19 @@ int chmod(const char *path, mode_t mode)
     return 0;
 }
 
-/* Directory creation is not exposed by the kernel yet. */
+/* Create one directory through syscall 82. */
 int mkdir(const char *path, mode_t mode)
 {
-    (void)path;
     (void)mode;
-    errno = ENOSYS;
-    return -1;
+    if (!path) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (zos_syscall3(ZOS_MKDIR, (long)(uintptr_t)path, 0, 0) != 0) {
+        errno = EEXIST;
+        return -1;
+    }
+    return 0;
 }
 
 /* newlib calls the underscored stub; keep it beside the public mkdir. */

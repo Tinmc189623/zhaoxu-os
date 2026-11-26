@@ -95,8 +95,9 @@ zhaoxu zhaoxu/confirm boolean true
 <title>Zhaoxu OS {version}</title></head>
 <body><h1>Zhaoxu OS {version} &laquo;{codename}&raquo;</h1>
 <p>{kernel} {kernel_version} &middot; Aqua Desktop Environment &middot; Desktop Window Manager &middot; ZAF</p>
-<ul><li>UEFI: EFI/BOOT/BOOTX64.EFI &rarr; OSLDRX64.efi &rarr; kernel.elf</li>
-<li>BIOS: boot/zhaoxu/BOOT.BIN &rarr; osloader.elf &rarr; kernel.elf</li></ul>
+<ul><li>UEFI: EFI/BOOT/BOOTX64.EFI (Limine) &rarr; boot/limine/kernel.elf</li>
+<li>BIOS: boot/limine/limine-bios-cd.bin (El Torito) &rarr; boot/limine/kernel.elf</li>
+<li>Live root: casper/filesystem.squashfs</li></ul>
 </body></html>
 """,
         root_path,

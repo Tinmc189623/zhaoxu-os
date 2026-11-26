@@ -69,7 +69,7 @@ cd src
 .\build.ps1 iso
 ```
 
-The product is `src/out/zhaoxu-os_x86-64_0.7.20_2026-11-16_ld.iso`. The version in the filename comes from `version.cfg`; do not edit it by hand.
+The product is `src/out/zhaoxu-os_x64_0.7.20_2026-11-16_ld.iso`. The version in the filename comes from `version.cfg`; do not edit it by hand.
 
 Build dependencies vary by host:
 
@@ -81,7 +81,7 @@ The output of `ruby tools/build.rb --check` is more accurate than this list; whe
 
 ### Download from the release page
 
-If you use a published ISO, its filename should also be `zhaoxu-os_x86-64_0.7.20_2026-11-16_ld.iso`. Verify the size and checksum after downloading, then write it to the medium.
+If you use a published ISO, its filename should also be `zhaoxu-os_x64_0.7.20_2026-11-16_ld.iso`. Verify the size and checksum after downloading, then write it to the medium.
 
 ---
 
@@ -93,7 +93,7 @@ The ISO is a hybrid image with dual El Torito entries plus a GPT hybrid layout; 
 
 Rufus is recommended on Windows:
 
-1. Select `zhaoxu-os_x86-64_0.7.20_2026-11-16_ld.iso`.
+1. Select `zhaoxu-os_x64_0.7.20_2026-11-16_ld.iso`.
 2. Set partition type to GPT and target system to UEFI; machines that only use Legacy BIOS select MBR.
 3. Click "Start". When Rufus asks "ISO Image mode / DD Image mode", choose DD.
 4. Existing data on the USB drive will be erased.
@@ -101,7 +101,7 @@ Rufus is recommended on Windows:
 On Linux/macOS use `dd` directly:
 
 ```bash
-sudo dd if=zhaoxu-os_x86-64_0.7.20_2026-11-16_ld.iso of=/dev/sdX bs=4M status=progress oflag=sync
+sudo dd if=zhaoxu-os_x64_0.7.20_2026-11-16_ld.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
 `of=/dev/sdX` is the whole USB drive, not `/dev/sdX1`. Writing the wrong device destroys another disk; check twice with `lsblk` before running.
@@ -135,7 +135,7 @@ The serial log for the UEFI path looks roughly like this:
 
 ```text
 limine: Loading executable `boot():/casper/kernel.elf`...
-limine: Loading module `boot():/casper/kernel.bin`...
+limine: Loading module `boot():/casper/vga10h.kext`...
 limine: Loading module `boot():/boot/limine/MiSans.ttf`...
 limine: Loading module `boot():/boot/limine/WALL.RGB`...
 [boot] higher-half kernel at 0xffffffff80000000 ...
@@ -150,12 +150,16 @@ Stage 2 reads limine-bios.sys and the config from the ISO and follows
 the same kernel path as UEFI.
 ```
 
-After the kernel starts it launches the Aqua Desktop Environment desktop; the menu bar, Dock, welcome window, and calculator window all appear. Chinese text displays correctly, which means the font module `MiSans.ttf` was read from the ISO.
+The only Limine entry, `Install`, passes `cmdline: install`. The kernel shows
+the boot animation, then starts the Ring3 driver service for keyboard input
+and the text installer on a framebuffer console (80x25, VGA blue): the medium
+behaves like a setup disc, not a live desktop you have to explore for an
+installer. No compositor or desktop service runs, and kernel diagnostics do
+not overwrite the setup screen (they still go to the log ring and serial).
 
-Whether the installer window opens by itself depends on two conditions:
-
-1. No data volume or root volume is currently mounted.
-2. `disks` lists at least one disk in the `target` role.
+The installer scans disks, offers a blank or previous Zhaoxu target, confirms
+once, writes the MBR or GPT layout, formats the ESP and the ext4 root through
+`/bin/ext4fs`, and reboots from the done screen through `SYS_REBOOT`.
 
 When booting from the ISO with a blank target disk, the window appears automatically. With a `ZHAOXUDATA` data disk already mounted it does not; click "File" in the menu bar to force the installer open. If the window does not appear, don't blame the installer yet; check target disk detection in section 9.
 
@@ -218,8 +222,7 @@ Click "立即重启" ("Reboot now") to reset the machine, or "关闭安装程序
 
 Limine 12 reads FAT and ISO9660 only, so every file the boot manager loads lives on the ESP:
 
-- `/KERNEL.ELF`: the kernel executable Limine loads.
-- `/KERNEL.BIN`: the flat kernel image passed as a module (used when reinstalling from the installed system).
+- `/boot/limine/KERNEL.ELF`: the kernel executable Limine loads.
 - `/MiSans.ttf`: OpenType Chinese/Latin font (MiSans, with MiSans Global and Inter as the other supported faces).
 - `/WALL.RGB`: raw 1920x1080 frame of the default wallpaper.
 
@@ -251,7 +254,7 @@ The user client also prints `[install] complete` on the serial console. Wait for
 After a successful UEFI boot, serial should show:
 
 ```text
-limine: Loading executable `boot(2):/KERNEL.ELF`...
+limine: Loading executable `boot(2):/boot/limine/KERNEL.ELF`...
 [boot] higher-half kernel at 0xffffffff80000000 ...
 [ade ] font boot volume: 7924400 bytes
 [ade ] wallpaper boot volume: 6220800 bytes
@@ -317,7 +320,7 @@ qemu-system-x86_64 -M q35 -m 512 -smp 4 \
 4. Enabling EFI in system settings means a UEFI install; leaving it off means a Legacy BIOS install. Disable Secure Boot under EFI mode.
 5. Start the virtual machine, install, power it off, remove the ISO from the optical drive, then start it again.
 
-VirtualBox emulates PS/2 keyboard and mouse by default, so the installer window is clickable. Build 7 writes both UEFI stages into the ESP, so no manual copy is needed.
+VirtualBox emulates a PS/2 keyboard, so the setup screens accept keys. Build 7 writes both UEFI stages into the ESP, so no manual copy is needed.
 
 ### VMware Workstation
 
@@ -327,21 +330,21 @@ VirtualBox emulates PS/2 keyboard and mouse by default, so the installer window 
 4. Attach the ISO to the optical drive and boot the installer.
 5. Disconnect the ISO after installation and boot from the virtual hard disk.
 
-VMware's PS/2 keyboard and mouse emulation is sufficient; if the mouse cannot click the window, check whether the virtual machine captured input.
+VMware's PS/2 keyboard emulation is sufficient; if setup does not react to keys, check whether the virtual machine captured input.
 
 ---
 
 ## 8. Graphics-free installation
 
-A build without a framebuffer starts GNU bash 5.3 on the tty. The graphical installer is still the only installation path; `HEADLESS=1` is not an installation path.
+Setup needs the framebuffer console. A build without a framebuffer starts GNU bash 5.3 on the tty and is not an installation path.
 
 ---
 
 ## 9. Common issues
 
-### No installer window after booting the ISO
+### Setup lists no disk after booting the ISO
 
-Check the `disks` output for `target`. If it is absent, common causes are:
+Setup asks the kernel for the block devices and only lists disks in the `target` role. If it is absent, common causes are:
 
 - The target disk is NVMe or USB, invisible to the AHCI driver.
 - The target disk already has a Windows/Linux partition table, and the first sector is neither blank nor Zhaoxu-like.
@@ -349,15 +352,15 @@ Check the `disks` output for `target`. If it is absent, common causes are:
 - The target disk is a `ZHAOXUEFI` or `ZHAOXUDATA` volume, which the installer deliberately excludes.
 - The motherboard SATA mode is not AHCI.
 
-If the target disk is present but the window did not open automatically, a data volume or root volume is usually mounted. Click "File" in the menu bar to force the installer open.
+If the disk exists but setup does not list it, press R to rescan; the kernel re-reads the block devices.
 
-### The install button does nothing, or the window disappears
+### Setup stops with "Setup could not finish"
 
-The installer is a separate process, `/bin/apps/install.zxe`. A closed window does not come back on its own; click "File" in the menu bar to reopen it. After a failed install the window turns red, says "系统没有写入目标磁盘。" and shows the kernel's reason (for example a missing target or a failed FAT32 verify); the same reason is available through `SYS_INSTALL_ERROR`.
+The text shows the kernel's reason (for example a missing target or a failed FAT32 verify), the same text `SYS_INSTALL_ERROR` returns. Press ENTER to go back to the layout screens and retry after fixing the disk.
 
 ### Limine reports `Failed to open executable with path`
 
-Limine can only read FAT and ISO9660, so the kernel and its modules must be on the ESP. Fresh installs put `KERNEL.ELF`, `KERNEL.BIN`, `MiSans.ttf` and `WALL.RGB` there next to `limine.conf`. If this panic appears, the ESP is missing one of those files or `limine.conf` points at the wrong partition; reinstall, or mount the ESP on another system and check its contents.
+Limine can only read FAT and ISO9660, so the kernel and its modules must be on the ESP. Fresh installs put `KERNEL.ELF`, `MiSans.ttf` and `WALL.RGB` under `/boot/limine`. If this panic appears, the ESP is missing one of those files or `limine.conf` points at the wrong partition; reinstall, or mount the ESP on another system and check its contents.
 
 ### Limine reports `Failed to open config file`
 
@@ -423,7 +426,7 @@ After installation the target disk should have two visible partitions. The GPT l
 | Partition | Filesystem | Label | Contents |
 | --- | --- | --- | --- |
 | BIOS boot (GPT only), from LBA34 | none | none | Limine stage 2 |
-| ESP, from LBA 2048, 64 MiB max | FAT32 | `ZHAOXUEFI` | Limine files plus `KERNEL.ELF`, `KERNEL.BIN`, `MiSans.ttf`, `WALL.RGB` |
+| ESP, from LBA 2048, 64 MiB max | FAT32 | `ZHAOXUEFI` | Limine files plus `KERNEL.ELF`, `MiSans.ttf`, `WALL.RGB` |
 | ext4 root, after the ESP up to the backup GPT | ext4 | `ZHAOXUROOT` | installed filesystem, no boot files |
 
 On a Linux host you can inspect it like this:
@@ -439,4 +442,4 @@ The first sector of an installed disk is Limine's boot sector, so disk-role dete
 
 Zhaoxu OS / Nexsteaduser
 
-Copyright © 2026 Nexsteaduser. All Rights Reserved
+Copyright (C) 2026 Nexsteaduser, Nexlyh, Tinmc189623. All Rights Reserved.

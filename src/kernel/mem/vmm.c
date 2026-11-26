@@ -133,6 +133,40 @@ static u64 unmap_in(u64 *root, u64 virtual_address)
     return physical;
 }
 
+/* Replace the W/NX bits of one present 4 KiB user page, keeping its frame. */
+static int protect_in(u64 *root, u64 virtual_address, u64 flags)
+{
+    u32 pml4_index = (u32)((virtual_address >> 39) & 0x1FF);
+    u32 pdpt_index = (u32)((virtual_address >> 30) & 0x1FF);
+    u32 pd_index = (u32)((virtual_address >> 21) & 0x1FF);
+    u32 pt_index = (u32)((virtual_address >> 12) & 0x1FF);
+
+    u64 entry = root[pml4_index];
+    if ((entry & (VMM_PRESENT | VMM_USER)) != (VMM_PRESENT | VMM_USER))
+        return -1;
+    u64 *pdpt = table_from_entry(entry);
+    entry = pdpt[pdpt_index];
+    if ((entry & (VMM_PRESENT | VMM_USER)) != (VMM_PRESENT | VMM_USER))
+        return -1;
+    if (entry & (1ULL << 7))
+        return -1;                     /* no large pages in the user heap */
+    u64 *pd = table_from_entry(entry);
+    entry = pd[pd_index];
+    if ((entry & (VMM_PRESENT | VMM_USER)) != (VMM_PRESENT | VMM_USER))
+        return -1;
+    if (entry & (1ULL << 7))
+        return -1;
+    u64 *pt = table_from_entry(entry);
+    u64 *page = &pt[pt_index];
+    if (!(*page & VMM_PRESENT))
+        return -1;
+    u64 address = *page & PTE_ADDRESS_MASK;
+    *page = address | VMM_PRESENT | VMM_USER |
+            (flags & (VMM_WRITABLE | VMM_EXECUTE_DISABLE));
+    __asm__ volatile("invlpg (%0)" :: "r"(virtual_address) : "memory");
+    return 0;
+}
+
 static int page_is_user_in(u64 *root, u64 virtual_address)
 {
     u32 pml4_index = (u32)((virtual_address >> 39) & 0x1FF);
@@ -200,6 +234,14 @@ u64 vmm_space_unmap_page(struct address_space *space, u64 virtual_address)
     if (!space)
         return 0;
     return unmap_in(space->pml4, virtual_address);
+}
+
+int vmm_space_protect_page(struct address_space *space, u64 virtual_address,
+                           u64 flags)
+{
+    if (!space)
+        return -1;
+    return protect_in(space->pml4, virtual_address, flags);
 }
 
 int vmm_space_page_is_user(struct address_space *space, u64 virtual_address)

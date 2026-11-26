@@ -1,0 +1,6 @@
+# securetty(5): terminals root may log in on.
+console
+tty1
+tty2
+tty3
+tty4

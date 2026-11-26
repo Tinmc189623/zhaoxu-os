@@ -23,8 +23,26 @@ image.
   downloads the pinned tarball (SHA-256 `cf5762da…89e1` from the release
   MANIFEST), verifies it, and builds it outside the tree. The `ZHAOXU` kernel
   configuration is applied as an overlay; the upstream source is never edited.
+  Rule 39's FreeBSD 15.1 exception permits direct modification as long as
+  functionality is not weakened; the current port does not need it, and any
+  future change goes through the overlay directory or an explicit note here.
 - CDDL-only parts (`sys/contrib/openzfs`, `sys/cddl`) are excluded from any
   linked image, so GPL-2.0 and CDDL never meet in one binary.
+
+## FreeBSD libcrypt, libmd and SHA-2 (user land)
+
+- Files: `src/third_party/freebsd-libcrypt/` (`libcrypt/`, `libmd/`, `sha2/`)
+  and `src/third_party/freebsd-libcrypt-port/`
+- Source: FreeBSD 15.1-RELEASE, branch `releng/15.1`, fetched file by file from
+  `cgit.freebsd.org`; the files are unmodified
+- License: BSD-2-Clause (libcrypt, SHA-2); `md4c.c`/`md4.h` are RSA-MD
+  (RSA Data Security MD4 terms, retained in the file headers)
+- The port directory supplies only the headers newlib lacks (`sys/endian.h`,
+  `sys/cdefs.h` additions, BSD `err.h` with a real implementation) so the same
+  sources compile for Zhaoxu OS. `crypt()` is the FreeBSD implementation, not a
+  reimplementation; SHA-512, SHA-256 and MD5 crypt plus NT-hash are linked into
+  toybox through `libfbcrypt.a`, and the known-answer tests match `openssl
+  passwd` for `$6$`, `$5$` and `$1$`.
 
 ## font8x8
 

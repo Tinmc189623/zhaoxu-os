@@ -12,7 +12,7 @@ _start:
     test %rax, %rax
     jz 2f
     mov %rax, %rdi
-    movabs $0xffffffff80f00000, %rsp
+    movabs $0xffffffff87f00000, %rsp
     xor %rbp, %rbp
     call kernel_main
 

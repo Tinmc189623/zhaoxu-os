@@ -10,10 +10,16 @@
 #include <console.h>
 #include <dev.h>
 #include <io.h>
+#include <klog.h>
 #include <string.h>
 #include <types.h>
 
 static void (*output_sink)(char c);
+static void (*color_sink)(enum console_color fg, enum console_color bg);
+/* Set once the setup disc's framebuffer console owns the screen: kernel
+ * diagnostics keep going to the log ring and serial but no longer overwrite
+ * the installer's text. */
+static int kernel_screen_muted;
 
 #if DEBUG_SERIAL
 static void debug_serial(const char *text, usize length)
@@ -53,7 +59,22 @@ void console_putc(char c)
     if (output_sink)
         output_sink(c);
     debug_serial(&c, 1);
+    klog_putc(c);
     dev_log_write(&c, 1);
+}
+
+/* Deliver bytes to the screen sink (optionally), the debug UART, the kernel
+ * log ring and the Ring3 log page. */
+static void emit(const char *s, usize length, int to_screen)
+{
+    if (to_screen && output_sink) {
+        for (usize i = 0; i < length; i++)
+            output_sink(s[i]);
+    }
+    debug_serial(s, length);
+    for (usize i = 0; i < length; i++)
+        klog_putc(s[i]);
+    dev_log_write(s, length);
 }
 
 void console_write(const char *s)
@@ -65,27 +86,43 @@ void console_write(const char *s)
 
 void console_write_n(const char *s, usize length)
 {
-    if (output_sink) {
-        for (usize i = 0; i < length; i++)
-            output_sink(s[i]);
-    }
-    debug_serial(s, length);
-    dev_log_write(s, length);
+    emit(s, length, 1);
+}
+
+/* kprintf path: the screen is skipped while the installer owns it. */
+void console_write_kernel(const char *s)
+{
+    if (!s)
+        return;
+    emit(s, strlen(s), kernel_screen_muted ? 0 : 1);
+}
+
+void console_set_kernel_mute(int muted)
+{
+    kernel_screen_muted = muted;
 }
 
 void console_set_color(enum console_color fg, enum console_color bg)
 {
-    (void)fg;
-    (void)bg;
+    if (color_sink)
+        color_sink(fg, bg);
 }
 
 void console_reset_color(void)
 {
+    if (color_sink)
+        color_sink(COLOR_LIGHT_GRAY, COLOR_BLACK);
 }
 
 void console_set_sink(void (*sink)(char c))
 {
     output_sink = sink;
+}
+
+void console_set_color_sink(void (*sink)(enum console_color fg,
+                                         enum console_color bg))
+{
+    color_sink = sink;
 }
 
 u32 console_columns(void)

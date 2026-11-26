@@ -16,7 +16,7 @@ u64 apic_base(void);
 
 void lapic_enable_bsp(void);
 void lapic_enable_ap(void);
-void lapic_eoi(void);
+void yuanshuo_lapic_eoi(void);
 void apic_send_ipi(u32 apic_id, u32 icr_low);
 void apic_start_cpu(u32 apic_id, u32 vector);
 

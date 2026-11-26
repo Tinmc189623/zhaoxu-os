@@ -24,6 +24,7 @@ struct pipe {
     u32 write_pos;
     u32 used;
     u8 *buffer;
+    int pty;          /* pseudo-terminal half, see proc/pty.c */
 };
 
 struct pipe *pipe_create(void)
@@ -176,4 +177,17 @@ short pipe_poll(struct pipe *pipe, int end, short events)
     }
     spin_unlock_irqrestore(&pipe->lock, flags);
     return (short)(ready & events);
+}
+
+/* Pseudo-terminal halves reuse the pipe ring; the flag lets ioctl tell a
+ * terminal from an ordinary pipe without a new descriptor type. */
+void pipe_mark_pty(struct pipe *pipe)
+{
+    if (pipe)
+        pipe->pty = 1;
+}
+
+int pipe_is_pty(const struct pipe *pipe)
+{
+    return pipe && pipe->pty;
 }

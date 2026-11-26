@@ -1,45 +1,19 @@
 /*
- * Zhaoxu OS - graphical installer client for the Ring3 ADE server.
+ * Zhaoxu OS - setup program, in the Windows XP i386 tradition.
  *
- * The flow is deliberately short: pick a blank target disk (auto-selected
- * when there is only one), confirm that its data will be erased, and wait
- * for the kernel installer to finish.  MBR/GPT is an advanced toggle; GPT is
- * the default because the BIOS chain also boots the GPT layout.
+ * Text-mode setup on the kernel console: welcome, licence, disk selection,
+ * layout confirmation, format warning, progress and restart.  The medium runs
+ * setup and nothing else; there is no desktop, no compositor and no live
+ * session to explore.
  */
-#include <ade_client.h>
-#include <ade_protocol.h>
 #include <userlib.h>
 
-#define WINDOW_W 620
-/* The ADE window height includes the title bar and border.  The 460-pixel
- * window leaves a 410-pixel client area, enough for the 402-pixel select
- * screen while still fitting above the Dock on an 800x600 display. */
-#define WINDOW_H 460
 #define MAX_TARGETS 8
-#define VISIBLE_TARGETS 4
-
-#define COLOR_BLUE 0x1E6FB8
-#define COLOR_DARK 0x1B2C3D
-#define COLOR_GRAY 0x51606F
-#define COLOR_PANEL 0xF7FAFD
-#define COLOR_ROW 0xE8F1F9
-#define COLOR_ROW_SELECTED 0xD6E9FA
-#define COLOR_GREEN 0x2E7D32
-#define COLOR_RED 0xC62828
 
 struct target_disk {
     int index;
     unsigned long mib;
-    char model[64];
-};
-
-enum install_state {
-    STATE_SELECT = 0,
-    STATE_LAYOUT,
-    STATE_CONFIRM,
-    STATE_INSTALLING,
-    STATE_DONE,
-    STATE_FAILED
+    char model[56];
 };
 
 static struct target_disk g_targets[MAX_TARGETS];
@@ -47,25 +21,37 @@ static char g_disks[1024];
 static int g_target_count;
 static int g_selected;
 static int g_gpt = 1;
-static int g_advanced;
-static int g_custom;
-static unsigned long g_esp_mib = 64;
-static unsigned long g_data_mib;
-static enum install_state g_state;
-static char g_error[160];
-static struct zos_install_progress *g_progress;
+static int g_data;
 static long g_progress_id;
-static long g_worker_pid;
+static struct zos_install_progress *g_progress;
+static char g_error[128];
 
-static void layout_clamp(void);
+/* ---- small text helpers ------------------------------------------------ */
+
+static void copy_text(char *destination, int capacity, const char *source,
+                      int length)
+{
+    if (length >= capacity)
+        length = capacity - 1;
+    for (int i = 0; i < length; i++)
+        destination[i] = source[i];
+    destination[length] = 0;
+}
+
+static int starts_with(const char *text, const char *prefix)
+{
+    while (*prefix) {
+        if (*text++ != *prefix++)
+            return 0;
+    }
+    return 1;
+}
 
 static unsigned long parse_uint(const char *text, const char **end_out)
 {
     unsigned long value = 0;
-    while (*text == ' ')
-        text++;
     while (*text >= '0' && *text <= '9') {
-        value = value * 10u + (unsigned long)(*text - '0');
+        value = value * 10 + (unsigned long)(*text - '0');
         text++;
     }
     if (end_out)
@@ -73,31 +59,89 @@ static unsigned long parse_uint(const char *text, const char **end_out)
     return value;
 }
 
-static void copy_text(char *destination, int capacity, const char *source,
-                      int length)
+static void put_uint(unsigned long value)
 {
-    int i = 0;
-    for (; i < length && i + 1 < capacity && source[i]; i++)
-        destination[i] = source[i];
-    destination[i] = 0;
+    char digits[24];
+    int at = 0;
+    do {
+        digits[at++] = (char)('0' + value % 10);
+        value /= 10;
+    } while (value && at < (int)sizeof(digits));
+    for (int i = 0; i < at / 2; i++) {
+        char swap = digits[i];
+        digits[i] = digits[at - 1 - i];
+        digits[at - 1 - i] = swap;
+    }
+    digits[at] = 0;
+    u_puts(digits);
 }
 
-/* Parse the text produced by sys_disks().  Each data line is
- * "Idx Port Size MiB Label Role Model"; the role is the sixth field and the
- * model (which may contain spaces) starts at the seventh.  Only "target"
- * disks are offered as install destinations. */
+/* Append a decimal number to a command line under construction. */
+static void append_uint(char *buffer, int *at, unsigned long value)
+{
+    char digits[24];
+    int count = 0;
+    do {
+        digits[count++] = (char)('0' + value % 10);
+        value /= 10;
+    } while (value && count < (int)sizeof(digits));
+    while (count--)
+        buffer[(*at)++] = digits[count];
+}
+
+static void line(const char *text)
+{
+    u_puts(text);
+    u_puts("\n");
+}
+
+/* Push earlier screens off the 80x25 console. */
+static void clear_screen(void)
+{
+    for (int i = 0; i < 30; i++)
+        u_puts("\n");
+}
+
+static void enter_raw_mode(void)
+{
+    struct termios termios;
+    if (sys_ioctl(0, TCGETS, &termios) != 0)
+        return;
+    termios.c_lflag &= ~(ICANON | ECHO | ISIG);
+    sys_ioctl(0, TCSETS, &termios);
+}
+
+/* Raw mode delivers one key per read; letters arrive in either case. */
+static int read_key(void)
+{
+    char key = 0;
+    for (;;) {
+        long got = sys_read(0, &key, 1);
+        if (got == 1)
+            return (unsigned char)key;
+        sys_sleep(5);
+    }
+}
+
+static int key_is(int key, char letter, char upper)
+{
+    return key == letter || key == upper;
+}
+
+/* ---- disk table -------------------------------------------------------- */
+
 static void parse_targets(const char *text)
 {
     g_target_count = 0;
-    const char *line = text;
-    while (*line && g_target_count < MAX_TARGETS) {
-        const char *end = line;
+    const char *cursor = text;
+    while (*cursor && g_target_count < MAX_TARGETS) {
+        const char *end = cursor;
         while (*end && *end != '\n')
             end++;
 
         const char *field[8];
         int count = 0;
-        const char *p = line;
+        const char *p = cursor;
         while (p < end && count < 8) {
             while (p < end && *p == ' ')
                 p++;
@@ -107,40 +151,30 @@ static void parse_targets(const char *text)
             while (p < end && *p != ' ')
                 p++;
         }
-        if (count >= 6) {
-            const char *role = field[5];
-            const char *expect = "target";
-            int matched = 0;
-            while (matched < 6 && role + matched < end &&
-                   role[matched] == expect[matched])
-                matched++;
-            int role_is_target =
-                matched == 6 &&
-                (role + 6 == end || role[6] == ' ');
-            if (role_is_target) {
-                struct target_disk *target = &g_targets[g_target_count++];
-                target->index = (int)parse_uint(field[0], 0);
-                target->mib = parse_uint(field[2], 0);
-                if (count >= 7) {
-                    const char *model = field[6];
-                    int length = (int)(end - model);
-                    while (length > 0 && (model[length - 1] == '\r' ||
-                                          model[length - 1] == ' '))
-                        length--;
-                    copy_text(target->model, sizeof(target->model), model,
-                              length);
-                }
-                if (!target->model[0])
-                    copy_text(target->model, sizeof(target->model), "disk", 4);
+
+        if (count >= 6 && starts_with(field[5], "target") &&
+            (field[5] + 6 == end || field[5][6] == ' ')) {
+            struct target_disk *target = &g_targets[g_target_count++];
+            target->index = (int)parse_uint(field[0], 0);
+            target->mib = parse_uint(field[2], 0);
+            target->model[0] = 0;
+            if (count >= 7) {
+                const char *model = field[6];
+                int length = (int)(end - model);
+                while (length > 0 &&
+                       (model[length - 1] == '\r' || model[length - 1] == ' '))
+                    length--;
+                copy_text(target->model, sizeof(target->model), model, length);
             }
+            if (!target->model[0])
+                copy_text(target->model, sizeof(target->model), "disk", 4);
         }
-        line = *end ? end + 1 : end;
+        cursor = *end ? end + 1 : end;
     }
     if (g_selected >= g_target_count)
         g_selected = 0;
 }
 
-/* Re-read the block device table and rebuild the target list. */
 static int refresh_disks(void)
 {
     long count = sys_disks(g_disks, sizeof(g_disks) - 1);
@@ -152,377 +186,11 @@ static int refresh_disks(void)
         count = (long)sizeof(g_disks) - 1;
     g_disks[count] = 0;
     parse_targets(g_disks);
-    layout_clamp();
     return g_target_count;
 }
 
-static int text_length(const char *text)
-{
-    int length = 0;
-    while (text[length])
-        length++;
-    return length;
-}
+/* ---- setup worker ------------------------------------------------------ */
 
-static void append_text(char *buffer, int capacity, int *at, const char *text)
-{
-    while (*text && *at + 1 < capacity)
-        buffer[(*at)++] = *text++;
-    buffer[*at] = 0;
-}
-
-static void append_uint(char *buffer, int capacity, int *at,
-                        unsigned long value)
-{
-    char digits[24];
-    int count = 0;
-    if (value == 0)
-        digits[count++] = '0';
-    while (value) {
-        digits[count++] = (char)('0' + value % 10u);
-        value /= 10u;
-    }
-    while (count > 0 && *at + 1 < capacity)
-        buffer[(*at)++] = digits[--count];
-    buffer[*at] = 0;
-}
-
-static void target_label(char *buffer, int capacity, int index)
-{
-    int at = 0;
-    buffer[0] = 0;
-    append_text(buffer, capacity, &at, "磁盘 ");
-    append_uint(buffer, capacity, &at,
-                (unsigned long)(g_targets[index].index + 1));
-    append_text(buffer, capacity, &at, "  ");
-    append_uint(buffer, capacity, &at, g_targets[index].mib);
-    append_text(buffer, capacity, &at, " MB  ");
-    append_text(buffer, capacity, &at, g_targets[index].model);
-}
-
-static void draw_button(long channel, int x, int y, int w, int h, u32 color,
-                        const char *text)
-{
-    ade_round(channel, x, y, w, h, 10, color);
-    /* Let the server measure UTF-8 text; counting bytes mis-centres CJK. */
-    ade_text_flags(channel, x + w / 2, y + 16, 0xFFFFFF, ADE_TEXT_CENTER,
-                   text);
-}
-
-static int target_row_y(int index)
-{
-    return 124 + index * 44;
-}
-
-/* Estimated ext4 root size after the 64 MiB boot overhead. */
-static unsigned long layout_root_mib(void)
-{
-    unsigned long disk = g_targets[g_selected].mib;
-    unsigned long used = 4 + g_esp_mib + g_data_mib;
-    return disk > used ? disk - used : 0;
-}
-
-/* Clamp custom sizes to the selected disk (64 MiB minimum root). */
-static void layout_clamp(void)
-{
-    if (g_target_count <= 0)
-        return;
-    unsigned long disk = g_targets[g_selected].mib;
-    if (g_data_mib && disk < g_esp_mib + g_data_mib + 68)
-        g_data_mib = 0;
-    if (disk > 68)
-        g_esp_mib = 64;
-}
-
-/* Cycle the ESP size through 64/128/256 MiB when the disk can hold it. */
-static void cycle_esp(void)
-{
-    unsigned long options[3] = {64, 128, 256};
-    unsigned long disk = g_targets[g_selected].mib;
-    int current = 0;
-    for (int i = 0; i < 3; i++)
-        if (options[i] == g_esp_mib)
-            current = i;
-    for (int step = 1; step <= 3; step++) {
-        unsigned long value = options[(current + step) % 3];
-        if (disk >= value + g_data_mib + 68) {
-            g_esp_mib = value;
-            return;
-        }
-    }
-}
-
-/* Cycle the optional FAT32 data partition through 0/64/128/256 MiB. */
-static void cycle_data(void)
-{
-    unsigned long options[4] = {0, 64, 128, 256};
-    unsigned long disk = g_targets[g_selected].mib;
-    int current = 0;
-    for (int i = 0; i < 4; i++)
-        if (options[i] == g_data_mib)
-            current = i;
-    for (int step = 1; step <= 4; step++) {
-        unsigned long value = options[(current + step) % 4];
-        if (value == 0 || disk >= g_esp_mib + value + 68) {
-            g_data_mib = value;
-            return;
-        }
-    }
-}
-
-/* One partition row: name on the left, filesystem and size on the right. */
-static void draw_layout_row(long channel, int y, const char *name,
-                            const char *detail, int clickable)
-{
-    ade_round(channel, 24, y, 572, 40, 8, COLOR_ROW);
-    ade_text(channel, 38, y + 11, COLOR_DARK, name);
-    ade_text_flags(channel, 570, y + 11, clickable ? COLOR_BLUE : COLOR_GRAY,
-                   ADE_TEXT_RIGHT, detail);
-    if (clickable)
-        ade_cursor(channel, 24, y, 572, 40, "hand");
-}
-
-static void draw_layout(long channel)
-{
-    ade_clear(channel, COLOR_PANEL);
-    ade_fill(channel, 0, 0, WINDOW_W, 72, COLOR_BLUE);
-    ade_text(channel, 24, 16, 0xFFFFFF, "自定义磁盘分区");
-    ade_text(channel, 24, 44, 0xD9ECFF,
-             "系统 ext4，引导/数据区 FAT32。点击行调整。");
-
-    char disk[128];
-    target_label(disk, sizeof(disk), g_selected);
-    ade_text(channel, 24, 88, COLOR_DARK, disk);
-
-    char detail[64];
-    int at = 0;
-    detail[0] = 0;
-    append_text(detail, sizeof(detail), &at, "FAT32 / ");
-    append_uint(detail, sizeof(detail), &at, g_esp_mib);
-    append_text(detail, sizeof(detail), &at, " MB / 点击切换");
-    draw_layout_row(channel, 120, "EFI 系统分区", detail, 1);
-
-    unsigned long root = layout_root_mib();
-    at = 0;
-    detail[0] = 0;
-    append_text(detail, sizeof(detail), &at, "ext4 / ");
-    append_uint(detail, sizeof(detail), &at, root);
-    append_text(detail, sizeof(detail), &at, " MB / 自动");
-    draw_layout_row(channel, 168, "系统分区", detail, 0);
-
-    at = 0;
-    detail[0] = 0;
-    if (g_data_mib) {
-        append_text(detail, sizeof(detail), &at, "FAT32 / ");
-        append_uint(detail, sizeof(detail), &at, g_data_mib);
-        append_text(detail, sizeof(detail), &at, " MB / 点击切换");
-    } else {
-        append_text(detail, sizeof(detail), &at, "无 / 点击添加");
-    }
-    draw_layout_row(channel, 216, "数据分区", detail, 1);
-
-    ade_text(channel, 24, 270, COLOR_GRAY,
-             g_gpt ? "分区表：GPT" : "分区表：MBR（兼容）");
-    if (root < 64)
-        ade_text(channel, 24, 294, COLOR_RED,
-                 "空间不足：系统分区至少保留 64 MB，请减小数据分区。");
-
-    draw_button(channel, 24, 330, 240, 52, COLOR_BLUE, "应用布局");
-    ade_cursor(channel, 24, 330, 240, 52, "hand");
-    ade_round(channel, 284, 330, 180, 52, 10, 0xDCE6EF);
-    ade_text(channel, 330, 346, COLOR_DARK, "取消");
-    ade_cursor(channel, 284, 330, 180, 52, "hand");
-    ade_commit(channel);
-}
-
-static void draw_select(long channel)
-{
-    ade_clear(channel, COLOR_PANEL);
-    ade_fill(channel, 0, 0, WINDOW_W, 72, COLOR_BLUE);
-    ade_text(channel, 24, 16, 0xFFFFFF, "安装 Zhaoxu OS");
-    ade_text(channel, 24, 44, 0xD9ECFF, "单 ISO 安装，无需额外介质");
-
-    ade_text(channel, 24, 92, COLOR_DARK, "目标磁盘");
-    if (g_target_count == 0) {
-        ade_text(channel, 24, 124, COLOR_RED,
-                 "未找到可安装的空白磁盘。请连接一块至少 1 GB 的磁盘。");
-    } else {
-        int visible = g_target_count < VISIBLE_TARGETS ? g_target_count
-                                                       : VISIBLE_TARGETS;
-        for (int i = 0; i < visible; i++) {
-            int y = target_row_y(i);
-            ade_round(channel, 24, y, 572, 38, 8,
-                      i == g_selected ? COLOR_ROW_SELECTED : COLOR_ROW);
-            char label[128];
-            target_label(label, sizeof(label), i);
-            ade_text(channel, 38, y + 10, COLOR_DARK, label);
-            if (i == g_selected)
-                ade_cursor(channel, 24, y, 572, 38, "hand");
-        }
-        if (g_target_count > visible)
-            ade_text(channel, 24, target_row_y(visible), COLOR_GRAY,
-                     "还有更多磁盘，请断开多余磁盘后重试。");
-    }
-
-    if (g_target_count > 0) {
-        char summary[96];
-        int at = 0;
-        summary[0] = 0;
-        append_text(summary, sizeof(summary), &at, "布局：ESP ");
-        append_uint(summary, sizeof(summary), &at, g_esp_mib);
-        append_text(summary, sizeof(summary), &at, " MB / 系统 ");
-        append_uint(summary, sizeof(summary), &at, layout_root_mib());
-        append_text(summary, sizeof(summary), &at, " MB / 数据 ");
-        if (g_data_mib)
-            append_uint(summary, sizeof(summary), &at, g_data_mib);
-        else
-            append_text(summary, sizeof(summary), &at, "无");
-        if (g_data_mib)
-            append_text(summary, sizeof(summary), &at, " MB");
-        ade_text(channel, 24, 286, COLOR_GRAY, summary);
-    }
-
-    ade_text(channel, 24, 318, COLOR_DARK, "分区方案");
-    ade_text(channel, 130, 318, COLOR_GRAY,
-             g_gpt ? "自动 / GPT（推荐）" : "自动 / MBR（兼容）");
-    if (g_advanced) {
-        ade_round(channel, 430, 306, 166, 34, 8, 0xDCE6EF);
-        ade_text(channel, 452, 315, COLOR_DARK,
-                 g_gpt ? "切换为 MBR" : "切换为 GPT");
-        ade_cursor(channel, 430, 306, 166, 34, "hand");
-    } else {
-        ade_text(channel, 430, 318, COLOR_BLUE, "高级选项");
-        ade_cursor(channel, 430, 306, 166, 34, "hand");
-    }
-
-    if (g_target_count > 0) {
-        draw_button(channel, 24, 350, 240, 52, COLOR_BLUE, "安装 Zhaoxu OS");
-        ade_cursor(channel, 24, 350, 240, 52, "hand");
-        ade_round(channel, 276, 350, 150, 52, 10, 0xDCE6EF);
-        ade_text(channel, 296, 366, COLOR_DARK, "自定义分区");
-        ade_cursor(channel, 276, 350, 150, 52, "hand");
-    }
-    ade_round(channel, 438, 350, 158, 52, 10, 0xDCE6EF);
-    ade_text(channel, 470, 366, COLOR_DARK, "刷新磁盘");
-    ade_cursor(channel, 438, 350, 158, 52, "hand");
-    ade_commit(channel);
-}
-
-static void draw_confirm(long channel)
-{
-    ade_clear(channel, COLOR_PANEL);
-    ade_fill(channel, 0, 0, WINDOW_W, 72, COLOR_BLUE);
-    ade_text(channel, 24, 16, 0xFFFFFF, "确认安装");
-
-    ade_text(channel, 24, 100, COLOR_DARK, "即将把 Zhaoxu OS 安装到：");
-    char label[128];
-    target_label(label, sizeof(label), g_selected);
-    ade_text(channel, 32, 132, COLOR_BLUE, label);
-    ade_text(channel, 24, 178, COLOR_RED,
-             "该磁盘上的所有数据将被清空，此操作不可撤销。");
-    char layout_text[128];
-    int at = 0;
-    layout_text[0] = 0;
-    append_text(layout_text, sizeof(layout_text), &at, "ESP ");
-    append_uint(layout_text, sizeof(layout_text), &at, g_esp_mib);
-    append_text(layout_text, sizeof(layout_text), &at, "MB / 系统 ");
-    append_uint(layout_text, sizeof(layout_text), &at, layout_root_mib());
-    append_text(layout_text, sizeof(layout_text), &at, "MB / 数据 ");
-    if (g_data_mib) {
-        append_uint(layout_text, sizeof(layout_text), &at, g_data_mib);
-        append_text(layout_text, sizeof(layout_text), &at, "MB");
-    } else {
-        append_text(layout_text, sizeof(layout_text), &at, "无");
-    }
-    ade_text(channel, 24, 206, COLOR_GRAY, layout_text);
-    ade_text(channel, 24, 234, COLOR_GRAY,
-             g_gpt ? "分区方案：GPT" : "分区方案：MBR");
-    ade_text(channel, 24, 262, COLOR_GRAY,
-             "安装过程中请勿关闭电源或拔出安装介质。");
-
-    ade_round(channel, 24, 300, 180, 52, 10, 0xDCE6EF);
-    ade_text(channel, 82, 316, COLOR_DARK, "返回");
-    ade_cursor(channel, 24, 300, 180, 52, "hand");
-    draw_button(channel, 232, 300, 260, 52, COLOR_RED, "开始安装");
-    ade_cursor(channel, 232, 300, 260, 52, "hand");
-    ade_commit(channel);
-}
-
-static void draw_installing(long channel, unsigned int done,
-                            unsigned int total)
-{
-    ade_clear(channel, COLOR_PANEL);
-    ade_fill(channel, 0, 0, WINDOW_W, 72, COLOR_BLUE);
-    ade_text(channel, 24, 16, 0xFFFFFF, "正在安装 Zhaoxu OS");
-    ade_text(channel, 24, 116, COLOR_DARK,
-             "正在分区、格式化并复制系统文件…");
-    ade_text(channel, 24, 150, COLOR_GRAY,
-             "请勿关闭电源或拔出安装介质。");
-
-    if (total == 0)
-        total = 1;
-    if (done > total)
-        done = total;
-    int width = (int)(572u * done / total);
-    if (width < 9)
-        width = 9;
-    ade_round(channel, 24, 210, 572, 18, 9, 0xDCE6EF);
-    ade_round(channel, 24, 210, width, 18, 9, COLOR_BLUE);
-
-    char label[32];
-    int at = 0;
-    label[0] = 0;
-    append_text(label, sizeof(label), &at, "写入阶段 ");
-    append_uint(label, sizeof(label), &at, done);
-    append_text(label, sizeof(label), &at, " / ");
-    append_uint(label, sizeof(label), &at, total);
-    ade_text(channel, 24, 242, COLOR_GRAY, label);
-    ade_cursor(channel, 0, 0, WINDOW_W, WINDOW_H, "wait");
-    ade_commit(channel);
-}
-
-static void draw_done(long channel)
-{
-    ade_clear(channel, COLOR_PANEL);
-    ade_fill(channel, 0, 0, WINDOW_W, 72, COLOR_GREEN);
-    ade_text(channel, 24, 16, 0xFFFFFF, "安装完成");
-    ade_text(channel, 24, 110, COLOR_DARK,
-             "Zhaoxu OS 已安装到目标磁盘。");
-    ade_text(channel, 24, 144, COLOR_GRAY,
-             "请取出 ISO，然后从目标磁盘启动。");
-    draw_button(channel, 24, 210, 200, 52, COLOR_BLUE, "立即重启");
-    ade_cursor(channel, 24, 210, 200, 52, "hand");
-    ade_round(channel, 244, 210, 200, 52, 10, 0xDCE6EF);
-    ade_text(channel, 266, 226, COLOR_DARK, "关闭安装程序");
-    ade_cursor(channel, 244, 210, 200, 52, "hand");
-    ade_commit(channel);
-}
-
-static void draw_failed(long channel)
-{
-    ade_clear(channel, COLOR_PANEL);
-    ade_fill(channel, 0, 0, WINDOW_W, 72, COLOR_RED);
-    ade_text(channel, 24, 16, 0xFFFFFF, "安装失败");
-    ade_text(channel, 24, 110, COLOR_DARK, "系统没有写入目标磁盘。");
-    ade_text(channel, 24, 144, COLOR_GRAY,
-             g_error[0] ? g_error : "未知错误，请检查磁盘后重试。");
-    draw_button(channel, 24, 210, 200, 52, COLOR_BLUE, "返回");
-    ade_cursor(channel, 24, 210, 200, 52, "hand");
-    ade_commit(channel);
-}
-
-/* Compare a command prefix without pulling in libc. */
-static int starts_with(const char *text, const char *prefix)
-{
-    while (*prefix) {
-        if (*text++ != *prefix++)
-            return 0;
-    }
-    return 1;
-}
-
-/* Worker mode: run the blocking install and publish progress/result into the
- * shared page the UI process mapped before spawning this child. */
 static int worker_main(const char *command)
 {
     const char *cursor = command + 6;
@@ -530,7 +198,7 @@ static int worker_main(const char *command)
     unsigned long disk = parse_uint(cursor, &cursor);
     unsigned long gpt = parse_uint(cursor, &cursor);
     unsigned long esp_mib = parse_uint(cursor, &cursor);
-    unsigned long data_mib = parse_uint(cursor, &cursor);
+    unsigned long data_mib = parse_uint(cursor, 0);
     struct zos_install_progress *progress =
         (struct zos_install_progress *)sys_shm_map((long)id);
     if (!progress)
@@ -552,13 +220,9 @@ static int worker_main(const char *command)
     long result = sys_install_config(&config);
     if (result != 0) {
         sys_install_error(progress->error, sizeof(progress->error) - 1);
-        if (!progress->error[0]) {
-            const char *fallback =
-                result == -3 ? "未找到可安装的空白磁盘。"
-                             : "写入磁盘失败，请检查磁盘后重试。";
-            copy_text(progress->error, sizeof(progress->error), fallback,
-                      text_length(fallback));
-        }
+        if (!progress->error[0])
+            copy_text(progress->error, sizeof(progress->error),
+                      "disk write failed", 16);
     }
     progress->result = (int)result;
     __asm__ volatile("" ::: "memory");
@@ -566,10 +230,212 @@ static int worker_main(const char *command)
     return result == 0 ? 0 : 1;
 }
 
-/* Create the shared progress page and spawn the worker child. */
 static int start_worker(int disk, int gpt)
 {
-    g_progress_id = (long)sys_shm_create(sizeof(struct zos_install_progress));
+    char argument[96];
+    int at = 0;
+    const char *prefix = "worker ";
+    while (*prefix)
+        argument[at++] = *prefix++;
+    append_uint(argument, &at, (unsigned long)g_progress_id);
+    argument[at++] = ' ';
+    append_uint(argument, &at, (unsigned long)disk);
+    argument[at++] = ' ';
+    append_uint(argument, &at, (unsigned long)gpt);
+    argument[at++] = ' ';
+    append_uint(argument, &at, 64UL);            /* ESP size in MiB */
+    argument[at++] = ' ';
+    append_uint(argument, &at, g_data ? 128UL : 0UL);
+    argument[at] = 0;
+    return (int)sys_spawn_arg("/bin/apps/install.zxe", argument);
+}
+
+/* ---- screens ----------------------------------------------------------- */
+
+static void banner(void)
+{
+    clear_screen();
+    line("Setup");
+    line("=====");
+    line("");
+}
+
+static int screen_welcome(void)
+{
+    banner();
+    line("Welcome to Setup.");
+    line("");
+    line("This portion of the Setup program prepares your computer");
+    line("to run the operating system.");
+    line("");
+    line("  ENTER  Begin setup");
+    line("  F3     Quit setup");
+    line("");
+    for (;;) {
+        int key = read_key();
+        if (key == '\r' || key == '\n')
+            return 1;
+        if (key == 0xF3 || key_is(key, 'q', 'Q')) {
+            line("");
+            line("Setup has been cancelled. Remove the disc and restart.");
+            return 0;
+        }
+    }
+}
+
+static int screen_license(void)
+{
+    banner();
+    line("End-User Licence Agreement");
+    line("");
+    line("This system is distributed under the GNU General Public");
+    line("License version 2.  Third-party components keep their own");
+    line("licences.  Installing the system means accepting these terms.");
+    line("");
+    line("  F8     I agree");
+    line("  ESC    I do not agree and quit");
+    line("");
+    for (;;) {
+        int key = read_key();
+        if (key == 0xF8 || key_is(key, 'y', 'Y'))
+            return 1;
+        if (key == 0x1b || key_is(key, 'n', 'N')) {
+            line("");
+            line("Setup has been cancelled. Remove the disc and restart.");
+            return 0;
+        }
+    }
+}
+
+static int screen_disks(void)
+{
+    for (;;) {
+        int count = refresh_disks();
+        banner();
+        line("The following disks can hold the installation.");
+        line("");
+        if (count <= 0) {
+            line("  No installation disk was found.");
+            line("");
+            line("  R      Rescan");
+            line("  F3     Quit setup");
+        } else {
+            for (int i = 0; i < count; i++) {
+                u_puts(i == g_selected ? "  > " : "    ");
+                put_uint((unsigned long)(i + 1));
+                u_puts(". ");
+                u_puts(g_targets[i].model);
+                u_puts("  ");
+                put_uint(g_targets[i].mib);
+                line(" MiB");
+            }
+            line("");
+            line("  Up/Down  Select a disk");
+            line("  ENTER    Continue with the highlighted disk");
+            line("  R        Rescan");
+            line("  F3       Quit setup");
+        }
+        line("");
+
+        int key = read_key();
+        if (key == 0xF3 || key_is(key, 'q', 'Q')) {
+            line("Setup has been cancelled.");
+            return 0;
+        }
+        if (key_is(key, 'r', 'R'))
+            continue;
+        if (count > 0 && key == 0x81)
+            g_selected = (g_selected + count - 1) % count;
+        else if (count > 0 && key == 0x82)
+            g_selected = (g_selected + 1) % count;
+        else if (key >= '1' && key < '1' + count)
+            g_selected = key - '1';
+        else if ((key == '\r' || key == '\n') && count > 0) {
+            line("");
+            u_puts("Selected: ");
+            u_puts(g_targets[g_selected].model);
+            u_puts("  ");
+            put_uint(g_targets[g_selected].mib);
+            line(" MiB");
+            return 1;
+        }
+    }
+}
+
+static int screen_layout(void)
+{
+    for (;;) {
+        banner();
+        line("Installation layout");
+        line("");
+        u_puts("  Disk       ");
+        u_puts(g_targets[g_selected].model);
+        u_puts("  ");
+        put_uint(g_targets[g_selected].mib);
+        line(" MiB");
+        u_puts("  Partition  ");
+        line(g_gpt ? "GPT" : "MBR");
+        u_puts("  Data disk  ");
+        line(g_data ? "yes (optional ZHAOXUDATA)" : "no");
+        line("");
+        line("  ENTER  Install on this layout");
+        line("  T      Switch between GPT and MBR");
+        line("  D      Toggle the optional data partition");
+        line("  ESC    Back to the disk list");
+        line("");
+
+        int key = read_key();
+        if (key == '\r' || key == '\n')
+            return 1;
+        if (key_is(key, 't', 'T'))
+            g_gpt = !g_gpt;
+        else if (key_is(key, 'd', 'D'))
+            g_data = !g_data;
+        else if (key == 0x1b)
+            return 0;
+    }
+}
+
+static int screen_confirm(void)
+{
+    banner();
+    line("Format warning");
+    line("");
+    line("Everything on this disk is erased:");
+    line("");
+    u_puts("  ");
+    u_puts(g_targets[g_selected].model);
+    u_puts("  ");
+    put_uint(g_targets[g_selected].mib);
+    line(" MiB");
+    line("");
+    line("  F      Format the disk and install");
+    line("  ESC    Back");
+    line("");
+    for (;;) {
+        int key = read_key();
+        if (key_is(key, 'f', 'F'))
+            return 1;
+        if (key == 0x1b)
+            return 0;
+    }
+}
+
+static void show_progress(unsigned long done, unsigned long total)
+{
+    line("");
+    u_puts("  Installing: ");
+    put_uint(done);
+    u_puts(" of ");
+    put_uint(total);
+    u_puts(" (");
+    put_uint(total ? done * 100 / total : 0);
+    line("%)");
+}
+
+static int run_install(void)
+{
+    g_progress_id = sys_shm_create(sizeof(struct zos_install_progress));
     if (g_progress_id <= 0)
         return -1;
     g_progress = (struct zos_install_progress *)sys_shm_map(g_progress_id);
@@ -581,76 +447,85 @@ static int start_worker(int disk, int gpt)
     g_progress->result = -1;
     g_progress->error[0] = 0;
 
-    char argument[96];
-    int at = 0;
-    argument[0] = 0;
-    append_text(argument, sizeof(argument), &at, "worker ");
-    append_uint(argument, sizeof(argument), &at, (unsigned long)g_progress_id);
-    append_text(argument, sizeof(argument), &at, " ");
-    append_uint(argument, sizeof(argument), &at, (unsigned long)disk);
-    append_text(argument, sizeof(argument), &at, " ");
-    append_uint(argument, sizeof(argument), &at, (unsigned long)(gpt ? 1 : 0));
-    append_text(argument, sizeof(argument), &at, " ");
-    append_uint(argument, sizeof(argument), &at, g_esp_mib);
-    append_text(argument, sizeof(argument), &at, " ");
-    append_uint(argument, sizeof(argument), &at, g_data_mib);
+    banner();
+    line("Please wait while Setup installs the system.");
+    line("");
+    line("  This takes several minutes.  Do not remove the disc.");
+    show_progress(0, 10);
 
-    g_worker_pid = sys_spawn_arg("/bin/apps/install.zxe", argument);
-    return g_worker_pid > 0 ? 0 : -1;
-}
+    int worker = start_worker(g_targets[g_selected].index, g_gpt);
+    if (worker <= 0)
+        return -1;
 
-static void start_install(long channel)
-{
-    g_state = STATE_INSTALLING;
-    u_puts("[install] installing\n");
-    if (start_worker(g_targets[g_selected].index, g_gpt) != 0) {
-        g_state = STATE_FAILED;
-        copy_text(g_error, sizeof(g_error), "无法启动安装进程。", 24);
-        draw_failed(channel);
-        return;
-    }
-
-    unsigned int last_done = 0xFFFFFFFFu;
-    unsigned int last_total = 0xFFFFFFFFu;
-    draw_installing(channel, 0, 10);
+    unsigned long last_done = 0xFFFFFFFFu;
+    unsigned long last_total = 0xFFFFFFFFu;
     for (;;) {
-        unsigned int done = g_progress->done;
-        unsigned int total = g_progress->total;
+        unsigned long done = g_progress->done;
+        unsigned long total = g_progress->total;
         if (done != last_done || total != last_total) {
+            show_progress(done, total);
             last_done = done;
             last_total = total;
-            draw_installing(channel, done, total);
-        }
-        struct ade_message message;
-        while (ade_poll(channel, &message)) {
-            /* Ignore close/click while the worker owns the disk. */
         }
         if (g_progress->finished)
             break;
-        sys_sleep(20);
+        sys_sleep(100);
     }
     __asm__ volatile("" ::: "memory");
 
     int status = 0;
-    if (g_worker_pid > 0)
-        sys_wait(g_worker_pid, &status);
+    sys_wait(worker, &status);
     if (g_progress->result == 0) {
-        g_state = STATE_DONE;
         u_puts("[install] complete\n");
-        draw_done(channel);
-        return;
+        return 0;
     }
 
-    g_state = STATE_FAILED;
     int at = 0;
     for (; at + 1 < (int)sizeof(g_error) && g_progress->error[at]; at++)
         g_error[at] = g_progress->error[at];
     g_error[at] = 0;
     if (!g_error[0])
-        copy_text(g_error, sizeof(g_error), "写入磁盘失败，请检查磁盘后重试。",
-                  48);
+        copy_text(g_error, sizeof(g_error), "disk write failed", 16);
     u_puts("[install] failed\n");
-    draw_failed(channel);
+    return -1;
+}
+
+static void screen_done(void)
+{
+    banner();
+    line("Setup complete.");
+    line("");
+    line("Setup is complete.  Remove the disc before the");
+    line("machine restarts.");
+    line("");
+    line("  ENTER  Restart now");
+    line("  ESC    Stay here");
+    line("");
+    for (;;) {
+        int key = read_key();
+        if (key == '\r' || key == '\n') {
+            u_puts("[install] rebooting\n");
+            sys_reboot();
+        }
+        if (key == 0x1b)
+            return;
+    }
+}
+
+static void screen_failed(void)
+{
+    banner();
+    line("Setup could not finish.");
+    line("");
+    line(g_error);
+    line("");
+    line("  ENTER  Return to the setup screens");
+    line("");
+    for (;;) {
+        int key = read_key();
+        if (key == '\r' || key == '\n')
+            return;
+    }
 }
 
 int user_main(long *stack)
@@ -661,128 +536,24 @@ int user_main(long *stack)
     if (starts_with(command, "worker "))
         return worker_main(command);
 
-    int force = command[0] == 'f';
-    if (!force && sys_data_volume())
+    /* XP setup colours: light grey text on blue. */
+    sys_console_color(USER_COLOR_LIGHT_GRAY, USER_COLOR_BLUE);
+    enter_raw_mode();
+    if (!screen_welcome())
         return 0;
-
-    if (refresh_disks() <= 0)
+    if (!screen_license())
         return 0;
-
-    long channel = ade_connect();
-    if (channel <= 0)
-        return 1;
-    if (ade_create_window(channel, WINDOW_W, WINDOW_H, "安装", 'I',
-                          COLOR_BLUE) != 0)
-        return 2;
-    u_puts("[install] window ready\n");
-
-    g_state = STATE_SELECT;
-    draw_select(channel);
-
     for (;;) {
-        struct ade_message message;
-        if (!ade_poll(channel, &message)) {
-            sys_sleep(10);
+        if (!screen_disks())
+            return 0;
+        if (!screen_layout())
             continue;
-        }
-        if (message.type == ADE_EV_CLOSE)
-            break;
-        if (message.type != ADE_EV_CLICK)
+        if (!screen_confirm())
             continue;
-
-        if (g_state == STATE_SELECT) {
-            if (message.y >= 306 && message.y < 340 &&
-                message.x >= 430 && message.x < 596) {
-                if (g_advanced)
-                    g_gpt = !g_gpt;
-                else
-                    g_advanced = 1;
-                draw_select(channel);
-                continue;
-            }
-            int visible = g_target_count < VISIBLE_TARGETS ? g_target_count
-                                                           : VISIBLE_TARGETS;
-            for (int i = 0; i < visible; i++) {
-                int y = target_row_y(i);
-                if (message.x >= 24 && message.x < 596 &&
-                    message.y >= y && message.y < y + 38) {
-                    g_selected = i;
-                    layout_clamp();
-                    draw_select(channel);
-                    break;
-                }
-            }
-            if (message.x >= 438 && message.x < 596 && message.y >= 350 &&
-                message.y < 402) {
-                refresh_disks();
-                draw_select(channel);
-                continue;
-            }
-            if (g_target_count > 0 && message.x >= 276 &&
-                message.x < 426 && message.y >= 350 && message.y < 402) {
-                g_state = STATE_LAYOUT;
-                draw_layout(channel);
-                continue;
-            }
-            if (g_target_count > 0 && message.x >= 24 &&
-                message.x < 264 && message.y >= 350 && message.y < 402) {
-                g_state = STATE_CONFIRM;
-                draw_confirm(channel);
-            }
-        } else if (g_state == STATE_LAYOUT) {
-            if (message.x >= 24 && message.x < 596 && message.y >= 120 &&
-                message.y < 160) {
-                cycle_esp();
-                draw_layout(channel);
-                continue;
-            }
-            if (message.x >= 24 && message.x < 596 && message.y >= 216 &&
-                message.y < 256) {
-                cycle_data();
-                draw_layout(channel);
-                continue;
-            }
-            if (message.x >= 24 && message.x < 264 && message.y >= 330 &&
-                message.y < 382) {
-                g_custom = 1;
-                g_state = STATE_SELECT;
-                draw_select(channel);
-                continue;
-            }
-            if (message.x >= 284 && message.x < 464 && message.y >= 330 &&
-                message.y < 382) {
-                g_state = STATE_SELECT;
-                draw_select(channel);
-            }
-        } else if (g_state == STATE_CONFIRM) {
-            if (message.x >= 24 && message.x < 204 && message.y >= 300 &&
-                message.y < 352) {
-                g_state = STATE_SELECT;
-                draw_select(channel);
-            } else if (message.x >= 232 && message.x < 492 &&
-                       message.y >= 300 && message.y < 352) {
-                start_install(channel);
-            }
-        } else if (g_state == STATE_DONE) {
-            if (message.x >= 24 && message.x < 224 && message.y >= 210 &&
-                message.y < 262) {
-                u_puts("[install] rebooting\n");
-                sys_reboot();
-            }
-            if (message.x >= 244 && message.x < 444 && message.y >= 210 &&
-                message.y < 262)
-                break;
-        } else if (g_state == STATE_FAILED) {
-            if (message.x >= 24 && message.x < 224 && message.y >= 210 &&
-                message.y < 262) {
-                g_state = STATE_SELECT;
-                refresh_disks();
-                draw_select(channel);
-            }
+        if (run_install() == 0) {
+            screen_done();
+            return 0;
         }
-        sys_sleep(10);
+        screen_failed();
     }
-
-    sys_port_close(channel);
-    return 0;
 }

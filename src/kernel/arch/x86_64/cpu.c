@@ -1,3 +1,8 @@
+/* 
+ * Copyright (c) 2026 Nexsteaduser. All rights reserved. 
+ * This file is part of the Zhaoxu OS project, which is licensed under the GPL-2.0 License.
+*/
+
 #include <cpu.h>
 #include <kprintf.h>
 #include <string.h>

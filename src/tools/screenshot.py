@@ -250,12 +250,12 @@ def main():
         "-device ide-hd,drive=zdst,bus=ide.5",
     ]
     boot = env_or("SMOKE_BOOT", "esp")
-    # ISO images are named zhaoxu-os_x86-64_{version}_{build}_ld.iso.
-    iso_pattern = os.path.join(win_root, "out", "zhaoxu-os_x86-64_*_ld.iso")
+    # ISO images are named zhaoxu-os_x64_{version}_{build}_ld.iso.
+    iso_pattern = os.path.join(win_root, "out", "zhaoxu-os_x64_*_ld.iso")
     iso_candidates = sorted(glob.glob(iso_pattern))
     iso_file = max(iso_candidates, key=os.path.getmtime) if iso_candidates else None
     if boot.startswith("iso") and not iso_file:
-        abort("out/zhaoxu-os_x86-64_*_ld.iso not found; run `make iso` first")
+        abort("out/zhaoxu-os_x64_*_ld.iso not found; run `make iso` first")
     iso_name = os.path.basename(iso_file) if iso_file else DEFAULT_ISO
     iso_drive = "-cdrom out/" + iso_name
 

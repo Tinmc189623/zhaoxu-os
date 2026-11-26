@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zhaoxu OS 规则考核试卷</title>
+<style>
+  :root {
+    --ink: #1b1f27;
+    --muted: #5b6472;
+    --line: #d8dde5;
+    --accent: #1f6feb;
+    --ok: #16794a;
+    --bad: #b42318;
+    --paper: #fbfbfd;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 16px 64px;
+    background: #eef1f6;
+    color: var(--ink);
+    font: 15px/1.65 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .sheet {
+    max-width: 880px;
+    margin: 0 auto;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 40px 44px 48px;
+    box-shadow: 0 12px 40px rgba(20, 30, 50, .08);
+  }
+  h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: .5px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .meta { display: flex; gap: 24px; flex-wrap: wrap; color: var(--muted);
+          font-size: 13px; border-bottom: 1px solid var(--line);
+          padding-bottom: 14px; margin-bottom: 28px; }
+  h2 { font-size: 17px; margin: 34px 0 10px; padding-left: 10px;
+       border-left: 4px solid var(--accent); }
+  .q { margin: 0 0 20px; padding: 14px 16px; border: 1px solid var(--line);
+       border-radius: 8px; background: #fff; }
+  .q .stem { margin: 0 0 8px; }
+  .q .tag { display: inline-block; font-size: 12px; color: var(--muted);
+            border: 1px solid var(--line); border-radius: 999px;
+            padding: 0 8px; margin-right: 6px; }
+  label.opt { display: block; padding: 3px 0 3px 26px; position: relative;
+              cursor: pointer; }
+  label.opt input { position: absolute; left: 4px; top: 9px; }
+  .note { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .verdict { font-size: 13px; margin-top: 8px; display: none; }
+  .q.right { border-color: #b7e2c9; background: #f4fbf7; }
+  .q.wrong { border-color: #f2c0bb; background: #fdf5f4; }
+  .q.right .verdict { display: block; color: var(--ok); }
+  .q.wrong .verdict { display: block; color: var(--bad); }
+  .actions { display: flex; gap: 12px; align-items: center; margin-top: 26px; }
+  button { font: inherit; padding: 9px 22px; border-radius: 8px;
+           border: 1px solid var(--accent); background: var(--accent);
+           color: #fff; cursor: pointer; }
+  button.ghost { background: #fff; color: var(--accent); }
+  #score { margin-left: auto; font-weight: 600; }
+  #score.pass { color: var(--ok); }
+  #score.fail { color: var(--bad); }
+  footer { margin-top: 36px; padding-top: 14px; border-top: 1px solid var(--line);
+           color: var(--muted); font-size: 12px; text-align: center; }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .sheet { border: 0; box-shadow: none; padding: 0; }
+    button, #score { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <h1>Zhaoxu OS 规则考核试卷</h1>
+  <p class="sub">依据 <code>RULES.local.md</code>、<code>RULES.md</code>（v1.14.3，含规则 1–55）、ISO / ESP / Disk 示例，以及 `CLAUDE.md` 的优先级声明。</p>
+  <div class="meta">
+    <span>题型：单选 / 多选</span>
+    <span>满分：100 分（每题 4 分，共 25 题）</span>
+    <span>及格：80 分</span>
+  </div>
+
+  <h2>一、身份与命名</h2>
+
+  <div class="q" data-type="single" data-answer="b">
+    <p class="stem"><span class="tag">规则 1</span>微内核、操作系统、混合内核的名称依次是？</p>
+    <label class="opt"><input type="radio" name="q1" value="a">a. Zhaoxu、Yuanshuo、IO/287</label>
+    <label class="opt"><input type="radio" name="q1" value="b">b. Yuanshuo、Zhaoxu OS、OS_5P</label>
+    <label class="opt"><input type="radio" name="q1" value="c">c. Yuanshuo、Zhaoxu、Desktop Window Manager</label>
+    <label class="opt"><input type="radio" name="q1" value="d">d. Mach、XNU、IOKit</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="single" data-answer="c">
+    <p class="stem"><span class="tag">规则 1</span>OS_5P 的三部分组成是？</p>
+    <label class="opt"><input type="radio" name="q2" value="a">a. Yuanshuo、Linux、IOKit</label>
+    <label class="opt"><input type="radio" name="q2" value="b">b. Zhaoxu、BSD、GTK</label>
+    <label class="opt"><input type="radio" name="q2" value="c">c. Yuanshuo、IO/287、BSD</label>
+    <label class="opt"><input type="radio" name="q2" value="d">d. Yuanshuo、Kext、Arbor</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="multi" data-answer="a,c,d">
+    <p class="stem"><span class="tag">规则 1</span>属于规定名称、且必须逐字保持的有哪些？</p>
+    <label class="opt"><input type="checkbox" name="q3" value="a">a. Desktop Window Compositor</label>
+    <label class="opt"><input type="checkbox" name="q3" value="b">b. Yuanshuo Shell</label>
+    <label class="opt"><input type="checkbox" name="q3" value="c">c. Desktop Window Manager</label>
+    <label class="opt"><input type="checkbox" name="q3" value="d">d. Aqua Desktop Environment</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="single" data-answer="a">
+    <p class="stem"><span class="tag">规则 44</span>关于操作系统中文名，正确的是？</p>
+    <label class="opt"><input type="radio" name="q4" value="a">a. 无中文名，禁止编造</label>
+    <label class="opt"><input type="radio" name="q4" value="b">b. 必须有官方中文名</label>
+    <label class="opt"><input type="radio" name="q4" value="c">c. 可由 AI 起名后使用</label>
+    <label class="opt"><input type="radio" name="q4" value="d">d. 中文名由社区投票决定</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="single" data-answer="b">
+    <p class="stem"><span class="tag">优先级</span>规则文件冲突时的优先级顺序是？</p>
+    <label class="opt"><input type="radio" name="q5" value="a">a. AGENTS.md &gt; CLAUDE.md &gt; RULES.md</label>
+    <label class="opt"><input type="radio" name="q5" value="b">b. RULES.local.md &gt; ~/.claude/CLAUDE.md &gt; RULES.md &gt; CLAUDE.md &gt;&gt; AGENTS.md</label>
+    <label class="opt"><input type="radio" name="q5" value="c">c. RULES.md &gt; RULES.local.md &gt; CLAUDE.md</label>
+    <label class="opt"><input type="radio" name="q5" value="d">d. 以代码实现为准</label>
+    <div class="verdict"></div>
+  </div>
+
+  <h2>二、平台与工具链</h2>
+
+  <div class="q" data-type="multi" data-answer="a,b,c">
+    <p class="stem"><span class="tag">规则 5</span>按规则，下列哪些语言的使用位置是正确的？</p>
+    <label class="opt"><input type="checkbox" name="q6" value="a">a. C 用于 Yuanshuo 内核</label>
+    <label class="opt"><input type="checkbox" name="q6" value="b">b. C++ 用于内核以外的所有应用</label>
+    <label class="opt"><input type="checkbox" name="q6" value="c">c. Ada 用于驱动</label>
+    <label class="opt"><input type="checkbox" name="q6" value="d">d. C++ 用于内核核心</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="multi" data-answer="a,b,c">
+    <p class="stem"><span class="tag">规则 6</span>仓库脚本允许的语言与来源是？</p>
+    <label class="opt"><input type="checkbox" name="q7" value="a">a. Python</label>
+    <label class="opt"><input type="checkbox" name="q7" value="b">b. sh</label>
+    <label class="opt"><input type="checkbox" name="q7" value="c">c. ps1</label>
+    <label class="opt"><input type="checkbox" name="q7" value="d">d. 允许人工手写任意语言脚本</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="single" data-answer="c">
+    <p class="stem"><span class="tag">规则 30</span>用户态基础命令的来源是？</p>
+    <label class="opt"><input type="radio" name="q8" value="a">a. busybox</label>
+    <label class="opt"><input type="radio" name="q8" value="b">b. 自研命令集</label>
+    <label class="opt"><input type="radio" name="q8" value="c">c. toybox</label>
+    <label class="opt"><input type="radio" name="q8" value="d">d. GNU coreutils 直接静态链接</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="single" data-answer="d">
+    <p class="stem"><span class="tag">规则 1</span>默认 Shell 与禁止事项是？</p>
+    <label class="opt"><input type="radio" name="q9" value="a">a. 默认自研 Shell</label>
+    <label class="opt"><input type="radio" name="q9" value="b">b. 默认 bash，csh 可省略</label>
+    <label class="opt"><input type="radio" name="q9" value="c">c. 默认 zsh</label>
+    <label class="opt"><input type="radio" name="q9" value="d">d. 默认 csh，另有 bash 与 Voyage；严禁自研 Shell</label>
+    <div class="verdict"></div>
+  </div>
+
+  <h2>三、内核与启动链</h2>
+
+  <div class="q" data-type="multi" data-answer="a,b,d">
+    <p class="stem"><span class="tag">规则 31</span>按现行引导链，顺序中出现的组件包括？</p>
+    <label class="opt"><input type="checkbox" name="q10" value="a">a. Limine 引导管理器</label>
+    <label class="opt"><input type="checkbox" name="q10" value="b">b. OS_5P + Kext 加载 + vga10h.kext</label>
+    <label class="opt"><input type="checkbox" name="q10" value="c">c. GRUB → systemd</label>
+    <label class="opt"><input type="checkbox" name="q10" value="d">d. Orchestrd(PID1) → 合成器 + Thresh → 登录 → Voyage</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="single" data-answer="b">
+    <p class="stem"><span class="tag">规则 9 / 25</span>关于内核二进制，正确的是？</p>
+    <label class="opt"><input type="radio" name="q11" value="a">a. 内核可写入 BOOTX64.EFI</label>
+    <label class="opt"><input type="radio" name="q11" value="b">b. 内核必须是干净二进制，不得放入驱动或应用，也不得写入 BOOTX64.EFI</label>
+    <label class="opt"><input type="radio" name="q11" value="c">c. 驱动可编进内核以简化启动</label>
+    <label class="opt"><input type="radio" name="q11" value="d">d. 用户程序可运行在 Ring0</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="multi" data-answer="a,b,c">
+    <p class="stem"><span class="tag">规则 50 / 51 / 52</span>关于 kext 与 BSD 子系统，正确的是？</p>
+    <label class="opt"><input type="checkbox" name="q12" value="a">a. kext 直接加载进内核地址空间、运行在内核态</label>
+    <label class="opt"><input type="checkbox" name="q12" value="b">b. kext 格式与 macOS XNU 的 kext 完全不兼容</label>
+    <label class="opt"><input type="checkbox" name="q12" value="c">c. VFS、TCP/IP、cdev、pf、NFS 静态编译进 OS_5P 内核</label>
+    <label class="opt"><input type="checkbox" name="q12" value="d">d. NKE 属于 IO/287 驱动</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="single" data-answer="a">
+    <p class="stem"><span class="tag">规则 49</span>用户态驱动的正确形态是？</p>
+    <label class="opt"><input type="radio" name="q13" value="a">a. `.udrv` 包，包内可执行体为 ZXE</label>
+    <label class="opt"><input type="radio" name="q13" value="b">b. 单个裸 ELF</label>
+    <label class="opt"><input type="radio" name="q13" value="c">c. `.ko` 内核模块</label>
+    <label class="opt"><input type="radio" name="q13" value="d">d. `.kext` 包</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="single" data-answer="d">
+    <p class="stem"><span class="tag">规则 11</span>ISO 文件的命名示例是？</p>
+    <label class="opt"><input type="radio" name="q14" value="a">a. zhaoxu-os_x86-64_{version}_{build}_ld.iso</label>
+    <label class="opt"><input type="radio" name="q14" value="b">b. zhaoxu_{version}.iso</label>
+    <label class="opt"><input type="radio" name="q14" value="c">c. zhaoxu-os-amd64-{version}.iso</label>
+    <label class="opt"><input type="radio" name="q14" value="d">d. zhaoxu-os_x64_{version}_{build}_ld.iso</label>
+    <div class="verdict"></div>
+  </div>
+
+  <h2>四、文件系统与安装介质</h2>
+
+  <div class="q" data-type="multi" data-answer="a,b,c">
+    <p class="stem"><span class="tag">规则 21 / 45</span>必须完整支持的文件系统与默认根文件系统是？</p>
+    <label class="opt"><input type="checkbox" name="q15" value="a">a. FAT32</label>
+    <label class="opt"><input type="checkbox" name="q15" value="b">b. ext4</label>
+    <label class="opt"><input type="checkbox" name="q15" value="c">c. btrfs，且为默认文件系统</label>
+    <label class="opt"><input type="checkbox" name="q15" value="d">d. NTFS 必须作为默认</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="single" data-answer="b">
+    <p class="stem"><span class="tag">规则 48</span>根目录布局须遵守？</p>
+    <label class="opt"><input type="radio" name="q16" value="a">a. 自定义目录随意</label>
+    <label class="opt"><input type="radio" name="q16" value="b">b. FHS 3.0+</label>
+    <label class="opt"><input type="radio" name="q16" value="c">c. Filesystem Hierarchy Standard 2.3</label>
+    <label class="opt"><input type="radio" name="q16" value="d">d. Windows 目录习惯</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="multi" data-answer="a,b,c">
+    <p class="stem"><span class="tag">ISO 示例</span>`casper/` 目录中列出的文件包括？</p>
+    <label class="opt"><input type="checkbox" name="q17" value="a">a. filesystem.squashfs 与 initrd.img</label>
+    <label class="opt"><input type="checkbox" name="q17" value="b">b. kernel.elf、manifest、uuid</label>
+    <label class="opt"><input type="checkbox" name="q17" value="c">c. vga10h.kext（内核态通用显卡驱动）</label>
+    <label class="opt"><input type="checkbox" name="q17" value="d">d. install/ 目录下的 KERNEL.BIN</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="single" data-answer="c">
+    <p class="stem"><span class="tag">规则 27 / 28</span>安装方式与 ESP 格式要求是？</p>
+    <label class="opt"><input type="radio" name="q18" value="a">a. 需要软盘辅助安装，ESP 用 ext4</label>
+    <label class="opt"><input type="radio" name="q18" value="b">b. 双 ISO 安装，ESP 用 btrfs</label>
+    <label class="opt"><input type="radio" name="q18" value="c">c. 单 ISO 完成安装，ESP 必须 FAT32</label>
+    <label class="opt"><input type="radio" name="q18" value="d">d. 需要网络安装，ESP 格式不限</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="multi" data-answer="a,b,d">
+    <p class="stem"><span class="tag">规则 15 / 17 / 18</span>下列要求成立的是？</p>
+    <label class="opt"><input type="checkbox" name="q19" value="a">a. 同时支持 MBR 与 GPT</label>
+    <label class="opt"><input type="checkbox" name="q19" value="b">b. 字体仅限 MiSans、MiSans Global、Inter</label>
+    <label class="opt"><input type="checkbox" name="q19" value="c">c. 字体渲染可用自研引擎替代 FreeType</label>
+    <label class="opt"><input type="checkbox" name="q19" value="d">d. 字体渲染引擎必须移植使用 FreeType</label>
+    <div class="verdict"></div>
+  </div>
+
+  <h2>五、图形、应用与包管理</h2>
+
+  <div class="q" data-type="single" data-answer="b">
+    <p class="stem"><span class="tag">规则 34 / 54</span>图形栈与 UI 框架的规定是？</p>
+    <label class="opt"><input type="radio" name="q20" value="a">a. 应用直接往屏幕写像素，UI 框架用 GTK</label>
+    <label class="opt"><input type="radio" name="q20" value="b">b. 应用渲染到缓冲区并经合成器输出，UI 框架为 Qt 6</label>
+    <label class="opt"><input type="radio" name="q20" value="c">c. 合成器可省略，UI 框架不限</label>
+    <label class="opt"><input type="radio" name="q20" value="d">d. 图形 API 只能用 OpenGL</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="single" data-answer="c">
+    <p class="stem"><span class="tag">规则 55</span>Arbor 的包后缀与两个清单文件是？</p>
+    <label class="opt"><input type="radio" name="q21" value="a">a. `.pkg`，package.json / lock.json</label>
+    <label class="opt"><input type="radio" name="q21" value="b">b. `.deb`，control / rules</label>
+    <label class="opt"><input type="radio" name="q21" value="c">c. `.arb`，arbor.toml / pkg.toml</label>
+    <label class="opt"><input type="radio" name="q21" value="d">d. `.tar.zst`，manifest / index</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="multi" data-answer="a,b,c">
+    <p class="stem"><span class="tag">规则 37 / 38 / 24</span>图形 API 的要求是？</p>
+    <label class="opt"><input type="checkbox" name="q22" value="a">a. Vulkan 为默认图形渲染 API</label>
+    <label class="opt"><input type="checkbox" name="q22" value="b">b. OpenGL 作为兼容项，但必须完整移植</label>
+    <label class="opt"><input type="checkbox" name="q22" value="c">c. 系统图形 API 为 Z64</label>
+    <label class="opt"><input type="checkbox" name="q22" value="d">d. 可用自研 API 替换 Vulkan</label>
+    <div class="verdict"></div>
+  </div>
+
+  <h2>六、流程、版权与第三方</h2>
+
+  <div class="q" data-type="single" data-answer="a">
+    <p class="stem"><span class="tag">规则 35</span>版权声明模板（英文）是？</p>
+    <label class="opt"><input type="radio" name="q23" value="a">a. Copyright (C) &lt;YEAR&gt; Nexsteaduser, Nexlyh, &lt;your-name&gt;. All Rights Reserved.</label>
+    <label class="opt"><input type="radio" name="q23" value="b">b. Copyright 2026, All rights reserved.</label>
+    <label class="opt"><input type="radio" name="q23" value="c">c. (c) Zhaoxu OS contributors</label>
+    <label class="opt"><input type="radio" name="q23" value="d">d. Public Domain</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="multi" data-answer="a,b,d">
+    <p class="stem"><span class="tag">规则 39 / 42</span>关于第三方的规定是？</p>
+    <label class="opt"><input type="checkbox" name="q24" value="a">a. 第三方按原样提供，可裁剪，不得自行更改</label>
+    <label class="opt"><input type="checkbox" name="q24" value="b">b. FreeBSD 15.1 例外：可直接修改，但不能削弱功能</label>
+    <label class="opt"><input type="checkbox" name="q24" value="c">c. 可以自研一个“第三方”并对外宣称是第三方</label>
+    <label class="opt"><input type="checkbox" name="q24" value="d">d. 严禁自研第三方再冒充第三方</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="q" data-type="multi" data-answer="b,c,d">
+    <p class="stem"><span class="tag">RULES.local.md</span>个人规则的两条要求是？</p>
+    <label class="opt"><input type="checkbox" name="q25" value="a">a. 允许 AI 任务完成后自动 commit</label>
+    <label class="opt"><input type="checkbox" name="q25" value="b">b. 必须写上团队与个人版权信息</label>
+    <label class="opt"><input type="checkbox" name="q25" value="c">c. 禁止 AI 自动提交或推送，只有用户明确要求才可 commit/push</label>
+    <label class="opt"><input type="checkbox" name="q25" value="d">d. 本规则文件禁止上传至仓库</label>
+    <div class="verdict"></div>
+  </div>
+
+  <div class="actions">
+    <button id="submit">交卷</button>
+    <button id="reset" class="ghost">重考</button>
+    <span id="score"></span>
+  </div>
+
+  <footer>
+    Copyright (C) 2026 Nexsteaduser, Nexlyh, Tinmc189623. All Rights Reserved.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  function selected(q) {
+    var values = [];
+    var inputs = q.querySelectorAll("input");
+    for (var i = 0; i < inputs.length; i++) {
+      if (inputs[i].checked) values.push(inputs[i].value);
+    }
+    return values.sort().join(",");
+  }
+
+  function grade() {
+    var questions = document.querySelectorAll(".q");
+    var right = 0;
+    for (var i = 0; i < questions.length; i++) {
+      var q = questions[i];
+      var expected = q.getAttribute("data-answer");
+      var actual = selected(q);
+      var verdict = q.querySelector(".verdict");
+      var ok = actual === expected;
+      q.classList.toggle("right", ok);
+      q.classList.toggle("wrong", !ok);
+      if (verdict) {
+        verdict.textContent = ok
+          ? "正确。"
+          : "错误。正确答案：" + expected.replace(/,/g, "、") + "；你的选择：" + (actual || "未作答") + "。";
+      }
+      if (ok) right++;
+    }
+    var score = right * 4;
+    var box = document.getElementById("score");
+    box.textContent = right + "/" + questions.length + " 题正确，得分 " + score + " / 100" +
+      (score >= 80 ? "，通过。" : "，未通过（及格 80）。");
+    box.className = score >= 80 ? "pass" : "fail";
+  }
+
+  function reset() {
+    var questions = document.querySelectorAll(".q");
+    for (var i = 0; i < questions.length; i++) {
+      questions[i].classList.remove("right", "wrong");
+      var verdict = questions[i].querySelector(".verdict");
+      if (verdict) verdict.textContent = "";
+      var inputs = questions[i].querySelectorAll("input");
+      for (var j = 0; j < inputs.length; j++) inputs[j].checked = false;
+    }
+    var box = document.getElementById("score");
+    box.textContent = "";
+    box.className = "";
+  }
+
+  document.getElementById("submit").addEventListener("click", grade);
+  document.getElementById("reset").addEventListener("click", reset);
+})();
+</script>
+</body>
+</html>

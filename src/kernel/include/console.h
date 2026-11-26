@@ -31,6 +31,14 @@ void console_write_n(const char *s, usize length);
 void console_set_color(enum console_color fg, enum console_color bg);
 void console_reset_color(void);
 void console_set_sink(void (*sink)(char c));
+/* Optional screen console that honours text colours (the setup disc's
+ * framebuffer console); char sinks only receive glyphs, not attributes. */
+void console_set_color_sink(void (*sink)(enum console_color fg,
+                                         enum console_color bg));
+/* Keep kernel diagnostics (kprintf) off the screen while a text installer
+ * owns it; the log ring and serial still receive them. */
+void console_write_kernel(const char *s);
+void console_set_kernel_mute(int muted);
 u32 console_columns(void);
 u32 console_rows(void);
 int console_has_framebuffer(void);

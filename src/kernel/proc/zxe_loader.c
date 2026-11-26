@@ -610,6 +610,22 @@ int zxe_load_image(struct process *process, const u8 *image, u64 image_size,
         release_context(ctx);
         return -1;
     }
+    /* The program break starts after the highest mapped module, so a brk
+     * heap can never overlap an ASLR-placed dependency. */
+    u64 heap = 0;
+    for (u32 i = 0; i < ctx->module_count; i++) {
+        u64 end = ctx->modules[i].base +
+                  ALIGN_UP(ctx->modules[i].header->image_size, 0x10000ULL);
+        if (end > heap)
+            heap = end;
+    }
+    heap = ALIGN_UP(heap, PAGE_SIZE);
+    ctx->process->brk_start = heap;
+    ctx->process->brk_current = heap;
+    u64 limit = heap + 0x10000000ULL;      /* 256 MiB heap ceiling */
+    ctx->process->brk_limit =
+        limit < ZXE_USER_END ? limit : ZXE_USER_END;
+
     *entry_out = ctx->modules[0].base + ctx->modules[0].header->entry_rva;
     release_context(ctx);
     return 0;

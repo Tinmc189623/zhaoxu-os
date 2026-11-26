@@ -16,6 +16,7 @@
 #include <personality.h>
 #include <personality_freebsd.h>
 #include <types.h>
+#include <vfs.h>
 
 #define PMAP_PROBE_PATTERN 0x5A4F5331504D4150ULL  /* "ZOS1PMAP" */
 
@@ -50,6 +51,13 @@ int freebsd_pmap_init(const struct boot_info *bi)
     return 0;
 }
 
+/* Rule 51: the BSD layer registers its vnode-backed provider here once its
+ * VFS is up; the core stops serving path operations at that point. */
+static int freebsd_vfs_register(const struct zx_vfs_provider *provider)
+{
+    return vfs_set_provider(provider);
+}
+
 /* Fill the table once; every entry points at an existing core function. */
 static void services_init(const struct boot_info *bi)
 {
@@ -72,13 +80,14 @@ static void services_init(const struct boot_info *bi)
     g_services.ipc_create = personality_ipc_create;
     g_services.ipc_send = personality_ipc_send;
     g_services.ipc_recv = personality_ipc_recv;
+    g_services.vfs_register = freebsd_vfs_register;
 }
 
 /* Replaced by the machine port (M2) once the personality is linked. */
 __attribute__((weak))
-int freebsd_personality_main(const struct boot_info *bi)
+int freebsd_personality_port_start(struct zx_core_services *services)
 {
-    (void)bi;
+    (void)services;
     kprintf("[bsd ] personality entry not linked\n");
     return -1;
 }
@@ -96,5 +105,5 @@ int freebsd_personality_start(const struct boot_info *bi)
     kprintf("[bsd ] pmap window PASS\n");
 
     kprintf("[bsd ] handing off to the FreeBSD personality\n");
-    return freebsd_personality_main(bi);
+    return freebsd_personality_port_start(&g_services);
 }

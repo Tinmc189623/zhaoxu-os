@@ -19,6 +19,22 @@
 #include <types.h>
 #include <vfs.h>
 
+/* Rule 51: the BSD layer owns VFS.  The personality registers a provider
+ * once its vnode layer is up; while the pointer is NULL the core serves the
+ * live root. */
+static const struct zx_vfs_provider *g_provider;
+
+int vfs_set_provider(const struct zx_vfs_provider *provider)
+{
+    g_provider = provider;
+    return 0;
+}
+
+const char *vfs_provider_name(void)
+{
+    return g_provider ? g_provider->name : "yuanshuo";
+}
+
 extern int mntfs_mount_data(void);
 extern const char *mntfs_type(void);
 extern const char *mntfs_label(void);
@@ -248,6 +264,21 @@ int vfs_mounts_text(char *buffer, usize capacity)
     return (int)used;
 }
 
+/* Publish the runtime copy of os-release.  Unix systems create
+ * /run/os-release from the early boot path; there is no userspace PID 1 yet,
+ * so the core copies it once /run is a tmpfs. */
+static void publish_run_os_release(void)
+{
+    static u8 copy[1024];
+    u64 size = 0;
+
+    if (vfs_read_into("/etc/os-release", copy, sizeof(copy), &size) == 0 &&
+        size > 0 && vfs_write_file("/run/os-release", copy, size) == 0)
+        kprintf("[vfs ] /run/os-release published (%llu bytes)\n", size);
+    else
+        kprintf("[vfs ] /run/os-release unavailable\n");
+}
+
 int vfs_init(void)
 {
     memset(g_mounts, 0, sizeof(g_mounts));
@@ -262,6 +293,7 @@ int vfs_init(void)
 
     tmpfs_mount("/tmp", "tmpfs");
     tmpfs_mount("/run", "tmpfs");
+    publish_run_os_release();
     ramfs_mount_at("/ram", "ramfs");
     procfs_mount();
     sysfs_mount();
@@ -349,6 +381,8 @@ static int list_mount_children(const char *normalized,
 
 int vfs_list(const char *path, vfs_list_cb callback, void *context)
 {
+    if (g_provider && g_provider->list)
+        return g_provider->list(path, (zx_list_fn)callback, context);
     char normalized[VFS_PATH_MAX];
     char rel[VFS_PATH_MAX];
     if (!callback ||
@@ -372,6 +406,8 @@ int vfs_list(const char *path, vfs_list_cb callback, void *context)
 
 int vfs_stat(const char *path, int *is_dir, u64 *size)
 {
+    if (g_provider && g_provider->stat)
+        return g_provider->stat(path, is_dir, (zx_u64 *)size);
     char rel[VFS_PATH_MAX];
     const struct vfs_mount *mount = resolve_path(path, rel, sizeof(rel));
     if (!mount || !mount->ops->stat)
@@ -393,6 +429,18 @@ int vfs_read_all(const char *path, u8 **buffer, u64 *size)
     u8 *data = kmalloc(total ? (usize)total : 1);
     if (!data)
         return -1;
+
+    if (g_provider && g_provider->read_at) {
+        zx_u64 got = 0;
+        int rc = g_provider->read_at(path, 0, data, total, &got);
+        if (rc != 0 || got != total) {
+            kfree(data);
+            return -1;
+        }
+        *buffer = data;
+        *size = total;
+        return 0;
+    }
 
     char rel[VFS_PATH_MAX];
     const struct vfs_mount *mount = resolve_path(path, rel, sizeof(rel));
@@ -423,6 +471,13 @@ int vfs_read_at(const char *path, u64 offset, u8 *dst, u64 cap,
 {
     if (!dst && cap)
         return -1;
+    if (g_provider && g_provider->read_at) {
+        zx_u64 got = 0;
+        int rc = g_provider->read_at(path, offset, dst, cap, &got);
+        if (rc == 0 && read_out)
+            *read_out = got;
+        return rc;
+    }
     char rel[VFS_PATH_MAX];
     const struct vfs_mount *mount = resolve_path(path, rel, sizeof(rel));
     if (!mount || !mount->ops->read)
@@ -440,6 +495,19 @@ int vfs_read_into(const char *path, u8 *dst, u64 cap, u64 *read_out)
 {
     if (!dst && cap)
         return -1;
+    if (g_provider && g_provider->read_at) {
+        u64 offset = 0;
+        while (offset < cap) {
+            zx_u64 got = 0;
+            if (g_provider->read_at(path, offset, dst + offset, cap - offset,
+                                     &got) != 0 || !got)
+                break;
+            offset += got;
+        }
+        if (read_out)
+            *read_out = offset;
+        return offset ? 0 : -1;
+    }
     char rel[VFS_PATH_MAX];
     const struct vfs_mount *mount = resolve_path(path, rel, sizeof(rel));
     if (!mount || !mount->ops->read)
@@ -462,6 +530,8 @@ int vfs_read_into(const char *path, u8 *dst, u64 cap, u64 *read_out)
 
 int vfs_write_file(const char *path, const u8 *data, u64 size)
 {
+    if (g_provider && g_provider->write_file)
+        return g_provider->write_file(path, data, size);
     char rel[VFS_PATH_MAX];
     const struct vfs_mount *mount = resolve_path(path, rel, sizeof(rel));
     if (!mount || !mount->ops->write || !rel[0])
@@ -471,11 +541,59 @@ int vfs_write_file(const char *path, const u8 *data, u64 size)
 
 int vfs_unlink(const char *path)
 {
+    if (g_provider && g_provider->unlink)
+        return g_provider->unlink(path);
     char rel[VFS_PATH_MAX];
     const struct vfs_mount *mount = resolve_path(path, rel, sizeof(rel));
     if (!mount || !mount->ops->unlink || !rel[0])
         return -1;
     return mount->ops->unlink(mount->private, rel);
+}
+
+int vfs_mkdir(const char *path)
+{
+    if (g_provider) {
+        if (!g_provider->mkdir)
+            return -1;
+        return g_provider->mkdir(path);
+    }
+    char rel[VFS_PATH_MAX];
+    const struct vfs_mount *mount = resolve_path(path, rel, sizeof(rel));
+    if (!mount || !mount->ops->mkdir || !rel[0])
+        return -1;
+    return mount->ops->mkdir(mount->private, rel);
+}
+
+int vfs_rmdir(const char *path)
+{
+    if (g_provider) {
+        if (!g_provider->rmdir)
+            return -1;
+        return g_provider->rmdir(path);
+    }
+    char rel[VFS_PATH_MAX];
+    const struct vfs_mount *mount = resolve_path(path, rel, sizeof(rel));
+    if (!mount || !mount->ops->rmdir || !rel[0])
+        return -1;
+    return mount->ops->rmdir(mount->private, rel);
+}
+
+int vfs_rename(const char *from, const char *to)
+{
+    if (g_provider) {
+        if (!g_provider->rename)
+            return -1;
+        return g_provider->rename(from, to);
+    }
+    char from_rel[VFS_PATH_MAX];
+    char to_rel[VFS_PATH_MAX];
+    const struct vfs_mount *from_mount =
+        resolve_path(from, from_rel, sizeof(from_rel));
+    const struct vfs_mount *to_mount = resolve_path(to, to_rel, sizeof(to_rel));
+    if (!from_mount || from_mount != to_mount || !from_mount->ops->rename ||
+        !from_rel[0] || !to_rel[0])
+        return -1;
+    return from_mount->ops->rename(from_mount->private, from_rel, to_rel);
 }
 
 int vfs_open(const char *path)

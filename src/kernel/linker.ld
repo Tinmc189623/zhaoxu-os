@@ -3,7 +3,10 @@ OUTPUT_FORMAT(elf64-x86-64)
 ENTRY(_start)
 
 KERNEL_VMA = 0xffffffff80000000;
-KERNEL_STACK_TOP = 0xffffffff80f00000;
+/* The FreeBSD personality links into this image: text 5.5 MiB, rodata 0.8 MiB,
+ * data 0.7 MiB, bss 84 MiB.  The boot stack window sits above it; limine_boot
+ * maps the 2 MiB page that holds the top at a BSS array. */
+KERNEL_STACK_TOP = 0xffffffff87f00000;
 
 SECTIONS
 {
@@ -14,6 +17,29 @@ SECTIONS
         KEEP(*(.text.entry))
         *(.text .text.*)
     }
+    /* FreeBSD objects reference the end of text and the dynamic section. */
+    PROVIDE(_etext = .);
+    PROVIDE(etext = .);
+    PROVIDE(_DYNAMIC = 0);
+
+    /* The FreeBSD set_* orphan sections land right after .text; start them on
+     * a fresh page so no segment shares a page with a different permission
+     * (Limine refuses that: "different permissions sharing the same page"). */
+    . = ALIGN(4096);
+
+    /* lld places the dynamic relocation table at the exact end of .text, and
+     * as a read-only orphan it drags the R segment back into the last text
+     * page (0x...556bc0 instead of 0x...557000).  Pin it to a fresh page. */
+    .rela.dyn : ALIGN(4096)
+    {
+        *(.rela.dyn)
+        *(.rela.plt)
+        *(.rela.*)
+    }
+
+    /* clang emits .note.gnu.property into the FreeBSD objects; it would start
+     * a read-only segment inside the last text page.  Nothing reads it. */
+    /DISCARD/ : { *(.note.gnu.property) *(.note.*) }
 
     .rodata : ALIGN(4096)
     {
@@ -35,6 +61,7 @@ SECTIONS
         *(.data .data.*)
         KEEP(*(.limine_requests))
     }
+    PROVIDE(edata = .);
 
     .bss : ALIGN(4096)
     {
@@ -44,20 +71,21 @@ SECTIONS
         __bss_end = .;
     }
 
-    /* FreeBSD personality sets (M2).  Each set keeps its own output section
-     * so the linker synthesizes __start_set_<name>/__stop_set_<name>; the
-     * sections stay empty until the FreeBSD objects are linked. */
-    .set_sysinit : ALIGN(8) { KEEP(*(set_sysinit)) }
-    .set_sysuninit : ALIGN(8) { KEEP(*(set_sysuninit)) }
-    .set_sysctl : ALIGN(8) { KEEP(*(set_sysctl)) }
-    .set_pcpu : ALIGN(8) { KEEP(*(set_pcpu)) }
-    .set_sdt_tracepoint : ALIGN(8) { KEEP(*(set_sdt_tracepoint)) }
+    /* FreeBSD personality sets (M2) are left as orphan sections on purpose:
+     * their input names (set_sysinit, set_pcpu, ...) are C identifiers, so the
+     * linker synthesizes __start_set_<name>/__stop_set_<name> for them.  An
+     * explicit ".set_*" output section would suppress that. */
 
     __kernel_end = .;
     _end = .;
-    /* FreeBSD's ldscript PROVIDEs this; pmap.o references it. */
-    PROVIDE(brsection = .);
+    PROVIDE(end = .);
+    /* FreeBSD's ldscript provides these; pmap.c and the build-id prologue
+     * reference them. */
+    PROVIDE(brwsection = .);
+    PROVIDE(__build_id_start = .);
+    PROVIDE(__build_id_end = .);
 
-    ASSERT(__kernel_end < KERNEL_STACK_TOP - 0x100000,
-           "kernel image exceeds the reserved 15 MiB window")
+    /* Keep the image clear of the 2 MiB boot-stack mapping below the top. */
+    ASSERT(__kernel_end < KERNEL_STACK_TOP - 0x200000,
+           "kernel image exceeds the reserved kernel window")
 }

@@ -44,3 +44,12 @@ u64 timer_uptime_seconds(void)
 {
     return ticks / frequency;
 }
+
+/* Monotonic nanoseconds since boot, used by clock_gettime and futex
+ * absolute timeouts. */
+u64 timer_now_ns(void)
+{
+    u64 now = ticks;
+    return now / frequency * 1000000000ULL +
+           (now % frequency) * 1000000000ULL / frequency;
+}

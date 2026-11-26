@@ -268,6 +268,84 @@ int wramfs_unlink(struct wramfs *fs, const char *rel)
     return 0;
 }
 
+/* Create one directory; an existing name is an error, not a copy-up. */
+int wramfs_mkdir(struct wramfs *fs, const char *rel)
+{
+    if (!fs || !rel || !rel[0])
+        return -1;
+    int is_dir = 0;
+    u64 size = 0;
+    if (wramfs_stat(fs, rel, &is_dir, &size) == 0)
+        return -1;
+    return create(fs, rel, 1) ? 0 : -1;
+}
+
+/* Remove an empty directory; the root and non-empty nodes stay. */
+int wramfs_rmdir(struct wramfs *fs, const char *rel)
+{
+    struct wramfs_node *node = lookup(fs, rel);
+    if (!node || node == fs->root || !node->is_dir || node->children)
+        return -1;
+    return wramfs_unlink(fs, rel);
+}
+
+/* Move one node under an existing destination directory. */
+int wramfs_rename(struct wramfs *fs, const char *from, const char *to)
+{
+    if (!fs || !from || !to || !from[0] || !to[0])
+        return -1;
+    struct wramfs_node *node = lookup(fs, from);
+    if (!node || node == fs->root)
+        return -1;
+    if (wramfs_stat(fs, to, NULL, NULL) == 0)
+        return -1;
+
+    /* Moving a directory into its own subtree would detach the tree. */
+    usize from_length = strlen(from);
+    if (node->is_dir && strncmp(to, from, from_length) == 0 &&
+        (to[from_length] == 0 || to[from_length] == '/'))
+        return -1;
+
+    char parent_path[VFS_PATH_MAX];
+    usize length = strlen(to);
+    if (length >= sizeof(parent_path))
+        return -1;
+    memcpy(parent_path, to, length + 1);
+    char *slash = NULL;
+    for (usize i = 0; i < length; i++)
+        if (parent_path[i] == '/')
+            slash = &parent_path[i];
+    const char *name = to;
+    struct wramfs_node *parent = fs->root;
+    if (slash) {
+        *slash = '\0';
+        name = slash + 1;
+        parent = lookup(fs, parent_path);
+        /* The destination directory may live only in the lower layer of a
+         * copy-up root; materialize it before the move. */
+        if (!parent)
+            parent = create(fs, parent_path, 1);
+        if (!parent || !parent->is_dir)
+            return -1;
+    }
+    if (!name[0] || strlen(name) >= WRAMFS_NAME)
+        return -1;
+
+    struct wramfs_node **link = &node->parent->children;
+    while (*link && *link != node)
+        link = &(*link)->next;
+    if (*link != node)
+        return -1;
+    *link = node->next;
+
+    strncpy(node->name, name, sizeof(node->name) - 1);
+    node->name[sizeof(node->name) - 1] = 0;
+    node->parent = parent;
+    node->next = parent->children;
+    parent->children = node;
+    return 0;
+}
+
 static int ramfs_op_list(void *private, const char *rel,
                          vfs_list_cb callback, void *context)
 {

@@ -7,6 +7,7 @@
  */
 #include "process_internal.h"
 #include "io_syscall.h"
+#include "posix_abi.h"
 
 #include <boot.h>
 #include <console.h>
@@ -16,6 +17,7 @@
 #include <install.h>
 #include <io.h>
 #include <ipc.h>
+#include <klog.h>
 #include <kprintf.h>
 #include <mem.h>
 #include <memfd.h>
@@ -26,7 +28,9 @@
 #include <string.h>
 #include <thread.h>
 #include <timer.h>
+#include <pty.h>
 #include <tty.h>
+#include <zfd.h>
 #include <types.h>
 #include <vfs.h>
 
@@ -111,6 +115,37 @@
 #define SYS_IOCTL           76
 #define SYS_STAT            77
 #define SYS_GETPPID         78
+#define SYS_CONSOLE_COLOR   79
+#define SYS_PTY             80
+#define SYS_KLOG            81
+#define SYS_MKDIR           82
+#define SYS_RMDIR           83
+#define SYS_RENAME          84
+#define SYS_BRK             85
+#define SYS_MPROTECT        86
+#define SYS_MADVISE         87
+#define SYS_ARCH_PRCTL      88
+#define SYS_SET_TID_ADDRESS 89
+#define SYS_GETTID          90
+#define SYS_EXIT_GROUP      91
+#define SYS_FUTEX           92
+#define SYS_RT_SIGACTION    93
+#define SYS_RT_SIGPROCMASK  94
+#define SYS_RT_SIGRETURN    95
+#define SYS_TGKILL          96
+#define SYS_KILL            97
+#define SYS_GETRANDOM       98
+#define SYS_CLOCK_GETTIME   99
+#define SYS_SET_ROBUST_LIST 100
+#define SYS_PRLIMIT64       101
+#define SYS_GETRLIMIT       102
+#define SYS_UNAME           103
+#define SYS_ACCESS          104
+#define SYS_READLINK        105
+#define SYS_LAST_ERROR      112
+
+#define ARCH_SET_FS 0x1002
+#define ARCH_GET_FS 0x1003
 
 #define BLK_SECTOR_BYTES 512u
 #define BLK_MAX_SECTORS  8u
@@ -145,23 +180,6 @@ int user_range_ok(struct process *process, u64 pointer, u64 length)
     return 1;
 }
 
-static int copy_user_string(struct process *process, char *destination,
-                            usize capacity, u64 source)
-{
-    if (!capacity)
-        return -1;
-    for (usize i = 0; i < capacity; i++) {
-        if (user_range_ok(process, source + i, 1) != 1)
-            return -1;
-        char character = *(const char *)(uintptr_t)(source + i);
-        destination[i] = character;
-        if (character == 0)
-            return 0;
-    }
-    destination[capacity - 1] = 0;
-    return -1;
-}
-
 static long syscall_write(struct process *process, u64 descriptor, u64 buffer,
                           u64 length)
 {
@@ -184,7 +202,7 @@ static long syscall_write(struct process *process, u64 descriptor, u64 buffer,
 static long syscall_open(struct process *process, u64 path_pointer)
 {
     char path[256];
-    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
+    if (copy_path_from_user(process, path, sizeof(path), path_pointer) != 0)
         return -1;
     return vfs_open(path);
 }
@@ -257,7 +275,7 @@ static long syscall_stat(struct process *process, u64 path_pointer,
                          u64 is_dir_pointer, u64 size_pointer)
 {
     char path[256];
-    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
+    if (copy_path_from_user(process, path, sizeof(path), path_pointer) != 0)
         return -1;
 
     int is_dir = 0;
@@ -288,10 +306,39 @@ static long syscall_ioctl(struct process *process, u64 descriptor, u64 request,
     if (fd < 0)
         return -1;
     if (fd < 3) {
-        /* A redirected stdio number is a pipe/socket, not the terminal. */
-        if (process->stdio[fd] >= 0)
+        /* A redirected stdio number is a pipe/socket; only a pty end still
+         * answers terminal ioctls, so bash can run interactively. */
+        if (process->stdio[fd] >= 0) {
+            struct zfd_entry *entry = zfd_get(process, process->stdio[fd]);
+            if (!entry || entry->type != ZFD_TYPE_PIPE)
+                return -1;
+            struct tty_termios *termios =
+                pty_termios_of((struct pipe *)entry->object);
+            struct tty_winsize *win = pty_winsize_of((struct pipe *)entry->object);
+            if (!termios)
+                return -1;
+            if (request == TTY_TCGETS) {
+                if (user_range_ok(process, argument, sizeof(*termios)) != 1)
+                    return -1;
+                return process_user_write(process, argument, termios,
+                                          sizeof(*termios)) == 0 ? 0 : -1;
+            }
+            if (request == TTY_TCSETS) {
+                if (user_range_ok(process, argument, sizeof(*termios)) != 1)
+                    return -1;
+                memcpy(termios, (const void *)(uintptr_t)argument,
+                       sizeof(*termios));
+                return 0;
+            }
+            if (request == TTY_TIOCGWINSZ && win) {
+                if (user_range_ok(process, argument, sizeof(*win)) != 1)
+                    return -1;
+                return process_user_write(process, argument, win,
+                                          sizeof(*win)) == 0 ? 0 : -1;
+            }
             return -1;
-        return tty_ioctl(process, fd, request, argument);
+        }
+        return yuanshuo_tty_ioctl(process, fd, request, argument);
     }
     return -1;
 }
@@ -299,7 +346,7 @@ static long syscall_ioctl(struct process *process, u64 descriptor, u64 request,
 static long syscall_spawn(struct process *process, u64 path_pointer)
 {
     char path[256];
-    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
+    if (copy_path_from_user(process, path, sizeof(path), path_pointer) != 0)
         return -1;
     return (long)process_spawn(path, 0, NULL);
 }
@@ -309,9 +356,9 @@ static long syscall_spawn_arg(struct process *process, u64 path_pointer,
 {
     char path[256];
     char argument[256];
-    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
+    if (copy_path_from_user(process, path, sizeof(path), path_pointer) != 0)
         return -1;
-    if (copy_user_string(process, argument, sizeof(argument), arg_pointer) != 0)
+    if (copy_path_from_user(process, argument, sizeof(argument), arg_pointer) != 0)
         return -1;
     char *argv[1] = {argument};
     return (long)process_spawn(path, 1, argv);
@@ -324,7 +371,7 @@ static long syscall_exec(struct process *process, struct interrupt_frame *frame,
                          u64 path_pointer, u64 argv_pointer, u64 argc)
 {
     char path[256];
-    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
+    if (copy_path_from_user(process, path, sizeof(path), path_pointer) != 0)
         return -1;
 
     int count = (int)argc;
@@ -346,7 +393,7 @@ static long syscall_exec(struct process *process, struct interrupt_frame *frame,
                (const void *)(uintptr_t)(argv_pointer + (u64)i * 8),
                sizeof(u64));
         if (!string_pointer ||
-            copy_user_string(process, arguments[i], sizeof(arguments[i]),
+            copy_path_from_user(process, arguments[i], sizeof(arguments[i]),
                              string_pointer) != 0)
             return -1;
         argv[i] = arguments[i];
@@ -509,7 +556,7 @@ static long syscall_read_path(struct process *process, u64 path_pointer,
                               u64 buffer_pointer, u64 capacity)
 {
     char path[256];
-    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
+    if (copy_path_from_user(process, path, sizeof(path), path_pointer) != 0)
         return -1;
     if (capacity > 16u * 1024 * 1024)
         capacity = 16u * 1024 * 1024;
@@ -552,7 +599,7 @@ static long syscall_readdir(struct process *process, u64 path_pointer,
                             u64 buffer_pointer, u64 capacity)
 {
     char path[256];
-    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
+    if (copy_path_from_user(process, path, sizeof(path), path_pointer) != 0)
         return -1;
     if (capacity == 0 || capacity > 65536)
         return -1;
@@ -768,7 +815,7 @@ static long syscall_write_file(struct process *process, u64 path_pointer,
                                u64 data_pointer, u64 size)
 {
     char path[256];
-    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
+    if (copy_path_from_user(process, path, sizeof(path), path_pointer) != 0)
         return -1;
     /* /mnt, /tmp and /run are writable; no backend takes a file above
      * VFS_WRITE_MAX (the ext4 service buffer is exactly that big), so
@@ -792,9 +839,88 @@ static long syscall_write_file(struct process *process, u64 path_pointer,
 static long syscall_unlink(struct process *process, u64 path_pointer)
 {
     char path[256];
-    if (copy_user_string(process, path, sizeof(path), path_pointer) != 0)
+    if (copy_path_from_user(process, path, sizeof(path), path_pointer) != 0)
         return -1;
     return vfs_unlink(path) == 0 ? 0 : -1;
+}
+
+static long syscall_mkdir(struct process *process, u64 path_pointer)
+{
+    char path[256];
+    if (copy_path_from_user(process, path, sizeof(path), path_pointer) != 0)
+        return -1;
+    return vfs_mkdir(path) == 0 ? 0 : -1;
+}
+
+static long syscall_rmdir(struct process *process, u64 path_pointer)
+{
+    char path[256];
+    if (copy_path_from_user(process, path, sizeof(path), path_pointer) != 0)
+        return -1;
+    return vfs_rmdir(path) == 0 ? 0 : -1;
+}
+
+/* brk: grow or shrink the heap pages recorded by the ZXE loader. */
+static long syscall_brk(struct process *process, u64 requested)
+{
+    return (long)process_brk(process, requested);
+}
+
+/* Anonymous mappings are tried first; anything else is a memfd mapping. */
+static long syscall_munmap(struct process *process, u64 address, u64 length)
+{
+    if (process_anon_munmap(process, address, length) == 0)
+        return 0;
+    return sys_ipc_munmap(process, address, length);
+}
+
+static long syscall_mprotect(struct process *process, u64 address, u64 length,
+                             u64 prot)
+{
+    return process_anon_mprotect(process, address, length, (u32)prot);
+}
+
+static long syscall_madvise(struct process *process, u64 address, u64 length,
+                            u64 advice)
+{
+    return process_anon_madvise(process, address, length, (int)advice);
+}
+
+/* arch_prctl: FS base only.  GS is not modelled and returns -ENOSYS so a
+ * caller can fall back instead of silently running with a wrong base. */
+static long syscall_arch_prctl(struct process *process, u64 code, u64 address)
+{
+    struct thread *thread = sched_current();
+    if (!thread)
+        return -1;
+    if (code == ARCH_SET_FS) {
+        if (!address || address >= USER_ADDRESS_LIMIT)
+            return -22;
+        thread_set_fs_base(thread, address);
+        if (process)
+            process->fs_base = address;
+        return 0;
+    }
+    if (code == ARCH_GET_FS) {
+        u64 base = thread_get_fs_base(thread);
+        if (user_range_ok(process, address, sizeof(base)) != 1)
+            return -14;
+        return process_user_write(process, address, &base, sizeof(base)) == 0
+                   ? 0
+                   : -14;
+    }
+    return -38;
+}
+
+static long syscall_rename(struct process *process, u64 from_pointer,
+                           u64 to_pointer)
+{
+    char from[256];
+    char to[256];
+    if (copy_path_from_user(process, from, sizeof(from), from_pointer) != 0 ||
+        copy_path_from_user(process, to, sizeof(to), to_pointer) != 0)
+        return -1;
+    return vfs_rename(from, to) == 0 ? 0 : -1;
 }
 
 /* 1 when a data/root volume is mounted at /mnt (ext4 or the FAT32
@@ -880,6 +1006,47 @@ static long syscall_map_phys(struct process *process, u64 physical, u64 size)
         }
     }
     return (long)address;
+}
+
+/* klogctl: copy the kernel log ring out (types follow the Linux ABI). */
+static long syscall_klog(struct process *process, u64 type, u64 buffer,
+                         u64 length)
+{
+    switch (type) {
+    case 0:                            /* CLOSE */
+    case 1:                            /* OPEN */
+        return 0;
+    case 5:                            /* CLEAR */
+        klog_clear();
+        return 0;
+    case 9:                            /* SIZE_UNREAD */
+        return (long)klog_size();
+    case 10:                           /* SIZE_BUFFER */
+        return (long)KLOG_BYTES;
+    case 2:                            /* READ */
+    case 3:                            /* READ_ALL */
+    case 4: {                          /* READ_CLEAR */
+        if (!buffer)
+            return -1;
+        u32 wanted = length > (1u << 20) ? (1u << 20) : (u32)length;
+        if (wanted == 0)
+            return 0;
+        if (user_range_ok(process, buffer, wanted) != 1)
+            return -1;
+        char *scratch = kmalloc(wanted);
+        if (!scratch)
+            return -1;
+        u32 copied = klog_read(scratch, wanted, type == 4);
+        long result = copied;
+        if (copied > 0 &&
+            process_user_write(process, buffer, scratch, copied) != 0)
+            result = -1;
+        kfree(scratch);
+        return result;
+    }
+    default:
+        return -1;
+    }
 }
 
 static long syscall_rtc(struct process *process, u64 time_pointer)
@@ -981,7 +1148,7 @@ static long syscall_blk_flush(struct process *process, u64 disk)
 static long syscall_port_listen(struct process *process, u64 name_pointer)
 {
     char name[IPC_NAME_MAX];
-    if (copy_user_string(process, name, sizeof(name), name_pointer) != 0)
+    if (copy_path_from_user(process, name, sizeof(name), name_pointer) != 0)
         return -1;
     return (long)ipc_listen(name);
 }
@@ -989,7 +1156,7 @@ static long syscall_port_listen(struct process *process, u64 name_pointer)
 static long syscall_port_connect(struct process *process, u64 name_pointer)
 {
     char name[IPC_NAME_MAX];
-    if (copy_user_string(process, name, sizeof(name), name_pointer) != 0)
+    if (copy_path_from_user(process, name, sizeof(name), name_pointer) != 0)
         return -1;
     return (long)ipc_connect(name);
 }
@@ -1044,7 +1211,8 @@ void syscall_dispatch(struct interrupt_frame *frame)
     }
 
     long result = -1;
-    switch (frame->rax) {
+    u64 number = frame->rax;
+    switch (number) {
     case SYS_EXIT:
         process_exit_current((int)frame->rdi);
         return;
@@ -1118,10 +1286,10 @@ void syscall_dispatch(struct interrupt_frame *frame)
         result = (long)shm_create(frame->rdi);
         break;
     case SYS_SHM_MAP:
-        result = (long)shm_map(frame->rdi);
+        result = (long)yuanshuo_shm_map(frame->rdi);
         break;
     case SYS_SHM_UNMAP:
-        result = shm_unmap(frame->rdi);
+        result = yuanshuo_shm_unmap(frame->rdi);
         break;
     case SYS_SHM_CLOSE:
         result = shm_close(frame->rdi);
@@ -1249,7 +1417,20 @@ void syscall_dispatch(struct interrupt_frame *frame)
         result = sys_ipc_mmap(process, frame->rdi);
         break;
     case SYS_MUNMAP:
-        result = sys_ipc_munmap(process, frame->rdi, frame->rsi);
+        result = syscall_munmap(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_MPROTECT:
+        result = syscall_mprotect(process, frame->rdi, frame->rsi, frame->rdx);
+        break;
+    case SYS_MADVISE:
+        result = syscall_madvise(process, frame->rdi, frame->rsi, frame->rdx);
+        break;
+    case SYS_ARCH_PRCTL:
+        result = syscall_arch_prctl(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_FUTEX:
+        result = sys_futex(process, frame->rdi, frame->rsi, frame->rdx,
+                           frame->r10, frame->r8);
         break;
     case SYS_FCNTL:
         result = sys_ipc_fcntl(process, frame->rdi, frame->rsi, frame->rdx);
@@ -1305,10 +1486,101 @@ void syscall_dispatch(struct interrupt_frame *frame)
     case SYS_INSTALL_CONFIG:
         result = syscall_install_config(process, frame->rdi);
         break;
+    case SYS_CONSOLE_COLOR:
+        /* Setup paints the XP-style blue screen through this. */
+        console_set_color((enum console_color)frame->rdi,
+                          (enum console_color)frame->rsi);
+        result = 0;
+        break;
+    case SYS_PTY:
+        result = pty_create(process, frame->rdi);
+        break;
+    case SYS_KLOG:
+        result = syscall_klog(process, frame->rdi, frame->rsi, frame->rdx);
+        break;
+    case SYS_MKDIR:
+        result = syscall_mkdir(process, frame->rdi);
+        break;
+    case SYS_RMDIR:
+        result = syscall_rmdir(process, frame->rdi);
+        break;
+    case SYS_RENAME:
+        result = syscall_rename(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_BRK:
+        result = syscall_brk(process, frame->rdi);
+        break;
+    case SYS_SET_TID_ADDRESS:
+        result = sys_set_tid_address(process, frame->rdi);
+        break;
+    case SYS_GETTID:
+        result = sys_gettid();
+        break;
+    case SYS_EXIT_GROUP:
+        sys_exit_group(process, (int)frame->rdi);
+        return;
+    case SYS_GETRANDOM:
+        result = sys_getrandom(process, frame->rdi, frame->rsi, frame->rdx);
+        break;
+    case SYS_CLOCK_GETTIME:
+        result = sys_clock_gettime(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_SET_ROBUST_LIST:
+        result = sys_set_robust_list(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_PRLIMIT64:
+        result = sys_prlimit64(process, frame->rdi, frame->rsi, frame->rdx,
+                               frame->r10);
+        break;
+    case SYS_GETRLIMIT:
+        result = sys_getrlimit(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_UNAME:
+        result = sys_uname(process, frame->rdi);
+        break;
+    case SYS_ACCESS:
+        result = sys_access(process, frame->rdi, frame->rsi);
+        break;
+    case SYS_READLINK:
+        result = sys_readlink(process, frame->rdi, frame->rsi, frame->rdx);
+        break;
+    case SYS_LAST_ERROR:
+        result = sys_last_error();
+        break;
+    case SYS_RT_SIGACTION:
+        result = sys_rt_sigaction(process, frame->rdi, frame->rsi, frame->rdx,
+                                  frame->r10);
+        break;
+    case SYS_RT_SIGPROCMASK:
+        result = sys_rt_sigprocmask(process, frame->rdi, frame->rsi,
+                                    frame->rdx, frame->r10);
+        break;
+    case SYS_RT_SIGRETURN:
+        result = sys_rt_sigreturn(process, frame);
+        frame->rax = (u64)result;
+        return;
+    case SYS_TGKILL:
+        result = sys_tgkill(process, frame->rdi, frame->rsi, frame->rdx);
+        break;
+    case SYS_KILL:
+        result = sys_kill(process, frame->rdi, frame->rsi);
+        break;
     default:
-        result = -1;
+        /* Unknown modern numbers report ENOSYS; legacy numbers keep -1 so
+         * the old convention stays intact. */
+        result = number >= 86 ? -38 : -1;
         break;
     }
+    /* Legacy calls (0-85) only report -1; record EIO so SYS_LAST_ERROR has
+     * something truthful to return.  Calls 86 and up already return -errno. */
+    if (result == -1 && number <= SYS_BRK) {
+        struct thread *current = sched_current();
+        if (current)
+            current->last_error = 5;
+    }
     frame->rax = (u64)result;
+    /* Deliver on the way back to Ring3 so the handler sees the completed
+     * syscall in the saved context. */
+    signal_deliver(process, frame);
 }
 

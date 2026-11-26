@@ -29,7 +29,7 @@ import unicodedata
 from pathlib import Path
 
 DEFAULT_DISTRO = "Ubuntu-26.04"
-DEFAULT_ISO = "zhaoxu-os_x86-64_0.7.20_2026-11-16_ld.iso"
+DEFAULT_ISO = "zhaoxu-os_x64_0.7.20_2026-11-16_ld.iso"
 
 _INT_RE = re.compile(rb"\A[ \t\n\v\f\r]*([+-]?)(\d[\d_]*)")
 _INSPECT_ESCAPES = {
@@ -135,8 +135,8 @@ def main():
         "-drive if=none,id=zdst,format=raw,file=out/target.img",
         "-device ide-hd,drive=zdst,bus=ide.1",
     ]
-    # ISO images are named zhaoxu-os_x86-64_{version}_{build-date}_ld.iso.
-    iso_pattern = os.path.join(win_root, "out", "zhaoxu-os_x86-64_*_ld.iso")
+    # ISO images are named zhaoxu-os_x64_{version}_{build-date}_ld.iso.
+    iso_pattern = os.path.join(win_root, "out", "zhaoxu-os_x64_*_ld.iso")
     iso_candidates = sorted(glob.glob(iso_pattern))
     iso_file = max(iso_candidates, key=os.path.getmtime) if iso_candidates else None
     iso_name = os.path.basename(iso_file) if iso_file else DEFAULT_ISO
@@ -147,7 +147,7 @@ def main():
     boot = env_or("SMOKE_BOOT", "iso")
     fw = env_or("SMOKE_FW", "uefi")
     if boot.startswith("iso") and not iso_file:
-        abort("out/zhaoxu-os_x86-64_*_ld.iso not found; run `make iso` first")
+        abort("out/zhaoxu-os_x64_*_ld.iso not found; run `make iso` first")
 
     if boot == "iso":
         drives = iso_drives

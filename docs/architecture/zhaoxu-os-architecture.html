@@ -250,21 +250,21 @@ Legacy  : SeaBIOS → limine-bios-cd.bin / MBR stage1 → stage2 → limine.conf
 <p>内嵌 initramfs 由 <code>tools/initramfs-compress.rb</code> 压成 ZIR1 包装的 zlib 流，内核在挂载 rootfs 之前解压，这保证 legacy BIOS 的 <code>install/KERNEL.BIN</code> 控制在 stage 2 的 448 KiB 缓冲之内。</p>
 
 <div class="note">
-  <b>Limine 12 没有 ext4 驱动。</b>已安装系统的 <code>KERNEL.ELF</code>、<code>KERNEL.BIN</code>、<code>MiSans.ttf</code>、<code>WALL.RGB</code> 全部放在 ESP 根目录，ext4 的 <code>ZHAOXUROOT</code> 不承载任何引导文件。
+  <b>Limine 12 没有 ext4 驱动。</b>已安装系统的 <code>KERNEL.ELF</code>、<code>MiSans.ttf</code>、<code>WALL.RGB</code> 全部放在 ESP 的 <code>/boot/limine</code> 目录，ext4 的 <code>ZHAOXUROOT</code> 不承载任何引导文件。
 </div>
 
 <h2>2.3 地址布局</h2>
 <table>
   <tr><th style="width:46mm">区域</th><th>地址</th><th>说明</th></tr>
   <tr><td>内核 VMA</td><td class="mono">0xffffffff80000000</td><td>kernel.elf 链接基址</td></tr>
-  <tr><td>内核栈顶</td><td class="mono">0xffffffff80f00000</td><td>BSS 栈窗口，五处定义必须同步</td></tr>
+  <tr><td>内核栈顶</td><td class="mono">0xffffffff87f00000</td><td>128 MiB 内核窗口，四处定义必须同步</td></tr>
   <tr><td>内核堆</td><td class="mono">0xffffffff90000000</td><td>内核分配器</td></tr>
   <tr><td>物理内存</td><td class="mono">0 .. 64 GiB</td><td>恒等映射，2 MiB 大页</td></tr>
   <tr><td>用户映像窗口</td><td class="mono">0x10000000000</td><td>1 TiB 起，1 GiB 窗口，避开恒等映射区</td></tr>
   <tr><td>用户栈顶</td><td class="mono">0x10100000000</td><td>32 页</td></tr>
   <tr><td>memfd / mmap</td><td class="mono">1 TiB + 2 GiB</td><td>共享内存映射区</td></tr>
 </table>
-<p class="small">内核栈顶在 <code>limine_boot.c</code>、<code>kernel/linker.ld</code>、<code>arch/x86_64/entry.S</code>、<code>arch/x86_64/gdt.c</code>（TSS rsp0）与 <code>proc/process.c</code> 五处出现，改动布局必须同步全部五处。</p>
+<p class="small">内核栈顶在 <code>kernel/linker.ld</code>、<code>arch/x86_64/entry.S</code>、<code>boot/limine_boot.c</code> 与 <code>include/thread.h</code>（<code>KERNEL_BOOT_STACK_TOP</code>，TSS rsp0 用它）四处出现，改动布局必须同步全部四处。<code>limine_boot</code> 只映射栈顶所在的 2 MiB 页，窗口按栈顶最后一字节计算，栈顶不必 2 MiB 对齐。</p>
 
 <!-- ======================= 3 ======================= -->
 <h1 class="chapter"><span class="num">3</span>内核 Yuanshuo</h1>
@@ -417,7 +417,7 @@ ruby tools/zxe-pack.rb in.elf out.zxe</pre>
 </table>
 <table>
   <tr><th style="width:38mm">卷</th><th>内容</th><th style="width:38mm">大小</th></tr>
-  <tr><td><code>ZHAOXUEFI</code>（FAT32）</td><td>UEFI 加载器、<code>limine.conf</code>、<code>limine-bios.sys</code>、<code>KERNEL.ELF</code>、<code>KERNEL.BIN</code>、<code>MiSans.ttf</code>、<code>WALL.RGB</code></td><td>默认 64 MiB，可选 64/128/256 MiB</td></tr>
+  <tr><td><code>ZHAOXUEFI</code>（FAT32）</td><td>UEFI 加载器、<code>limine.conf</code>、<code>limine-bios.sys</code>、<code>/boot/limine/KERNEL.ELF</code>、<code>/boot/limine/MiSans.ttf</code>、<code>/boot/limine/WALL.RGB</code></td><td>默认 64 MiB，可选 64/128/256 MiB</td></tr>
   <tr><td><code>ZHAOXUROOT</code>（ext4）</td><td>系统文件，不放任何引导文件</td><td>剩余空间</td></tr>
   <tr><td><code>ZHAOXUDATA</code>（FAT32，可选）</td><td>用户数据，挂载到 <code>/mnt</code></td><td>64/128/256 MiB</td></tr>
 </table>

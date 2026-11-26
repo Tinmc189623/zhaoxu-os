@@ -12,7 +12,7 @@
 #include "limine.h"
 
 #define KERNEL_VMA 0xffffffff80000000ULL
-#define KERNEL_STACK_TOP 0xffffffff80f00000ULL
+#define KERNEL_STACK_TOP 0xffffffff87f00000ULL
 #define BOOT_IDENTITY_LIMIT (64ULL * 1024 * 1024 * 1024)
 #define BOOT_MEMMAP_MAX 256
 
@@ -35,6 +35,7 @@ LIMINE_REQUEST(memmap, MEMMAP);
 LIMINE_REQUEST(rsdp, RSDP);
 LIMINE_REQUEST(executable_address, EXECUTABLE_ADDRESS);
 LIMINE_REQUEST(executable_file, EXECUTABLE_FILE);
+LIMINE_REQUEST(executable_cmdline, EXECUTABLE_CMDLINE);
 LIMINE_REQUEST(module, MODULE);
 
 struct boot_memory_descriptor {
@@ -54,6 +55,25 @@ static u64 g_limine_pds[64][512] __attribute__((aligned(4096)));
 static u64 g_limine_stack[0x200000 / sizeof(u64)]
     __attribute__((aligned(4096)));
 static u64 g_limine_stack_pt[512] __attribute__((aligned(4096)));
+
+/* Case-insensitive substring search for one boot option word. */
+static int cmdline_has(const char *line, const char *word)
+{
+    for (const char *cursor = line; *cursor; cursor++) {
+        int i = 0;
+        while (word[i]) {
+            char left = cursor[i];
+            if (left >= 'A' && left <= 'Z')
+                left = (char)(left - 'A' + 'a');
+            if (left != word[i])
+                break;
+            i++;
+        }
+        if (!word[i])
+            return 1;
+    }
+    return 0;
+}
 
 /* Translate an HHDM virtual address returned by Limine into a physical one. */
 static u64 limine_physical(u64 address, u64 hhdm)
@@ -158,12 +178,14 @@ static int install_identity_map(u64 hhdm, u64 physical_base,
     }
     g_limine_pml4[0] = pdpt_physical | 0x03;
 
-    /* Limine may not have mapped the linker's reserved 15 MiB stack window.
-     * Point the stack virtual range at a 2 MiB array inside the kernel BSS,
-     * which the PMM already reserves as part of the kernel image. */
-    u64 pml4_index = (KERNEL_STACK_TOP >> 39) & 0x1FF;
-    u64 pdpt_index = (KERNEL_STACK_TOP >> 30) & 0x1FF;
-    u64 pd_index = (KERNEL_STACK_TOP >> 21) & 0x1FF;
+    /* Limine may not have mapped the linker's reserved stack window.  Point
+     * the 2 MiB virtual range holding the stack top at an array inside the
+     * kernel BSS, which the PMM already reserves as part of the image.  Use
+     * the last byte so an exactly 2 MiB-aligned top still maps below itself. */
+    u64 stack_window = KERNEL_STACK_TOP - 8;
+    u64 pml4_index = (stack_window >> 39) & 0x1FF;
+    u64 pdpt_index = (stack_window >> 30) & 0x1FF;
+    u64 pd_index = (stack_window >> 21) & 0x1FF;
     u64 pml4_entry = g_limine_pml4[pml4_index];
     if (!(pml4_entry & 1))
         return -1;
@@ -226,6 +248,12 @@ __attribute__((used)) struct boot_info *limine_boot_prepare(void)
     u64 image_end = (u64)(uintptr_t)__kernel_end - KERNEL_VMA;
     g_limine_boot.kernel_map_size = (image_end + 0x1FFFFF) & ~0x1FFFFFULL;
     g_limine_boot.flags = BOOT_FLAG_HIGHER_HALF;
+    g_limine_boot.install_mode =
+        g_limine_executable_cmdline.response &&
+                g_limine_executable_cmdline.response->cmdline
+            ? (u64)cmdline_has(g_limine_executable_cmdline.response->cmdline,
+                               "install")
+            : 0;
 
     struct limine_framebuffer *framebuffer =
         g_limine_framebuffer.response->framebuffer_count
@@ -252,12 +280,6 @@ __attribute__((used)) struct boot_info *limine_boot_prepare(void)
 
     build_memory_map(g_limine_memmap.response, hhdm);
 
-    struct limine_file *flat = find_module("KERNEL.BIN");
-    if (flat) {
-        g_limine_boot.boot_image_phys =
-            limine_physical((u64)(uintptr_t)flat->address, hhdm);
-        g_limine_boot.boot_image_size = flat->size;
-    }
     struct limine_file *font = find_module("MiSans.ttf");
     if (!font)
         font = find_module("MiSansGlobal-Regular.ttf");

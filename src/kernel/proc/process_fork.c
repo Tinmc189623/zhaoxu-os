@@ -109,6 +109,14 @@ long process_fork(struct interrupt_frame *frame)
 
     child->entry = parent->entry;
     child->user_stack = parent->user_stack;
+    child->fs_base = parent->fs_base;
+    child->brk_start = parent->brk_start;
+    child->brk_current = parent->brk_current;
+    child->brk_limit = parent->brk_limit;
+    child->anon_count = parent->anon_count;
+    child->anon_cursor = parent->anon_cursor;
+    for (int i = 0; i < parent->anon_count; i++)
+        child->anon_regions[i] = parent->anon_regions[i];
     struct thread *thread = kthread_create_ctx(
         "fork", fork_child_entry, request, -1, child->space->cr3,
         child->space, child);
@@ -117,6 +125,9 @@ long process_fork(struct interrupt_frame *frame)
         fork_discard(child);
         return -1;
     }
+    /* The child rescans the same TLS block as the parent until it sets its
+     * own base with arch_prctl. */
+    thread_set_fs_base(thread, parent->fs_base);
 
     kprintf("[proc] pid %llu: fork of %llu, rip 0x%llx rsp 0x%llx\n",
             child->pid, parent->pid, frame->rip, frame->rsp);
@@ -184,6 +195,10 @@ long process_exec(struct interrupt_frame *frame, const char *path, int argc,
     }
     vmm_space_destroy(old_space);
     kfree(old_mappings);
+
+    /* A new image starts without a TLS block; the loader sets one. */
+    process->fs_base = 0;
+    thread_set_fs_base(thread, 0);
 
     frame->rip = process->entry;
     frame->rsp = process->user_stack;

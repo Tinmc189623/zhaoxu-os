@@ -82,4 +82,4 @@ The Contributor Covenant is licensed under CC BY 4.0.
 
 ---
 
-Copyright © 2026 Nexsteaduser. All Rights Reserved. Email: admin@nexsteaduser.com
+Copyright (C) 2026 Nexsteaduser, Nexlyh, Tinmc189623. All Rights Reserved. Email: admin@nexsteaduser.com

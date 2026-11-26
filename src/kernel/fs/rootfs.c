@@ -223,6 +223,88 @@ static int rootfs_unlink(void *private, const char *rel)
     return removed ? 0 : -1;
 }
 
+/* Count one directory entry while checking whether a lower dir is empty. */
+static void rootfs_count_entry(const char *name, u64 size, int is_dir,
+                               void *context)
+{
+    (void)name;
+    (void)size;
+    (void)is_dir;
+    (*(int *)context)++;
+}
+
+static int rootfs_mkdir(void *private, const char *rel)
+{
+    (void)private;
+    if (!rel || !rel[0])
+        return -1;
+    tombstone_remove(rel);
+    return wramfs_mkdir(g_upper, rel);
+}
+
+static int rootfs_rmdir(void *private, const char *rel)
+{
+    (void)private;
+    if (!rel || !rel[0])
+        return -1;
+
+    /* A merged directory with lower children is not empty, even when the
+     * upper copy exists and has no children of its own. */
+    int lower = rootfs_has_lower(rel);
+    if (lower) {
+        char path[VFS_PATH_MAX];
+        int entries = 0;
+        if (join_abs(rel, path, sizeof(path)) != 0)
+            return -1;
+        if (ramfs_list(path, rootfs_count_entry, &entries) != 0 || entries > 0)
+            return -1;
+    }
+
+    int removed = 0;
+    if (rootfs_has_upper(rel)) {
+        if (wramfs_rmdir(g_upper, rel) != 0)
+            return -1;
+        removed = 1;
+    }
+    if (lower) {
+        tombstone_add(rel);
+        removed = 1;
+    }
+    return removed ? 0 : -1;
+}
+
+/* Rename within the merged view.  A lower-only file is copied into the
+ * upper layer first; directory trees below the lower layer stay in place. */
+static int rootfs_rename(void *private, const char *from, const char *to)
+{
+    (void)private;
+    if (!from || !to || !from[0] || !to[0])
+        return -1;
+    int is_dir = 0;
+    u64 size = 0;
+    if (rootfs_stat(NULL, to, &is_dir, &size) == 0)
+        return -1;
+    if (rootfs_has_upper(from))
+        return wramfs_rename(g_upper, from, to);
+    if (rootfs_stat(NULL, from, &is_dir, &size) != 0 || is_dir)
+        return -1;
+
+    u8 *body = kmalloc(size ? (usize)size : 1);
+    if (!body)
+        return -1;
+    u64 read_out = 0;
+    int status = rootfs_read(NULL, from, 0, body, size, &read_out);
+    if (status == 0 && read_out == size)
+        status = wramfs_write(g_upper, to, body, size);
+    else
+        status = -1;
+    kfree(body);
+    if (status != 0)
+        return -1;
+    tombstone_add(from);
+    return 0;
+}
+
 static const struct vfs_fs_ops g_rootfs_ops = {
     .name = "rootfs",
     .list = rootfs_list,
@@ -230,6 +312,9 @@ static const struct vfs_fs_ops g_rootfs_ops = {
     .read = rootfs_read,
     .write = rootfs_write,
     .unlink = rootfs_unlink,
+    .mkdir = rootfs_mkdir,
+    .rmdir = rootfs_rmdir,
+    .rename = rootfs_rename,
 };
 
 /* Build the ramfs upper layer and mount the writable view at "/". */

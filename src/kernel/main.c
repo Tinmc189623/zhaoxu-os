@@ -10,18 +10,21 @@
 #include <console.h>
 #include <cpu.h>
 #include <dev.h>
+#include <fbcon.h>
 #include <fs_rpc.h>
 #include <gdt.h>
-#include <hpet.h>
 #include <idt.h>
 #include <intc.h>
 #include <io.h>
+#include <klog.h>
+#include <panic.h>
 #include <kprintf.h>
 #include <mem.h>
 #include <mmu.h>
 #include <personality.h>
 #include <process.h>
 #include <smp.h>
+#include <splash.h>
 #include <string.h>
 #include <thread.h>
 #include <timer.h>
@@ -94,12 +97,23 @@ void kernel_main(struct boot_info *boot)
 
     dev_memory_init();
     console_init(&g_boot);
+    /* The boot animation owns the screen until the Ring3 display service is
+     * ready; setup discs skip it (splash_begin checks install_mode). */
+    splash_begin(&g_boot);
 
     console_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
     kprintf("Zhaoxu OS %s \"%s\" (build %s)\n",
             ZHAOXU_VERSION, ZHAOXU_CODENAME, ZHAOXU_BUILD);
     console_reset_color();
     kprintf("\n");
+
+#if PANIC_BOOT_TEST == 1
+    /* Paint the fatal screen straight from ascii.md and halt.  A real fault
+     * cannot be used: the kernel identity-maps physical 0, so a write there
+     * would not trap. */
+    panic_red_screen(14, "Page Fault", 0, (u64)(usize)&panic_red_screen,
+                     0x10000000000ULL, 1);
+#endif
 
     /* Reserve the personality VM region before processes and filesystems
      * start allocating. */
@@ -115,11 +129,11 @@ void kernel_main(struct boot_info *boot)
 #endif
 
     mmu_init();
-    hpet_init();
     cpu_init();
     timer_init(1000);
     process_init();
     tty_init();
+    splash_stage(10, "Memory and CPU");
 
     kprintf("[boot] higher-half kernel at 0x%llx (phys 0x%llx, %llu KiB)\n",
             g_boot.kernel_virt_base, g_boot.kernel_phys_base,
@@ -133,20 +147,44 @@ void kernel_main(struct boot_info *boot)
     if (apic_lapic_hz())
         apic_timer_start(APIC_VECTOR_TIMER, timer_hz());
     interrupts_enable();
+    splash_stage(30, "Interrupts and CPUs");
+
+#if SPLASH_BOOT_TEST == 1
+    /* Exercise the real shape of boot: several quick stages, then a long
+     * wait like the driver service.  Freeze afterwards so a screenshot shows
+     * that the bar kept creeping during the wait instead of sitting still. */
+    for (u32 step = 30; step <= 50; step += 2) {
+        splash_stage(step, "Boot animation test");
+        timer_sleep_ms(60);
+    }
+    splash_stage(52, "Driver service");
+    timer_sleep_ms(8000);
+    splash_finish();
+    for (;;)
+        hlt();
+#endif
 
     vfs_init();
+    splash_stage(45, "Filesystem core");
 
+    /* The bar keeps creeping while these calls wait on Ring3; the stage is
+     * announced before the wait so it never looks frozen at the previous
+     * milestone. */
+    splash_stage(52, "Driver service");
     kprintf("[dev ] starting Ring3 driver service\n");
     if (dev_start() == 0)
         kprintf("[dev ] driver service ready\n");
     else
         kprintf("[dev ] driver service unavailable\n");
+    splash_stage(62, "Driver service");
 
+    splash_stage(70, "Storage service");
     kprintf("[fs  ] starting Ring3 ext4 service\n");
     if (fs_service_start() == 0)
         kprintf("[fs  ] ext4 service ready\n");
     else
         kprintf("[fs  ] ext4 service unavailable\n");
+    splash_stage(78, "Storage service");
 
 #if PERSONALITY_SELFTEST == 1
     if (personality_selftest() == 0)
@@ -177,6 +215,7 @@ void kernel_main(struct boot_info *boot)
 
     kprintf("[vfs ] probing removable filesystems\n");
     media_probe_all();
+    splash_stage(90, "Boot volume");
 
     if (g_boot.wallpaper_phys && g_boot.wallpaper_size)
         kprintf("[boot] default wallpaper %llu bytes from the boot volume\n",
@@ -299,6 +338,53 @@ void kernel_main(struct boot_info *boot)
         hlt();
 #endif
 
+#if BRK_BOOT_TEST == 1
+    /* Skipped in install mode so the same ISO still runs Setup. */
+    if (!g_boot.install_mode) {
+        kprintf("[brk ] running /data/BRK_TEST.ZXE\n");
+        u64 brk_pid = process_spawn("/data/BRK_TEST.ZXE", 0, NULL);
+        if (brk_pid) {
+            int brk_status = -1;
+            process_wait(brk_pid, &brk_status);
+            kprintf("[brk ] BRK_TEST exit %d\n", brk_status);
+        } else {
+            kprintf("[brk ] BRK_TEST spawn failed\n");
+        }
+        for (;;)
+            hlt();
+    }
+#endif
+
+#if ABI_BOOT_TEST == 1
+    /* Skipped in install mode so the same ISO still runs Setup. */
+    if (!g_boot.install_mode) {
+        static const struct {
+            const char *path;
+            const char *label;
+        } abi_tests[] = {
+            { "/data/ANON_TEST.ZXE", "ANON_TEST" },
+            { "/data/TLS_TEST.ZXE", "TLS_TEST" },
+            { "/data/FUTEX_TEST.ZXE", "FUTEX_TEST" },
+            { "/data/SIGNAL_TEST.ZXE", "SIGNAL_TEST" },
+            { "/data/INFO_TEST.ZXE", "INFO_TEST" },
+            { "/data/ELF_TEST.BIN", "ELF_TEST" },
+        };
+        for (usize i = 0; i < sizeof(abi_tests) / sizeof(abi_tests[0]); i++) {
+            kprintf("[abi ] running %s\n", abi_tests[i].path);
+            u64 abi_pid = process_spawn(abi_tests[i].path, 0, NULL);
+            if (abi_pid) {
+                int abi_status = -1;
+                process_wait(abi_pid, &abi_status);
+                kprintf("[abi ] %s exit %d\n", abi_tests[i].label, abi_status);
+            } else {
+                kprintf("[abi ] %s spawn failed\n", abi_tests[i].label);
+            }
+        }
+        for (;;)
+            hlt();
+    }
+#endif
+
 #if NLIBC_BOOT_TEST == 1
     kprintf("[nlibc] running /data/NLIB_HELLO.ZXE\n");
     u64 nlibc_pid = process_spawn("/data/NLIB_HELLO.ZXE", 0, NULL);
@@ -317,6 +403,84 @@ void kernel_main(struct boot_info *boot)
         kprintf("[nlibc] NCURSES_HELLO exit %d\n", curses_status);
     } else {
         kprintf("[nlibc] NCURSES_HELLO spawn failed\n");
+    }
+    for (;;)
+        hlt();
+#endif
+
+#if TOYBOX_BOOT_TEST == 1
+    kprintf("[klog] %u bytes buffered\n", klog_size());
+    kprintf("[toybox] starting /bin/toybox mkpasswd\n");
+    {
+        char *arguments[8] = { "/bin/toybox", "mkpasswd", "-m", "sha512",
+                               "-S", "saltstring", "password", NULL };
+        u64 toybox_pid = process_spawn("/bin/toybox", 7, arguments);
+        if (toybox_pid) {
+            int toybox_status = -1;
+            process_wait(toybox_pid, &toybox_status);
+            kprintf("[toybox] TOYBOX exit %d\n", toybox_status);
+        } else {
+            kprintf("[toybox] spawn failed\n");
+        }
+    }
+    {
+        /* dmesg reads the kernel log ring through SYS_KLOG (81). */
+        char *arguments[3] = { "/bin/toybox", "dmesg", NULL };
+        u64 dmesg_pid = process_spawn("/bin/toybox", 2, arguments);
+        if (dmesg_pid) {
+            int dmesg_status = -1;
+            process_wait(dmesg_pid, &dmesg_status);
+            kprintf("[toybox] DMESG exit %d\n", dmesg_status);
+        } else {
+            kprintf("[toybox] dmesg spawn failed\n");
+        }
+    }
+    {
+        /* mkdir/rmdir exercise syscalls 82 and 83 on the rootfs. */
+        char *arguments[4] = { "/bin/toybox", "mkdir", "/data/NEWDIR", NULL };
+        u64 mkdir_pid = process_spawn("/bin/toybox", 3, arguments);
+        if (mkdir_pid) {
+            int status = -1;
+            process_wait(mkdir_pid, &status);
+            int is_dir = 0;
+            u64 size = 0;
+            int stat_result = vfs_stat("/data/NEWDIR", &is_dir, &size);
+            kprintf("[mkdir] exit %d stat %d dir %d\n", status, stat_result,
+                    is_dir);
+        } else {
+            kprintf("[mkdir] spawn failed\n");
+        }
+        char *remove_arguments[4] = { "/bin/toybox", "rmdir", "/data/NEWDIR",
+                                      NULL };
+        u64 rmdir_pid = process_spawn("/bin/toybox", 3, remove_arguments);
+        if (rmdir_pid) {
+            int status = -1;
+            process_wait(rmdir_pid, &status);
+            int is_dir = 0;
+            u64 size = 0;
+            int stat_result = vfs_stat("/data/NEWDIR", &is_dir, &size);
+            kprintf("[rmdir] exit %d stat %d\n", status, stat_result);
+        } else {
+            kprintf("[rmdir] spawn failed\n");
+        }
+    }
+    {
+        /* rename copies a lower-only file up, then moves it. */
+        char *arguments[5] = { "/bin/toybox", "mv", "/data/HELLO.TXT",
+                               "/data/RENAMED.TXT", NULL };
+        u64 rename_pid = process_spawn("/bin/toybox", 4, arguments);
+        if (rename_pid) {
+            int status = -1;
+            process_wait(rename_pid, &status);
+            int is_dir = 0;
+            u64 size = 0;
+            int old_result = vfs_stat("/data/HELLO.TXT", &is_dir, &size);
+            int new_result = vfs_stat("/data/RENAMED.TXT", &is_dir, &size);
+            kprintf("[rename] exit %d old %d new %d\n", status, old_result,
+                    new_result);
+        } else {
+            kprintf("[rename] spawn failed\n");
+        }
     }
     for (;;)
         hlt();
@@ -342,18 +506,65 @@ void kernel_main(struct boot_info *boot)
         hlt();
 #endif
 
+    /* Setup media: text-mode setup only.  The keyboard driver feeds the tty
+     * the setup program reads; no display service and no compositor run. */
+    if (g_boot.install_mode && g_boot.framebuffer_base) {
+        splash_finish();
+        /* The setup disc has no display service: give the text installer a
+         * real screen instead of leaving the framebuffer black. */
+        if (fbcon_init(&g_boot)) {
+            console_set_sink(fbcon_putc);
+            console_set_color_sink(fbcon_set_color);
+            console_set_kernel_mute(1);
+        }
+        console_set_color(COLOR_LIGHT_GRAY, COLOR_BLUE);
+        kprintf("\nStarting Setup.\n\n");
+        console_reset_color();
+
+        u64 drivers_pid = process_spawn("/bin/drivers.udrv", 0, NULL);
+        if (!drivers_pid)
+            kprintf("[install] /bin/drivers unavailable; input will not work\n");
+        u64 setup_pid = process_spawn("/bin/apps/install.zxe", 0, NULL);
+        if (setup_pid) {
+            int setup_status = -1;
+            process_wait(setup_pid, &setup_status);
+            kprintf("[install] setup exited with %d\n", setup_status);
+        } else {
+            kprintf("[install] /bin/apps/install.zxe unavailable\n");
+        }
+        kprintf("[install] setup stopped; halting.\n");
+        for (;;)
+            hlt();
+    }
+
     /* M1: the KMS service owns virtio-gpu scanout and runs before the
      * desktop.  Without a virtio-gpu it exits immediately. */
-    u64 display_pid = process_spawn("/bin/display", 0, NULL);
+    splash_stage(96, "Display service");
+    u64 display_pid = process_spawn("/bin/display.udrv", 0, NULL);
     if (display_pid)
         kprintf("[display] Ring3 KMS service pid %llu\n", display_pid);
     else
         kprintf("[display] /bin/display unavailable\n");
 
     if (g_boot.framebuffer_base) {
+        /* Hand the screen to Aqua: the splash frame stays until its first
+         * compositor present. */
+        splash_finish();
         console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
         kprintf("\nBoot complete. Starting Aqua Desktop Environment.\n\n");
         console_reset_color();
+
+        /* Rule 31: Orchestrd is the service manager and starts the desktop.
+         * The direct spawn below stays as a fallback for images without it. */
+        u64 orchestrd_pid = process_spawn("/bin/orchestrd", 0, NULL);
+        if (orchestrd_pid) {
+            int status = -1;
+            process_wait(orchestrd_pid, &status);
+            kprintf("[orchestrd] exited with %d\n", status);
+            for (;;)
+                hlt();
+        }
+        kprintf("[orchestrd] /bin/orchestrd unavailable; starting aqua directly\n");
 
         u64 desktop_pid = process_spawn("/bin/aqua", 0, NULL);
         if (desktop_pid) {

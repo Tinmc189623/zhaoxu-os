@@ -77,6 +77,34 @@ static struct thread *pick_next_locked(struct percpu *pc)
     return NULL;
 }
 
+/* Load a TLS base into the FS base MSR (0xC0000100).  The kernel itself never
+ * addresses through FS, so the value only affects the Ring3 thread. */
+static void write_fs_base(u64 value)
+{
+    __asm__ volatile("wrmsr"
+                     :
+                     : "c"(0xC0000100), "a"((u32)value),
+                       "d"((u32)(value >> 32))
+                     : "memory");
+}
+
+/* Set a thread's TLS base.  When the caller is that thread the MSR is updated
+ * now, because no context switch is due before it returns to Ring3. */
+void thread_set_fs_base(struct thread *thread, u64 value)
+{
+    if (!thread)
+        return;
+    thread->fs_base = value;
+    if (thread == sched_current())
+        write_fs_base(value);
+}
+
+/* Read the TLS base recorded for a thread. */
+u64 thread_get_fs_base(const struct thread *thread)
+{
+    return thread ? thread->fs_base : 0;
+}
+
 static void schedule(void)
 {
     u64 flags;
@@ -129,6 +157,7 @@ static void schedule(void)
         vmm_activate_cr3(next_cr3);
     if (next->kernel_stack_top)
         tss_set_rsp0_cpu(pc->index, next->kernel_stack_top);
+    write_fs_base(next->fs_base);
 
     previous->switches++;
     fpu_state_save(previous);
@@ -209,10 +238,10 @@ static void thread_start(void)
     sti();
 
     if (!thread || !thread->entry)
-        kthread_exit();
+        yuanshuo_kthread_exit();
 
     thread->entry(thread->arg);
-    kthread_exit();
+    yuanshuo_kthread_exit();
 }
 
 static void idle_entry(void *arg)
@@ -319,6 +348,94 @@ void sched_wake_expired(u64 now)
     }
 
     spin_unlock_irqrestore(&g_sched_lock, flags);
+}
+
+/* Compare the futex word and block the caller in one critical section.
+ * Holding the scheduler lock across both steps is what rules out a lost
+ * wakeup: a waker cannot observe the thread as blocked before the word it
+ * compared is still the expected value.  Returns 1 when woken, 0 on timeout,
+ * -1 when the word no longer matches. */
+int sched_futex_wait(u64 key, u64 address, u32 expected, u32 bitset,
+                     u64 deadline_tick)
+{
+    struct thread *thread = sched_current();
+    if (!thread || !key || !address)
+        return -1;
+
+    u64 flags = spin_lock_irqsave(&g_sched_lock);
+    u32 value = *(volatile u32 *)(uintptr_t)address;
+    if ((value & bitset) != (expected & bitset)) {
+        spin_unlock_irqrestore(&g_sched_lock, flags);
+        return -1;
+    }
+    thread->futex_key = key;
+    thread->futex_woken = 0;
+    thread->wake_tick = deadline_tick;
+    thread->state = THREAD_BLOCKED;
+    spin_unlock_irqrestore(&g_sched_lock, flags);
+
+    schedule();
+
+    int woken = thread->futex_woken;
+    thread->futex_key = 0;
+    thread->futex_woken = 0;
+    thread->wake_tick = 0;
+    return woken;
+}
+
+/* Wake up to `count` threads blocked on the same word.  The key is the
+ * physical address of the word, so two processes that map a shared page at
+ * different virtual addresses still wake each other.  A spurious wake is
+ * legal because every waiter re-reads the word before returning. */
+int sched_futex_wake(u64 key, int count)
+{
+    if (!key || count <= 0)
+        return 0;
+
+    int woken = 0;
+    u64 flags = spin_lock_irqsave(&g_sched_lock);
+    for (u32 i = 0; i < MAX_THREADS && woken < count; i++) {
+        struct thread *thread = &g_threads[i];
+        if (thread->state != THREAD_BLOCKED || thread->futex_key != key)
+            continue;
+        thread->futex_key = 0;
+        thread->futex_woken = 1;
+        thread->wake_tick = 0;
+        thread->quantum = SCHED_QUANTUM_TICKS;
+        thread->state = THREAD_READY;
+        woken++;
+    }
+    spin_unlock_irqrestore(&g_sched_lock, flags);
+
+    if (woken)
+        smp_reschedule_all();
+    return woken;
+}
+
+/* Wake every blocked thread of a process.  Used when a signal arrives so a
+ * blocking syscall returns and the signal is delivered on the way out. */
+void sched_wake_process(struct process *process)
+{
+    if (!process)
+        return;
+
+    int woke = 0;
+    u64 flags = spin_lock_irqsave(&g_sched_lock);
+    for (u32 i = 0; i < MAX_THREADS; i++) {
+        struct thread *thread = &g_threads[i];
+        if (thread->proc != process || thread->state != THREAD_BLOCKED)
+            continue;
+        thread->futex_woken = thread->futex_key != 0;
+        thread->futex_key = 0;
+        thread->wake_tick = 0;
+        thread->quantum = SCHED_QUANTUM_TICKS;
+        thread->state = THREAD_READY;
+        woke++;
+    }
+    spin_unlock_irqrestore(&g_sched_lock, flags);
+
+    if (woke)
+        smp_reschedule_all();
 }
 
 void sched_maybe_preempt(void)
@@ -448,7 +565,7 @@ void thread_sleep_ms(u32 ms)
         schedule();
 }
 
-void kthread_exit(void)
+void yuanshuo_kthread_exit(void)
 {
     struct thread *thread = sched_current();
     u64 flags = irq_save();

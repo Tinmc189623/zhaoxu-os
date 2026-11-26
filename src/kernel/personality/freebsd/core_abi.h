@@ -22,12 +22,31 @@ typedef u32 zx_u32;
 typedef u64 zx_u64;
 #endif
 
-#define ZX_CORE_SERVICES_VERSION 1
+#define ZX_CORE_SERVICES_VERSION 4
 #define ZX_IDENTITY_LIMIT (64ULL * 1024ULL * 1024ULL * 1024ULL)
 
 typedef int (*zx_trap_fn)(void *frame, void *ctx);
 typedef void (*zx_timer_fn)(void *ctx);
 typedef void (*zx_task_fn)(void *arg);
+
+typedef void (*zx_list_fn)(const char *name, zx_u64 size, int is_dir,
+                           void *context);
+
+/* Rule 51: VFS belongs to the BSD layer.  The personality registers this
+ * provider once its vnode layer is up; until then the core provider serves
+ * the live root. */
+struct zx_vfs_provider {
+    const char *name;
+    int (*list)(const char *path, zx_list_fn callback, void *context);
+    int (*stat)(const char *path, int *is_dir, zx_u64 *size);
+    int (*read_at)(const char *path, zx_u64 offset, zx_u8 *dst, zx_u64 cap,
+                   zx_u64 *read_out);
+    int (*write_file)(const char *path, const zx_u8 *data, zx_u64 size);
+    int (*unlink)(const char *path);
+    int (*mkdir)(const char *path);
+    int (*rmdir)(const char *path);
+    int (*rename)(const char *from, const char *to);
+};
 
 struct zx_core_services {
     zx_u32 version;
@@ -55,6 +74,10 @@ struct zx_core_services {
                     zx_u32 length);
     int (*ipc_recv)(zx_u64 endpoint, zx_u64 *type, void *data,
                     zx_u32 capacity, zx_u32 timeout_ms);
+
+    /* BSD VFS takeover (rule 51).  Passing NULL hands the path operations
+     * back to the core provider. */
+    int (*vfs_register)(const struct zx_vfs_provider *provider);
 };
 
 #endif
