@@ -23,6 +23,9 @@
 #include <mmu.h>
 #include <personality.h>
 #include <process.h>
+#if IO287 == 1
+#include <io287.h>
+#endif
 #include <smp.h>
 #include <splash.h>
 #include <string.h>
@@ -98,7 +101,7 @@ void kernel_main(struct boot_info *boot)
     dev_memory_init();
     console_init(&g_boot);
     /* The boot animation owns the screen until the Ring3 display service is
-     * ready; setup discs skip it (splash_begin checks install_mode). */
+     * ready.  Setup discs run it too, then hand the screen to fbcon. */
     splash_begin(&g_boot);
 
     console_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
@@ -126,6 +129,17 @@ void kernel_main(struct boot_info *boot)
     if (personality_boot_info() &&
         freebsd_personality_start(personality_boot_info()) != 0)
         kprintf("[bsd ] personality start returned an error\n");
+#endif
+
+#if IO287 == 1
+    if (io287_init() != 0) {
+        kprintf("[io287] init failed\n");
+    } else {
+        int check = io287_selftest();
+        kprintf("[io287] %u device(s), %u driver(s), selftest %s\n",
+                io287_device_count(), io287_driver_count(),
+                check == 0 ? "PASS" : "FAIL");
+    }
 #endif
 
     mmu_init();
@@ -385,6 +399,25 @@ void kernel_main(struct boot_info *boot)
     }
 #endif
 
+#if CSH_BOOT_TEST == 1
+    /* Skipped in install mode so the same ISO still runs Setup. */
+    if (!g_boot.install_mode) {
+        kprintf("[csh ] running /bin/csh -f -c\n");
+        char *csh_argv[4] = { "csh", "-f", "-c",
+                              "echo CSH_BOOT $version; echo CSH_OK" };
+        u64 csh_pid = process_spawn("/bin/csh", 4, csh_argv);
+        if (csh_pid) {
+            int csh_status = -1;
+            process_wait(csh_pid, &csh_status);
+            kprintf("[csh ] CSH_TEST exit %d\n", csh_status);
+        } else {
+            kprintf("[csh ] CSH_TEST spawn failed\n");
+        }
+        for (;;)
+            hlt();
+    }
+#endif
+
 #if NLIBC_BOOT_TEST == 1
     kprintf("[nlibc] running /data/NLIB_HELLO.ZXE\n");
     u64 nlibc_pid = process_spawn("/data/NLIB_HELLO.ZXE", 0, NULL);
@@ -601,20 +634,26 @@ void kernel_main(struct boot_info *boot)
     }
 
     console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
-    kprintf("\nBoot complete. No framebuffer; starting bash.\n\n");
+    kprintf("\nBoot complete. No framebuffer; starting csh.\n\n");
     console_reset_color();
 
+    /* Rule 1: csh is the default shell; bash stays available and is the
+     * fallback when the csh image is missing. */
     for (;;) {
-        u64 shell_pid = process_spawn("/bin/bash", 0, NULL);
+        u64 shell_pid = process_spawn("/bin/csh", 0, NULL);
+        if (!shell_pid) {
+            kprintf("[csh ] /bin/csh unavailable; starting bash\n");
+            shell_pid = process_spawn("/bin/bash", 0, NULL);
+        }
         if (!shell_pid) {
             console_set_color(COLOR_LIGHT_RED, COLOR_BLACK);
-            kprintf("[bash] /bin/bash unavailable; halting.\n");
+            kprintf("[csh ] neither /bin/csh nor /bin/bash is available; halting.\n");
             console_reset_color();
             for (;;)
                 hlt();
         }
         int status = -1;
         process_wait(shell_pid, &status);
-        kprintf("[bash] exited with %d\n", status);
+        kprintf("[csh ] exited with %d\n", status);
     }
 }

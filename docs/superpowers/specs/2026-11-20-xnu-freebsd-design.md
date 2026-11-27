@@ -477,8 +477,8 @@ waits for the machine port.
   personality, and the in-kernel driver framework that replaces Ring3 driver
   attachment. **The owner must amend r9** (or define an explicit "in-kernel
   auxiliary personality + IO/287" exception). Per rule 41 the AI does not edit
-  `RULES.md`; this is flagged as an owner action and blocks M4 device
-  integration by rule, not by code.
+  the 规则 section of `CLAUDE.md`; this is flagged as an owner action and blocks
+  M4 device integration by rule, not by code.
 - **r5 (languages).** r5 assigns C to the kernel, C++ to applications and SPARK
   to drivers. IO/287 is in-kernel C++ with C++ driver families, so it needs an
   owner amendment on two points: "kernel = C" and "drivers = SPARK". Flagged,
@@ -560,7 +560,8 @@ engineering order, not a reduction of the target.
    glue / machine-port layer.
 5. **The boot chain and Limine are unchanged** (r4/r31); the core initialises the
    personality after boot.
-6. **r9 amendment is an owner action** (rule 41); the AI does not edit RULES.md.
+6. **r9 amendment is an owner action** (rule 41); the AI does not edit the 规则
+   section of `CLAUDE.md`.
 7. **The target is full integration (M5).** Staging is engineering order; the
    architecture is never substituted to reduce effort.
 8. **IO/287 is in-kernel, C++, and owns devices.** It is original code in

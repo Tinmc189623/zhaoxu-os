@@ -3,10 +3,24 @@
  * ZOS does not expose a wall clock to libc yet; gettimeofday and times report
  * a fixed zero so callers that only need a monotonic fallback keep working. */
 #include <errno.h>
+#include <string.h>
+#include <sys/resource.h>
 #include <sys/time.h>
 #include <sys/times.h>
 #include <time.h>
 #include <unistd.h>
+
+/* The kernel keeps no per-process CPU counters; rusage stays zeroed. */
+int getrusage(int who, struct rusage *usage)
+{
+    (void)who;
+    if (!usage) {
+        errno = EINVAL;
+        return -1;
+    }
+    memset(usage, 0, sizeof(*usage));
+    return 0;
+}
 
 /* Report the epoch until a real clock syscall is wired up. */
 int gettimeofday(struct timeval *time, void *timezone)

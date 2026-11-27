@@ -23,5 +23,5 @@ docs/architecture/*.pdf
 __pycache__/
 *.pyc
 
-# Local rules: never uploaded (RULES.local.md says so)
+# 本地个人文件，禁止上传
 RULES.local.md

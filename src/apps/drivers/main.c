@@ -46,11 +46,22 @@ extern int sdhci_disk_write(u64 lba, u32 count, const void *buffer);
 extern int sdhci_disk_flush(void);
 extern int ide_init(void);
 extern int ide_drive_count(void);
+extern int ide_drive_atapi(int drive);
 extern u64 ide_drive_sectors(int drive);
 extern int ide_drive_bus(int drive);
 extern int ide_drive_unit(int drive);
 extern const char *ide_drive_model(int drive);
 extern int ide_drive_read(int drive, u64 lba, u32 count, void *buffer);
+extern int ide_drive_write(int drive, u64 lba, u32 count, const void *buffer);
+extern int ide_drive_flush(int drive);
+extern int scsi_init(void);
+extern int scsi_device_count(void);
+extern const char *scsi_vendor(int dev);
+extern const char *scsi_product(int dev);
+extern void console_write(const char *text);
+extern void console_write_dec(u32 value);
+extern void pcie_init(u64 rsdp);
+extern u32 pci_enumerate(void);
 extern int e1000_init(void);
 extern int hda_init(void);
 extern int ehci_init(void);
@@ -84,6 +95,9 @@ static int g_ahci_disks;
 static int g_nvme_disks;
 static int g_sd_disks;
 static int g_ide_disks;
+/* IDE drive index for each block-service disk; ATAPI drives are enumerated
+ * through SCSI instead of being listed as writable disks. */
+static int g_ide_map[8];
 static int g_usb_disks;
 
 /* Device order inside dev_header: AHCI, NVMe, SD/MMC, IDE, USB storage.
@@ -245,7 +259,7 @@ static void fill_info(void)
             sectors = sdhci_disk_sectors();
             model = sdhci_disk_model();
         } else if (disk_is_ide(i)) {
-            int drive = i - ide_base;
+            int drive = g_ide_map[i - ide_base];
             port = ide_drive_bus(drive);
             sectors = ide_drive_sectors(drive);
             model = ide_drive_model(drive);
@@ -280,7 +294,7 @@ static int block_read(int disk, u64 lba, u32 count, void *buffer)
     if (disk_is_sd(disk))
         return sdhci_disk_read(lba, count, buffer);
     if (disk_is_ide(disk))
-        return ide_drive_read(disk - ide_base, lba, count, buffer);
+        return ide_drive_read(g_ide_map[disk - ide_base], lba, count, buffer);
     if (disk_is_usb(disk))
         return usb_msc_disk_read(disk - usb_base, lba, count, buffer);
     return ahci_disk_read(disk, lba, count, buffer);
@@ -289,12 +303,13 @@ static int block_read(int disk, u64 lba, u32 count, void *buffer)
 static int block_write(int disk, u64 lba, u32 count, const void *buffer)
 {
     int usb_base = g_ahci_disks + g_nvme_disks + g_sd_disks + g_ide_disks;
+    int ide_base = g_ahci_disks + g_nvme_disks + g_sd_disks;
     if (disk_is_nvme(disk))
         return nvme_disk_write(lba, count, buffer);
     if (disk_is_sd(disk))
         return sdhci_disk_write(lba, count, buffer);
     if (disk_is_ide(disk))
-        return -1; /* the IDE driver is read-only */
+        return ide_drive_write(g_ide_map[disk - ide_base], lba, count, buffer);
     if (disk_is_usb(disk))
         return usb_msc_disk_write(disk - usb_base, lba, count, buffer);
     return ahci_disk_write(disk, lba, count, buffer);
@@ -303,12 +318,13 @@ static int block_write(int disk, u64 lba, u32 count, const void *buffer)
 static int block_flush(int disk)
 {
     int usb_base = g_ahci_disks + g_nvme_disks + g_sd_disks + g_ide_disks;
+    int ide_base = g_ahci_disks + g_nvme_disks + g_sd_disks;
     if (disk_is_nvme(disk))
         return nvme_disk_flush();
     if (disk_is_sd(disk))
         return sdhci_disk_flush();
     if (disk_is_ide(disk))
-        return 0;
+        return ide_drive_flush(g_ide_map[disk - ide_base]);
     if (disk_is_usb(disk))
         return usb_msc_disk_flush(disk - usb_base);
     return ahci_disk_flush(disk);
@@ -376,6 +392,11 @@ int user_main(long *stack)
     serial_putc('\n');
     log_drain();
 
+    /* PCIe ECAM comes first: every driver below uses config space, and the
+     * Ada Pci package routes reads through the ECAM window once it is up. */
+    pcie_init(g_header->rsdp);
+    (void)pci_enumerate();
+
     ps2_init();
     keyboard_init();
     int mouse = mouse_init((int)g_header->width, (int)g_header->height);
@@ -395,9 +416,39 @@ int user_main(long *stack)
     g_sd_disks = sdhci_init() == 0 ? sdhci_disk_count() : 0;
     if (g_sd_disks < 0)
         g_sd_disks = 0;
-    g_ide_disks = ide_init() == 0 ? ide_drive_count() : 0;
-    if (g_ide_disks < 0)
-        g_ide_disks = 0;
+    /* ide_init returns the number of drives, unlike the other init calls
+     * that return 0 on success.  Testing it against zero here discarded
+     * every detected IDE drive, so no IDE disk ever reached the block
+     * service.  Only ATA drives become block disks; ATAPI devices are
+     * enumerated by scsi_init below. */
+    int ide_total = ide_init();
+    if (ide_total < 0)
+        ide_total = 0;
+    g_ide_disks = 0;
+    for (int d = 0; d < ide_total && g_ide_disks < 8; d++) {
+        if (!ide_drive_atapi(d))
+            g_ide_map[g_ide_disks++] = d;
+    }
+    console_write("[ide] total ");
+    console_write_dec((u32)ide_total);
+    console_write(", drives ");
+    console_write_dec((u32)g_ide_disks);
+    console_write("\n");
+
+    /* Optical drives speak SCSI over the IDE ATAPI transport.  They are
+     * enumerated for the ISO9660 path; the block service does not expose
+     * them as writable disks. */
+    int optical = scsi_init();
+    console_write("[scsi] optical ");
+    console_write_dec((u32)optical);
+    console_write("\n");
+    for (int i = 0; i < optical; i++) {
+        console_write("[scsi] ");
+        console_write(scsi_vendor(i));
+        console_write(" ");
+        console_write(scsi_product(i));
+        console_write("\n");
+    }
 
     g_usb_disks = usb_msc_init();
     if (g_usb_disks < 0)

@@ -46,7 +46,11 @@ struct rlimit {
     rlim_t rlim_max;
 };
 
+#define RUSAGE_SELF 0
+#define RUSAGE_CHILDREN (-1)
+
 int getrlimit(int resource, struct rlimit *limit);
 int setrlimit(int resource, const struct rlimit *limit);
+int getrusage(int who, struct rusage *usage);
 
 #endif

@@ -101,25 +101,6 @@ u64 pmm_alloc_page(void)
     return sys_dev_alloc_page();
 }
 
-u32 pci_config_read32(u32 bus, u32 slot, u32 function, u32 offset)
-{
-    u32 address = 0x80000000u | ((bus & 0xFF) << 16) |
-                  ((slot & 0x1F) << 11) | ((function & 7) << 8) |
-                  (offset & 0xFC);
-    outl(0xCF8, address);
-    return inl(0xCFC + (offset & 3));
-}
-
-void pci_config_write32(u32 bus, u32 slot, u32 function, u32 offset,
-                        u32 value)
-{
-    u32 address = 0x80000000u | ((bus & 0xFF) << 16) |
-                  ((slot & 0x1F) << 11) | ((function & 7) << 8) |
-                  (offset & 0xFC);
-    outl(0xCF8, address);
-    outl(0xCFC + (offset & 3), value);
-}
-
 static void serial_putc_raw(char c)
 {
     while ((inb(COM1 + 5) & 0x20) == 0)
@@ -142,6 +123,64 @@ void console_write_n(const char *text, usize length)
 {
     for (usize i = 0; i < length; i++)
         serial_putc_raw(text[i]);
+}
+
+void console_write_dec(u32 value);
+
+/* PCI enumeration output.  pci.adb calls these while walking the bus. */
+static void serial_write_hex(u32 value, int digits)
+{
+    static const char hex[] = "0123456789abcdef";
+    for (int i = digits - 1; i >= 0; i--)
+        serial_putc_raw(hex[(value >> ((u32)i * 4)) & 0xF]);
+}
+
+void pci_report_header(void)
+{
+    console_write("[pci] enumeration\n");
+}
+
+void pci_report_device(u32 bus, u32 slot, u32 func, u32 id, u32 class_code)
+{
+    console_write("[pci] ");
+    serial_write_hex(bus, 2);
+    serial_putc_raw(':');
+    serial_write_hex(slot, 2);
+    serial_putc_raw('.');
+    serial_write_hex(func, 1);
+    console_write(" ");
+    serial_write_hex(id & 0xFFFF, 4);
+    serial_putc_raw(':');
+    serial_write_hex(id >> 16, 4);
+    console_write(" class ");
+    serial_write_hex(class_code >> 8, 6);
+    serial_putc_raw('\r');
+    serial_putc_raw('\n');
+}
+
+void pci_report_summary(u32 found, u32 ecam)
+{
+    console_write("[pci] ");
+    console_write_dec(found);
+    console_write(" device(s), ECAM ");
+    console_write(ecam ? "on\n" : "off\n");
+}
+
+/* Print an unsigned decimal value; the driver service has no printf. */
+void console_write_dec(u32 value)
+{
+    char digits[10];
+    int count = 0;
+    if (value == 0) {
+        serial_putc_raw('0');
+        return;
+    }
+    while (value) {
+        digits[count++] = (char)('0' + value % 10);
+        value /= 10;
+    }
+    while (count)
+        serial_putc_raw(digits[--count]);
 }
 
 usize strlen(const char *text)

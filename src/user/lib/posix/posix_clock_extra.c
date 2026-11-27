@@ -111,3 +111,12 @@ int nanosleep(const struct timespec *request, struct timespec *remaining)
         zos_syscall3(ZOS_SLEEP, (long)milliseconds, 0, 0);
     return 0;
 }
+
+/* BSD-era short sleep; newlib does not provide it on this target. */
+int usleep(useconds_t microseconds)
+{
+    struct timespec request;
+    request.tv_sec = (time_t)(microseconds / 1000000u);
+    request.tv_nsec = (long)(microseconds % 1000000u) * 1000L;
+    return nanosleep(&request, NULL);
+}

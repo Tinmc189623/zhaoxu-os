@@ -74,6 +74,14 @@ struct dirent *readdir(DIR *directory)
     return &stream->entry;
 }
 
+/* Restart the snapshot from the beginning (the listing is a static buffer). */
+void rewinddir(DIR *directory)
+{
+    struct zos_dir_stream *stream = (struct zos_dir_stream *)directory;
+    if (stream)
+        stream->offset = 0;
+}
+
 /* Release the snapshot. */
 int closedir(DIR *directory)
 {

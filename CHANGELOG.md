@@ -4,6 +4,21 @@ Full version history of Zhaoxu OS. See [README.md](README.md) for what the curre
 
 ## 0.8.0 「Cedar」
 
+### 0.8.0 交付范围（与镜像一致）
+
+0.8.0 的默认 ISO 是一张**文本安装盘**：Limine 只有 `Install` 一项，启动后显示无名称动画，随后在 80×25 帧缓冲控制台上运行安装器，把 ext4 根、FAT32 ESP 和可选数据分区写盘，随后停在完成页（ENTER 重启，ESC 留在文本控制台）。Aqua 在 initramfs 里，但只由**安装后的 ESP**（菜单项 `Start`）启动，ISO 本身不进入桌面。
+
+以下名称在本版**不是**镜像的组成部分，不能据源码树推断为已可用：
+
+- **FreeBSD personality / OS_5P 运行时**：只接了 M2 的缝；`FREEBSD_PERSONALITY` 默认关闭，打开也只是弱符号与 `personality_start()` 记录 boot info，到不了 `mi_startup`；VFS/TCP/IP/cdev/pf/NFS 运行时不是 FreeBSD 实现。
+- **IO/287**：树里没有目录与符号，只有名称和 `version.cfg` 里的一行版本号。
+- **btrfs**：规则 45 的默认 btrfs 根未满足，安装器格式化的是 ext4；树里没有 btrfs 实现，也没有 btrfs-progs 程序（Fedora 45 源码已拉取登记，但未构建接入）。
+- **glibc 2.44**：只有端口骨架与工具链脚本，glibc 源码不在树里，静态构建未完成，镜像里没有 glibc。
+- **交叉工具链**：`tools/binutils.py`、`tools/gcc.py` 是可用的树外构建脚本，但默认 `make` 不使用它们，内核仍由宿主的 freestanding clang/`ld.lld` 链接。
+- **网络与音频**：`/bin/drivers.udrv` 含 e1000 与 HDA 初始化，但内核套接字只接受 `AF_UNIX`，没有协议栈收发；`hda_play()` 没有调用方；输入仍是 PS/2。
+
+与上表相对，本版镜像还包含 `/bin/csh`（tcsh 6.24.16，`tools/csh.py` 构建，默认 shell）；bash 5.3 保留为 `/bin/bash`。csh 已构建入镜像，但树里还没有它的启动验证日志。
+
 ### ISO 引导不再黑屏
 - 安装盘以前跳过开机画面，文本安装器又只写内核日志环、没有屏幕出口，所以从 Limine 退出到安装界面之间整段是黑屏。现在 `splash_begin()` 在安装模式也运行（画面本身不含任何名称），启动阶段照常在屏上推进。
 - 新增 `kernel/lib/fbcon.c`：80x25 的帧缓冲文本控制台，16x32 字符格居中显示在 Limine 帧缓冲上，VGA 16 色、滚动、退格和制表符；`console` 增加颜色出口，安装器的 `sys_console_color` 能真正落到屏幕。安装模式的安装器改为在这块控制台上运行，蓝色背景、浅灰文字。
@@ -25,6 +40,9 @@ Full version history of Zhaoxu OS. See [README.md](README.md) for what the curre
 - 验证：`x86_64-zhaoxu-gcc (GCC) 16.2.1 20260819`，`-print-libgcc-file-name` 指向安装目录下的 `libgcc.a`。
 
 ### glibc ABI: anonymous memory, TLS, futex, signals and auxv
+
+以下是内核侧的系统调用实现；glibc 本体不在树里，镜像也不带它，默认构建不运行这些回归程序。
+
 - `SYS_MMAP` (54) now serves two backends: memfd mappings unchanged, and `fd == -1` with `MAP_ANONYMOUS` (0x20) routed to the per-process allocator in `kernel/proc/anon.c`. It keeps up to 128 regions in a 48 GiB window at `1 TiB + 16 GiB`, does first-fit or `MAP_FIXED`, refuses more than 512 MiB per call, rolls a failed grow back page by page, and implements `munmap`, `mprotect` (via the new `vmm_space_protect_page`, which rewrites W/NX and keeps the frame and USER bit) and `madvise(DONTNEED/FREE)` by zeroing in place. fork copies the region table; exec and release reset it.
 - `SYS_ARCH_PRCTL` (88): `ARCH_SET_FS`/`ARCH_GET_FS` move a per-thread TLS base; the value is written to MSR `0xC0000100` immediately for the calling thread and on every context switch, so a preempted thread resumes with its own base. fork inherits the parent's base, exec clears it; GS reports `ENOSYS`.
 - `SYS_FUTEX` (92): WAIT/WAKE and the BITSET variants, keyed by the word's physical address so a shared page mapped at two virtual addresses is one futex. The compare-and-block happens under the scheduler lock, which is what rules out a lost wakeup; a woken thread is flagged separately from a timed-out one.

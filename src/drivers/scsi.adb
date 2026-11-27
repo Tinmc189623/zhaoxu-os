@@ -140,11 +140,18 @@ package body Scsi is
    --  public API ----------------------------------------------------------
 
    function Init return Interfaces.C.int is
-      Devs : constant Interfaces.C.int := Ide.Init;
+      Devs : Interfaces.C.int;
       Inq  : aliased Byte_Buf (0 .. 63);
       Cap  : aliased Byte_Buf (0 .. 15);
       Index : Unsigned_32 := 0;
    begin
+      --  Reuse the IDE enumeration when the driver service already probed
+      --  it; re-running IDENTIFY would reset that table underneath the
+      --  block service.
+      Devs := Ide.Drive_Count;
+      if Devs = 0 then
+         Devs := Ide.Init;
+      end if;
       G_Count := 0;
       for I in G_Devices'Range loop
          G_Devices (I) := (Used => False, Ide_Dev => 0, Capacity => 0);

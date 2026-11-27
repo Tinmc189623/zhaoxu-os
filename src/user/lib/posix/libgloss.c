@@ -153,13 +153,15 @@ int _getpid(void)
     return (int)zos_syscall3(ZOS_GETPID, 0, 0, 0);
 }
 
-/* Signals are not delivered yet; report that kill is unsupported. */
+/* send a signal to A pid or a process group (0 = own group). */
 int _kill(int pid, int signal)
 {
-    (void)pid;
-    (void)signal;
-    errno = ENOSYS;
-    return -1;
+    long result = zos_syscall3(ZOS_KILL, pid, signal, 0);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return 0;
 }
 
 /* Fork this process; the child resumes with 0. */

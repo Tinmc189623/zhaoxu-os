@@ -1,6 +1,6 @@
 # Roadmap
 
-This roadmap tracks the work required by `RULES.md` v1.96 and the designs in
+This roadmap tracks the work required by the 规则 section of `CLAUDE.md` and the designs in
 `docs/superpowers/`. Status is honest about what is implemented, what is only
 compiled, and what is still missing. It is not a promise of dates.
 
@@ -47,7 +47,7 @@ compiled, and what is still missing. It is not a promise of dates.
 | 32 | ZAF on Skia | ZAF is not on Skia |
 
 These are tracked here rather than claimed as done; the ISO layout (the media
-section of `RULES.md`) is now checked mechanically by `tools/iso-check.py`.
+section of `CLAUDE.md`) is now checked mechanically by `tools/iso-check.py`.
 
 ## Next: desktop and graphics
 
@@ -121,7 +121,7 @@ section of `RULES.md`) is now checked mechanically by `tools/iso-check.py`.
 
 ## Working rules
 
-- Every item is judged against `RULES.md`; a feature that violates a rule is
+- Every item is judged against the 规则 section of `CLAUDE.md`; a feature that violates a rule is
   not done, even if it runs.
 - Third-party code is used as shipped (rule 39). No self-developed component
   is presented as an upstream port (rule 42).

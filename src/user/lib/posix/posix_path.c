@@ -5,6 +5,7 @@
 #include "posix_glue.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -140,3 +141,10 @@ int _mkdir(const char *path, mode_t mode)
 {
     return mkdir(path, mode);
 }
+
+/* Old-style create is open with the three-way flag combination. */
+int creat(const char *path, mode_t mode)
+{
+    return open(path, O_CREAT | O_WRONLY | O_TRUNC, mode);
+}
+

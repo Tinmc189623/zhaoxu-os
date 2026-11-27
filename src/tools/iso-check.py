@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Check a Zhaoxu OS ISO against the media layout RULES.md requires.
+"""Check a Zhaoxu OS ISO against the media layout CLAUDE.md requires.
 
 usage: iso-check.py out/zhaoxu-os_x64_<version>_<build>_ld.iso
 
 Lists the image with xorriso and compares it with the directory list from
-RULES.md (the ISO section).  Missing or extra top-level layout entries are
+CLAUDE.md (the ISO section).  Missing or extra top-level layout entries are
 reported; the exit code is 1 when anything required is absent.
 """
 

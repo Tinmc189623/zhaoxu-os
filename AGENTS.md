@@ -1,6 +1,6 @@
 # Zhaoxu OS™（内核 Yuanshuo™）Agent 指南
 
-> 优先级：`RULES.local.md` > `~/.claude/CLAUDE.md` > `RULES.md` > `CLAUDE.md` >> 本文件。冲突时按这个顺序取高优先级的一方。
+> 优先级：`~/.claude/CLAUDE.md` > `CLAUDE.md` > 本文件。冲突时按这个顺序取高优先级的一方。
 
 ## 构建与运行
 
@@ -11,7 +11,7 @@
   make iso                             # UEFI + legacy BIOS 双启动 ISO
   make run-iso                         # UEFI 光盘启动
   make host-test                       # 纯 Python 宿主检测单元测试
-  python3 tools/build.py --check          # 辅助：base/kernel/ada/iso/run 工具检查
+  python3 tools/build.py --check       # 辅助：base/kernel/ada/iso/run 工具检查
   ```
   - **Linux / WSL**：`gcc`、`g++`、带 Ada 支持的 gcc（`gcc-14`+`gnat-14` 或 `gcc-16`+`gnat-16`；Makefile 会检查 `-print-prog-name=gnat1` 是否真实存在，按 `gcc-14/gcc-15/gcc-16` 顺序选择，可用 `ADA=` 覆盖）、`ld.lld`、`objcopy`、`clang`、`lld-link`、`qemu-system-x86_64`、OVMF、`mkfs.vfat`、`mtools`、`tar`、`xorriso`、`squashfs-tools`、`ffmpeg`（壁纸转 raw，可用已有 `build/ade/wallpaper.rgb` 缓存跳过）。
   - **macOS**：Homebrew `llvm`（clang、llvm-objcopy）、`lld`（ld.lld、lld-link）、`qemu`、`xorriso`、`mtools`、`dosfstools`、`squashfs`；Ada 驱动需要 x86_64-elf GNAT（用 `ADA=` 指向）。

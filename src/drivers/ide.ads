@@ -31,6 +31,16 @@ package Ide is
      return Interfaces.C.int
      with Export, Convention => C, External_Name => "ide_drive_read";
 
+   function Write_Block (Drive  : Interfaces.C.int;
+                         Lba    : Unsigned_64;
+                         Count  : Unsigned_32;
+                         Buffer : System.Address)
+     return Interfaces.C.int
+     with Export, Convention => C, External_Name => "ide_drive_write";
+
+   function Flush (Drive : Interfaces.C.int) return Interfaces.C.int
+     with Export, Convention => C, External_Name => "ide_drive_flush";
+
    function Atapi_Packet (Drive    : Interfaces.C.int;
                           Cdb      : System.Address;
                           Cdb_Len  : Unsigned_32;
