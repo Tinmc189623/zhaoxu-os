@@ -1,9 +1,9 @@
 # Contributing to Zhaoxu OS
 
 Thanks for helping. This repository has stricter rules than a typical project;
-read `RULES.md` v1.96 first. `AGENTS.md` describes the invariants and
-`CLAUDE.md` gives the build and architecture tour. If a contribution conflicts
-with a rule, the rule wins.
+read the 规则 section of `CLAUDE.md` first. `AGENTS.md` describes the invariants
+and `CLAUDE.md` also gives the build and architecture tour. If a contribution
+conflicts with a rule, the rule wins.
 
 ## Ground rules
 
@@ -26,7 +26,7 @@ with a rule, the rule wins.
   Z64 exactly. Always write the brand `Nexsteaduser` in one word and use
   `admin@nexsteaduser.com` for project mail.
 - The shell is GNU bash 5.3, cross-built by `tools/bash.py` from
-  `third_party/bash`. `RULES.md` rule 1 forbids a new self-developed shell.
+  `third_party/bash`. `CLAUDE.md` 规则 1 forbids a new self-developed shell.
   Port toybox for the full command set.
 
 ## Building

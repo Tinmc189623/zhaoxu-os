@@ -28,6 +28,7 @@ typedef struct __zos_dir_stream DIR;
 
 DIR *opendir(const char *path);
 struct dirent *readdir(DIR *directory);
+void rewinddir(DIR *directory);
 int closedir(DIR *directory);
 
 #endif

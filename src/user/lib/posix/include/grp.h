@@ -20,4 +20,9 @@ int getgrgid_r(gid_t gid, struct group *result, char *buffer, size_t size,
                struct group **found);
 int initgroups(const char *user, gid_t group);
 
+/* Sequential group enumeration (the group database is empty today). */
+struct group *getgrent(void);
+void setgrent(void);
+void endgrent(void);
+
 #endif

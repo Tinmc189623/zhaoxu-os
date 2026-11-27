@@ -451,6 +451,14 @@ void process_exit_current(int status)
     shm_process_exit(process->pid);
     zfd_process_exit(process);
     process_release_pages(process);
+    /* Tell a waiting shell that this child changed state. */
+    if (process->parent_pid) {
+        struct process *parent = process_lookup(process->parent_pid);
+        if (parent) {
+            parent->sig_pending |= 1ULL << (SIGCHLD - 1);
+            signal_wake(parent);
+        }
+    }
     g_last_pid = process->pid;
     yuanshuo_kthread_exit();
 }

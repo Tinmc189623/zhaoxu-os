@@ -65,6 +65,6 @@ installed kernel:
 - Stage 1 writes `1`; the stage 2 app writes `2`; the OOBE writes nothing
   (file removed).
 
-The ESP layout example in RULES.md does not list this file, so it is not
+The ESP layout example in `CLAUDE.md` does not list this file, so it is not
 written until stages 2 and 3 exist; the design is recorded here so the two
 stages and the media layout do not drift apart.

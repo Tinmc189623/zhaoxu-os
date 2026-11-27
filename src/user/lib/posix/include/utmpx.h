@@ -5,6 +5,9 @@
 #include <sys/types.h>
 #include <sys/time.h>
 
+/* Standard database path; login accounting will create it once Thresh exists. */
+#define _PATH_UTMPX "/var/run/utmp"
+
 #define EMPTY 0
 #define RUN_LVL 1
 #define BOOT_TIME 2

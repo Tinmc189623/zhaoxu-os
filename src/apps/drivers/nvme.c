@@ -146,13 +146,23 @@ static int create_queues(void)
     command[0] = 0x05u | ((u32)(++g_admin.cid) << 16);
     command[10] = 1u | ((NVME_QDEPTH - 1) << 16);
     command[11] = 1; /* physically contiguous completion queue */
+    /* PRP1 carries the completion queue base address.  Without it the
+     * controller has no queue memory to write completions into, and every
+     * I/O command times out even though the queue was created. */
+    command[6] = (u32)g_io.cq_phys;
+    command[7] = (u32)(g_io.cq_phys >> 32);
     if (submit(&g_admin, command, NULL) != 0)
         return -1;
 
     command_zero(command);
     command[0] = 0x01u | ((u32)(++g_admin.cid) << 16);
     command[10] = 1u | ((NVME_QDEPTH - 1) << 16);
-    command[11] = 1; /* physically contiguous submission queue */
+    /* CDW11: PC=1 and CQID=1 in bits 31:16.  Leaving CQID at zero binds the
+     * I/O submission queue to the admin completion queue, so every I/O
+     * completion lands where submit(&g_io) never polls and times out. */
+    command[11] = 1u | (1u << 16);
+    command[6] = (u32)g_io.sq_phys;
+    command[7] = (u32)(g_io.sq_phys >> 32);
     return submit(&g_admin, command, NULL);
 }
 
@@ -269,8 +279,12 @@ int nvme_init(void)
                 continue;
 
             u32 bar_low = pci_config_read32(bus, slot, 0, 0x10);
-            u32 bar_high = pci_config_read32(bus, slot, 0, 0x14);
-            bar = (bar_low & 0xFFFFFFF0u) | ((u64)bar_high << 32);
+            /* BAR0/1 must be a 64-bit memory BAR (type 0b100).  A 32-bit or
+             * I/O BAR would make the high half read a different register. */
+            if ((bar_low & 0x6u) != 0x4u)
+                continue;
+            bar = (u64)(bar_low & 0xFFFFFFF0u) |
+                  ((u64)pci_config_read32(bus, slot, 0, 0x14) << 32);
             if (!bar || bar >= 0x100000000ull)
                 continue;
             u32 command = pci_config_read32(bus, slot, 0, 4);
@@ -286,12 +300,18 @@ int nvme_init(void)
     u32 version = reg_read32(NVME_REG_VS);
     g_doorbell_stride = 4u << ((cap >> 32) & 0xF);
 
-    /* Disable the controller and wait for it to acknowledge reset. */
+    /* Disable the controller and require it to acknowledge reset before any
+     * queue register is programmed. */
     reg_write32(NVME_REG_CC, 0);
+    int disabled = 0;
     for (u32 spin = 0; spin < 1000000u; spin++) {
-        if ((reg_read32(NVME_REG_CSTS) & 1) == 0)
+        if ((reg_read32(NVME_REG_CSTS) & 1) == 0) {
+            disabled = 1;
             break;
+        }
     }
+    if (!disabled)
+        return -1;
 
     g_admin.sq_phys = pmm_alloc_page();
     g_admin.cq_phys = pmm_alloc_page();

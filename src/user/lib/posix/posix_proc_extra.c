@@ -30,12 +30,19 @@ int setsid(void)
     return -1;
 }
 
+/* Every process is its own group until the kernel grows one; a shell can
+ * start when it sees the pid it expects, and foreground arbitration is a
+ * no-op instead of an error. */
 int setpgid(pid_t pid, pid_t group)
 {
     (void)pid;
     (void)group;
-    errno = ENOSYS;
-    return -1;
+    return 0;
+}
+
+pid_t getpgrp(void)
+{
+    return getpid();
 }
 
 pid_t getsid(pid_t pid)
@@ -123,6 +130,12 @@ pid_t wait4(pid_t pid, int *status, int options, struct rusage *usage)
     if (usage)
         memset(usage, 0, sizeof(*usage));
     return waitpid(pid, status, options);
+}
+
+/* wait3 is wait4 for any child; kept for tcsh and old BSD code. */
+pid_t wait3(int *status, int options, struct rusage *usage)
+{
+    return wait4(-1, status, options, usage);
 }
 
 /* Block forever: no signal is delivered to interrupt a pause yet. */
@@ -265,6 +278,12 @@ long pathconf(const char *path, int name)
         errno = EINVAL;
         return -1;
     }
+}
+
+long fpathconf(int fd, int name)
+{
+    (void)fd;
+    return pathconf("/", name);
 }
 
 size_t confstr(int name, char *buffer, size_t length)

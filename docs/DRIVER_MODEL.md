@@ -1,6 +1,6 @@
 # Driver model
 
-This is the driver and extension model RULES.md v1.14.3+ (rules 48–53) sets
+This is the driver and extension model the 规则 section of `CLAUDE.md` (rules 48–53) sets
 for Zhaoxu OS, written against what the tree implements today. Status is
 stated per item; nothing unbuilt is described as working.
 
@@ -60,7 +60,7 @@ drivers.udrv/
   logs. `/bin/ext4fs` holds the trusted block capability and `/bin/display`
   the display capability.
 - The ISO carries the same image as `casper/vga10h.kext` because the media layout
-  of RULES.md names that file; the build artifact is the `.udrv` bundle.
+  of `CLAUDE.md` names that file; the build artifact is the `.udrv` bundle.
 - `/bin/ext4fs.udrv` (filesystem service) and `/bin/display.udrv` (KMS
   service) ship as bundles too; the kernel grants the trusted block and
   display capabilities by matching the bundle path or its `executable`.

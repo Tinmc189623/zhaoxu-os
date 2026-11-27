@@ -204,7 +204,7 @@ tr:nth-child(even) td { background: #fafcfe; }
   <tr><td>引导管理器</td><td>Limine 12（原样使用，UEFI + Legacy BIOS）</td></tr>
   <tr><td>桌面</td><td>Aqua Desktop Environment</td></tr>
   <tr><td>合成器 / 窗口管理器</td><td>Desktop Window Compositor / Desktop Window Manager</td></tr>
-  <tr><td>Shell</td><td>GNU bash 5.3（<code>/bin/bash</code>）；RULES.md 第 1 条要求以 csh 为默认并保留 bash</td></tr>
+  <tr><td>Shell</td><td>GNU bash 5.3（<code>/bin/bash</code>）；CLAUDE.md 规则 1 要求以 csh 为默认并保留 bash</td></tr>
   <tr><td>可执行格式</td><td>ZXE v1（PIE，RVA 0 链接，随机基址，W^X）</td></tr>
   <tr><td>图形 API</td><td>Z64 1.0（内核与 Ring3 共用的光栅接口，<code>kernel/include/zos_api.h</code>）</td></tr>
   <tr><td>脚本</td><td>仓库脚本一律 Ruby；构建系统是 Makefile</td></tr>
@@ -467,7 +467,7 @@ ruby tools/zxe-pack.rb in.elf out.zxe</pre>
 </ul>
 
 <div class="note warn">
-  <b>两条规则需要项目所有者修改 RULES.md（规则 41，AI 不得代改）。</b><br>
+  <b>两条规则需要项目所有者修改 CLAUDE.md 的规则区域（规则 41，AI 不得代改）。</b><br>
   r9：驱动只在 Ring3 —— 与内核内 IO/287 直接冲突。<br>
   r5：C 写内核、SPARK 写驱动 —— 与内核内 C++ 驱动族冲突。
 </div>

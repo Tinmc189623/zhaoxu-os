@@ -73,7 +73,7 @@
 <body>
 <div class="sheet">
   <h1>Zhaoxu OS 规则考核试卷</h1>
-  <p class="sub">依据 <code>RULES.local.md</code>、<code>RULES.md</code>（v1.14.3，含规则 1–55）、ISO / ESP / Disk 示例，以及 `CLAUDE.md` 的优先级声明。</p>
+  <p class="sub">依据 Zhaoxu OS 项目规则、ISO / ESP / Disk 示例，以及 `CLAUDE.md` 的规则声明。</p>
   <div class="meta">
     <span>题型：单选 / 多选</span>
     <span>满分：100 分（每题 4 分，共 25 题）</span>
@@ -120,9 +120,9 @@
 
   <div class="q" data-type="single" data-answer="b">
     <p class="stem"><span class="tag">优先级</span>规则文件冲突时的优先级顺序是？</p>
-    <label class="opt"><input type="radio" name="q5" value="a">a. AGENTS.md &gt; CLAUDE.md &gt; RULES.md</label>
-    <label class="opt"><input type="radio" name="q5" value="b">b. RULES.local.md &gt; ~/.claude/CLAUDE.md &gt; RULES.md &gt; CLAUDE.md &gt;&gt; AGENTS.md</label>
-    <label class="opt"><input type="radio" name="q5" value="c">c. RULES.md &gt; RULES.local.md &gt; CLAUDE.md</label>
+    <label class="opt"><input type="radio" name="q5" value="a">a. AGENTS.md &gt; CLAUDE.md &gt; ~/.claude/CLAUDE.md</label>
+    <label class="opt"><input type="radio" name="q5" value="b">b. ~/.claude/CLAUDE.md &gt; CLAUDE.md &gt;&gt; AGENTS.md</label>
+    <label class="opt"><input type="radio" name="q5" value="c">c. CLAUDE.md &gt; ~/.claude/CLAUDE.md &gt; AGENTS.md</label>
     <label class="opt"><input type="radio" name="q5" value="d">d. 以代码实现为准</label>
     <div class="verdict"></div>
   </div>
@@ -308,12 +308,12 @@
     <div class="verdict"></div>
   </div>
 
-  <div class="q" data-type="multi" data-answer="b,c,d">
-    <p class="stem"><span class="tag">RULES.local.md</span>个人规则的两条要求是？</p>
-    <label class="opt"><input type="checkbox" name="q25" value="a">a. 允许 AI 任务完成后自动 commit</label>
-    <label class="opt"><input type="checkbox" name="q25" value="b">b. 必须写上团队与个人版权信息</label>
-    <label class="opt"><input type="checkbox" name="q25" value="c">c. 禁止 AI 自动提交或推送，只有用户明确要求才可 commit/push</label>
-    <label class="opt"><input type="checkbox" name="q25" value="d">d. 本规则文件禁止上传至仓库</label>
+  <div class="q" data-type="single" data-answer="a">
+    <p class="stem"><span class="tag">规则 58</span>构建系统必须使用？</p>
+    <label class="opt"><input type="radio" name="q25" value="a">a. Makefile</label>
+    <label class="opt"><input type="radio" name="q25" value="b">b. CMake</label>
+    <label class="opt"><input type="radio" name="q25" value="c">c. Ninja</label>
+    <label class="opt"><input type="radio" name="q25" value="d">d. 任意构建工具均可</label>
     <div class="verdict"></div>
   </div>
 

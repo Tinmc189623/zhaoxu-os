@@ -12,8 +12,8 @@
  *        LBA34, gap, ESP at LBA 2048, ext4 root, backup GPT at the end.
  *
  * Limine 12 reads FAT and ISO9660 only, so KERNEL.ELF, MiSans.ttf and
- * WALL.RGB live under /boot/limine on the ESP (the layout in RULES.md's ESP
- * example); the ext4 root carries the installed filesystem and no boot
+ * WALL.RGB live under /boot/limine on the ESP (the layout in the ESP example
+ * of CLAUDE.md); the ext4 root carries the installed filesystem and no boot
  * files.  The boot chain is firmware -> Limine -> boot/limine/KERNEL.ELF
  * (rule 31); no flat kernel image is loaded.
  */

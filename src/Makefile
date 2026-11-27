@@ -124,10 +124,17 @@ BRK_BOOT_TEST ?= 0
 CFLAGS += -DBRK_BOOT_TEST=$(BRK_BOOT_TEST)
 ABI_BOOT_TEST ?= 0
 CFLAGS += -DABI_BOOT_TEST=$(ABI_BOOT_TEST)
+CSH_BOOT_TEST ?= 0
+CFLAGS += -DCSH_BOOT_TEST=$(CSH_BOOT_TEST)
 PERSONALITY_SELFTEST ?= 0
 CFLAGS += -DPERSONALITY_SELFTEST=$(PERSONALITY_SELFTEST)
 FREEBSD_PERSONALITY ?= 0
 CFLAGS += -DFREEBSD_PERSONALITY=$(FREEBSD_PERSONALITY)
+# Zhaoxu OS runs OS_5P (rules 1, 5, 56): Yuanshuo, IO/287 and the BSD
+# personality together are the kernel.  IO/287 is part of KERNEL.ELF, not an
+# add-on; IO287=0 exists only to build the bare Yuanshuo core for diagnosis.
+IO287 ?= 1
+CFLAGS += -DIO287=$(IO287)
 # make does not track CFLAGS changes; stamps keyed by the test mode force
 # kernel/main.o to rebuild when a boot-time test toggles, so an ISO cannot
 # silently ship a self-test kernel.
@@ -191,6 +198,11 @@ $(BUILD)/abi-%.stamp:
 	@mkdir -p $(BUILD)
 	@rm -f $(BUILD)/abi-*.stamp
 	@touch $@
+CSH_STAMP := $(BUILD)/csh-$(CSH_BOOT_TEST).stamp
+$(BUILD)/csh-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/csh-*.stamp
+	@touch $@
 TOYBOX_STAMP := $(BUILD)/toybox-$(TOYBOX_BOOT_TEST).stamp
 $(BUILD)/toybox-%.stamp:
 	@mkdir -p $(BUILD)
@@ -211,7 +223,12 @@ $(BUILD)/freebsd-personality-%.stamp:
 	@mkdir -p $(BUILD)
 	@rm -f $(BUILD)/freebsd-personality-*.stamp
 	@touch $@
-$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP) $(GL_STAMP) $(VK_STAMP) $(FE_STAMP) $(POSIX_STAMP) $(NLIBC_STAMP) $(TOYBOX_STAMP) $(PANIC_STAMP) $(SPLASH_STAMP) $(BRK_STAMP) $(ABI_STAMP) $(PERSONALITY_STAMP) $(FREEBSD_STAMP)
+IO287_STAMP := $(BUILD)/io287-$(IO287).stamp
+$(BUILD)/io287-%.stamp:
+	@mkdir -p $(BUILD)
+	@rm -f $(BUILD)/io287-*.stamp
+	@touch $@
+$(BUILD)/kernel/main.o: $(M0_STAMP) $(M5_STAMP) $(WLSTOCK_STAMP) $(FT_STAMP) $(GL_STAMP) $(VK_STAMP) $(FE_STAMP) $(POSIX_STAMP) $(NLIBC_STAMP) $(TOYBOX_STAMP) $(PANIC_STAMP) $(SPLASH_STAMP) $(BRK_STAMP) $(ABI_STAMP) $(CSH_STAMP) $(PERSONALITY_STAMP) $(FREEBSD_STAMP) $(IO287_STAMP)
 # The self-test body is compiled out unless the flag is on, so the object
 # must follow the flag as well.
 $(BUILD)/kernel/personality/selftest.o: $(PERSONALITY_STAMP)
@@ -221,6 +238,14 @@ ADAFLAGS := -c -gnatp -gnat2022 -O2 -g -fno-pie \
             -Idrivers
 LDFLAGS := -m elf_x86_64 -T kernel/linker.ld -nostdlib -static \
            --build-id=none -z max-page-size=0x1000
+# Freestanding kernel C++ for IO/287: the kernel has no libstdc++, exceptions,
+# RTTI or static construction machinery.
+KERNEL_CXXFLAGS := $(filter-out -std=gnu11,$(CFLAGS)) -std=gnu++20 \
+                   -fno-exceptions -fno-rtti -fno-threadsafe-statics \
+                   -fno-use-cxa-atexit -nostdinc++
+$(BUILD)/kernel/io287/%.o: kernel/io287/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(KERNEL_CXXFLAGS) -c $< -o $@
 # ZhaoxuBootloader UEFI: C loader built as a PE32+ EFI application.
 BOOT_CFLAGS = -target x86_64-pc-win32 -m64 -O2 -ffreestanding -fno-builtin \
               -fno-stack-protector -mno-stack-arg-probe -mno-red-zone \
@@ -319,6 +344,12 @@ C_SRCS := kernel/main.c \
 ifeq ($(FREEBSD_PERSONALITY),1)
 C_SRCS += kernel/personality/freebsd/boot.c
 endif
+# IO/287: the OS_5P device registry and PCI bus backend.  Rule 5 assigns
+# IO/287 to C++; the kernel-side build keeps it freestanding (no exceptions,
+# RTTI, static guards or C++ runtime).
+ifeq ($(IO287),1)
+CXX_SRCS += kernel/io287/core.cpp kernel/io287/pci.cpp
+endif
 ASM_SRCS := kernel/arch/x86_64/entry.S \
             kernel/arch/x86_64/gdt_flush.S \
             kernel/arch/x86_64/isr.S \
@@ -327,6 +358,7 @@ ASM_SRCS := kernel/arch/x86_64/entry.S \
             kernel/arch/x86_64/ap_trampoline.S
 
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(C_SRCS)) \
+        $(patsubst %.cpp,$(BUILD)/%.o,$(CXX_SRCS)) \
         $(patsubst %.S,$(BUILD)/%.o,$(ASM_SRCS)) \
         $(BUILD)/initramfs.o
 DEPS := $(OBJS:.o=.d)
@@ -342,7 +374,7 @@ $(HEADLESS_HEADER): FORCE
 
 FORCE:
 
-.PHONY: all clean run iso run-iso run-install run-bios run-install-bios run-disk tree-doc disk-doc version fonts host-test fsplus-test bash FORCE
+.PHONY: all clean run iso run-iso run-install run-bios run-install-bios run-disk tree-doc disk-doc version fonts host-test fsplus-test bash csh FORCE
 
 # The kernel is built for the ISO and the installer; Limine stays the only
 # boot manager (rules 8/31), and the installed ESP carries the kernel and
@@ -585,7 +617,8 @@ $(BUILD)/install_client.uelf: $(INSTALL_SRCS) user/userlib.h user/user.ld
 	  $(USER_LDFLAGS) -o $@ $(INSTALL_SRCS)
 
 # ---- Ring3 KMS display service (M1) ---------------------------------
-DISPLAY_SRCS := apps/display/main.c apps/drivers/glue.c user/userlib.c
+DISPLAY_SRCS := apps/display/main.c apps/display/pci.c apps/drivers/glue.c \
+                user/userlib.c
 DISPLAY_HDRS := user/userlib.h kernel/include/io.h kernel/include/types.h
 
 $(BUILD)/display.uelf: $(DISPLAY_SRCS) $(DISPLAY_HDRS) user/user.ld
@@ -813,6 +846,14 @@ $(OUT)/bash.elf: tools/bash.py third_party/bash/configure user/elf.ld
 
 bash: $(OUT)/bash.elf
 
+# ---- csh: the default login shell (rule 1) --------------------------
+# tcsh 6.24.16 from the Fedora 45 SRPM, cross-built against newlib and the
+# ncurses libtinfo by tools/csh.py.
+$(OUT)/csh.elf: tools/csh.py third_party/tcsh/tcsh-6.24.16.tar.gz user/elf.ld
+	$(PYTHON) tools/csh.py
+
+csh: $(OUT)/csh.elf
+
 # ---- ext4fs: the Ring3 ext4 service --------------------------------
 # Owns the OS-independent ext4 core (fs/ext4) and talks to the kernel over
 # the fs_rpc page; the kernel keeps its own copy until the VFS is forwarded.
@@ -837,9 +878,10 @@ DRV_ADAFLAGS := -c -gnatp -gnat2022 -O2 -fpie -fno-stack-protector \
                 -mno-red-zone -mgeneral-regs-only \
                 -mno-sse -mno-sse2 -mno-mmx -mno-avx -Idrivers \
                 -I$(DRV_BUILD)/ada
-DRV_ADA_SRCS := drivers/ahci.adb drivers/ide.adb drivers/ps2.adb \
-                drivers/mouse.adb drivers/serial.adb drivers/xhci.adb \
-                drivers/usb_msc.adb
+DRV_ADA_SRCS := drivers/ahci.adb drivers/ide.adb drivers/scsi.adb \
+                drivers/pci.adb drivers/pcie.adb \
+                drivers/ps2.adb drivers/mouse.adb drivers/serial.adb \
+                drivers/xhci.adb drivers/usb_msc.adb
 DRV_ADA_OBJS := $(patsubst drivers/%.adb,$(DRV_BUILD)/ada/%.o,$(DRV_ADA_SRCS))
 DRV_C_SRCS := apps/drivers/main.c apps/drivers/glue.c apps/drivers/keyboard.c \
               apps/drivers/rtc.c apps/drivers/usb_log.c \
@@ -860,6 +902,8 @@ $(DRV_BUILD)/ada/%.o: drivers/%.adb
 # usb_msc withs xhci, so its ALI file must exist before GNAT compiles it.
 $(DRV_BUILD)/ada/xhci.o: drivers/xhci.ads
 $(DRV_BUILD)/ada/usb_msc.o: $(DRV_BUILD)/ada/xhci.o drivers/usb_msc.ads
+$(DRV_BUILD)/ada/scsi.o: $(DRV_BUILD)/ada/ide.o drivers/ide.ads
+$(DRV_BUILD)/ada/pci.o: $(DRV_BUILD)/ada/pcie.o drivers/pcie.ads
 $(DRV_BUILD)/ada/ide.o: drivers/ide.ads
 
 $(DRV_BUILD)/%.o: %.c
@@ -876,6 +920,7 @@ $(BUILD)/drivers.uelf: $(DRV_OBJS) user/user.ld
 # ---- initramfs -------------------------------------------------------
 RAMFS := $(BUILD)/initramfs
 RAMFS_FILES := $(RAMFS)/bin/init $(RAMFS)/bin/aqua $(RAMFS)/bin/bash \
+               $(RAMFS)/bin/csh \
                $(RAMFS)/bin/drivers.udrv/manifest \
                $(RAMFS)/bin/drivers.udrv/executable \
                $(RAMFS)/bin/ext4fs.udrv/manifest \
@@ -898,8 +943,9 @@ $(RAMFS)/etc/vconsole.conf $(RAMFS)/etc/locale.conf $(RAMFS)/etc/shells \
 $(RAMFS)/etc/passwd $(RAMFS)/etc/group $(RAMFS)/etc/shadow \
 $(RAMFS)/etc/hosts $(RAMFS)/etc/nsswitch.conf $(RAMFS)/etc/resolv.conf \
 $(RAMFS)/etc/fstab $(RAMFS)/etc/profile $(RAMFS)/etc/securetty \
+$(RAMFS)/etc/csh.cshrc $(RAMFS)/etc/csh.login \
 $(RAMFS)/usr/share/zoneinfo/UTC $(RAMFS)/usr/share/zoneinfo/Asia/Shanghai \
-               $(RAMFS)/mnt \
+               $(RAMFS)/mnt $(RAMFS)/dev/null \
                $(RAMFS)/data/HELLO.TXT $(RAMFS)/data/HELLO.ZXE \
                $(RAMFS)/data/HELLO.ELF \
                $(RAMFS)/data/DOCS/INFO.TXT \
@@ -952,6 +998,10 @@ $(RAMFS)/bin/aqua: $(OUT)/aqua.zxe
 	cp $< $@
 
 $(RAMFS)/bin/bash: $(OUT)/bash.elf
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(RAMFS)/bin/csh: $(OUT)/csh.elf
 	@mkdir -p $(dir $@)
 	cp $< $@
 
@@ -1061,6 +1111,12 @@ $(RAMFS)/bin/orchestrd: $(OUT)/orchestrd.zxe
 	cp $< $@
 
 $(RAMFS)/bin/apps/install.zxe: $(OUT)/install_client.zxe
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+# /dev/null is a readable empty file until devfs grows real device nodes;
+# shells only need the open to succeed to seat fds 0-2.
+$(RAMFS)/dev/%: initramfs/dev/%
 	@mkdir -p $(dir $@)
 	cp $< $@
 
@@ -1284,7 +1340,7 @@ $(BUILD)/limine-bios-hdd.bin: third_party/limine/limine-bios-hdd.h \
 clean:
 	rm -rf $(BUILD) $(OUT)/kernel.elf $(OUT)/kernel.bin \
 	       $(OUT)/init.zxe $(OUT)/hello.zxe $(OUT)/aqua.zxe \
-	       $(OUT)/bash.elf $(OUT)/initramfs.tar $(OUT)/initramfs.z \
+	       $(OUT)/bash.elf $(OUT)/csh.elf $(OUT)/initramfs.tar $(OUT)/initramfs.z \
 	       $(OUT)/data.img $(OUT)/efi.img $(OUT)/zhaoxu-os_x64_*_ld.iso \
 	       $(OUT)/*.patched $(OUT)/target.img
 

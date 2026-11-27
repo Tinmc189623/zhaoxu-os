@@ -48,20 +48,19 @@ int cfsetspeed(struct termios *settings, speed_t speed)
     }
 }
 
-/* No foreground process groups exist in this scheduler. */
+/* The tty has no owner field; report the caller's group and accept changes
+ * so a job-control shell starts without a "no access to tty" fallback. */
 int tcsetpgrp(int fd, pid_t group)
 {
     (void)fd;
     (void)group;
-    errno = ENOSYS;
-    return -1;
+    return 0;
 }
 
 int tcgetpgrp(int fd)
 {
     (void)fd;
-    errno = ENOSYS;
-    return -1;
+    return getpgrp();
 }
 
 int tcsendbreak(int fd, int duration)

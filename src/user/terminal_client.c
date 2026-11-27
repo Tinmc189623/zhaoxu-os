@@ -115,8 +115,11 @@ static long start_shell(int slave_read, int slave_write)
         sys_dup2(slave_write, 2);
         sys_close(g_master_read);
         sys_close(g_master_write);
-        char *argv[3] = { "bash", "-i", 0 };
-        sys_execv("/bin/bash", argv);
+        /* Rule 1: csh first, bash as the fallback when the image is absent. */
+        char *csh_argv[3] = { "csh", "-i", 0 };
+        sys_execv("/bin/csh", csh_argv);
+        char *bash_argv[3] = { "bash", "-i", 0 };
+        sys_execv("/bin/bash", bash_argv);
         sys_exit(127);
     }
     return pid;

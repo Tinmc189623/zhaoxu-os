@@ -14,6 +14,21 @@ package body Pcie is
    --  until the MMIO window above 4 GiB is mapped explicitly.
    Table_Limit : constant Unsigned_64 := 16#10_0000_0000#;
 
+   --  Report the ECAM bring-up stages on the serial console.
+   procedure Console (Text : System.Address)
+     with Import, Convention => C, External_Name => "console_write";
+
+   Msg_Rsdp : aliased constant String :=
+     "[pcie] rsdp rejected" & Character'Val (10) & Character'Val (0);
+   Msg_Xsdt : aliased constant String :=
+     "[pcie] no xsdt" & Character'Val (10) & Character'Val (0);
+   Msg_Mcfg_Missing : aliased constant String :=
+     "[pcie] no mcfg" & Character'Val (10) & Character'Val (0);
+   Msg_Mcfg_Found : aliased constant String :=
+     "[pcie] mcfg found" & Character'Val (10) & Character'Val (0);
+   Msg_Ecam : aliased constant String :=
+     "[pcie] ecam active" & Character'Val (10) & Character'Val (0);
+
    function Mmio_Read8 (A : Unsigned_64) return Unsigned_8
      with Import, Convention => C, External_Name => "mmio_read8";
    function Mmio_Read16 (A : Unsigned_64) return Unsigned_16
@@ -107,9 +122,11 @@ package body Pcie is
       G_Active := 0;
       G_Base := 0;
       if Rsdp = 0 or else Rsdp >= Table_Limit then
+         Console (Msg_Rsdp'Address);
          return;
       end if;
       if Sig (Rsdp) /= 16#20525344# then --  "RSD "
+         Console (Msg_Rsdp'Address);
          return;
       end if;
       Rev := Read_U8 (Rsdp + 15);
@@ -188,8 +205,10 @@ package body Pcie is
       end if;
 
       if Mcfg = 0 then
+         Console (Msg_Mcfg_Missing'Address);
          return;
       end if;
+      Console (Msg_Mcfg_Found'Address);
 
       Len := Read_U32 (Mcfg + 4);
       if Len < 60 then
@@ -208,6 +227,7 @@ package body Pcie is
                G_Bus_From := From_Bus;
                G_Bus_To := To_Bus;
                G_Active := 1;
+               Console (Msg_Ecam'Address);
             end if;
          end;
       end loop;

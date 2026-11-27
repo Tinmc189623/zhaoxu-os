@@ -47,6 +47,9 @@
 #define ZOS_MKDIR    82
 #define ZOS_RMDIR    83
 #define ZOS_RENAME   84
+#define ZOS_RT_SIGACTION   93
+#define ZOS_RT_SIGPROCMASK 94
+#define ZOS_KILL     97
 #define ZOS_TCGETS   0x5401
 #define ZOS_SBRK_BYTES (16u * 1024u * 1024u)
 

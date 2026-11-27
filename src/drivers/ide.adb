@@ -17,6 +17,20 @@ package body Ide is
    Max_Drives : constant := 4;
    Sector_Size : constant := 512;
 
+   --  ATAPI failures are reported on the serial console; a silent -1 hides
+   --  which protocol stage rejected the packet.
+   procedure Console (Text : System.Address)
+     with Import, Convention => C, External_Name => "console_write";
+
+   Msg_Not_Ready : aliased constant String :=
+     "[atapi] drive not ready" & Character'Val (10) & Character'Val (0);
+   Msg_Packet_Drq : aliased constant String :=
+     "[atapi] packet drq failed" & Character'Val (10) & Character'Val (0);
+   Msg_Data_Drq : aliased constant String :=
+     "[atapi] data drq failed" & Character'Val (10) & Character'Val (0);
+   Msg_Data_Err : aliased constant String :=
+     "[atapi] command error" & Character'Val (10) & Character'Val (0);
+
    --  status bits
    St_Bsy : constant := 16#80#;
    St_Drdy : constant := 16#40#;
@@ -38,6 +52,9 @@ package body Ide is
 
    Cmd_Read     : constant := 16#20#;
    Cmd_Read_Lba48 : constant := 16#24#;
+   Cmd_Write    : constant := 16#30#;
+   Cmd_Write_Lba48 : constant := 16#34#;
+   Cmd_Flush    : constant := 16#E7#;
    Cmd_Identify : constant := 16#EC#;
    Cmd_Identify_Packet : constant := 16#A1#;
    Cmd_Packet   : constant := 16#A0#;
@@ -48,6 +65,7 @@ package body Ide is
    type Drive_Record is record
       Present : Boolean := False;
       Atapi   : Boolean := False;
+      Lba48   : Boolean := False;
       Bus     : Unsigned_32 := 0;
       Unit    : Unsigned_32 := 0;
       Sectors : Unsigned_64 := 0;
@@ -177,6 +195,59 @@ package body Ide is
       end loop;
    end Read_Words_To;
 
+   procedure Write_Words_From (Ch : Channel; Buffer : Unsigned_64;
+                               Words : Unsigned_32) is
+      W : Unsigned_16;
+   begin
+      for I in Unsigned_32 range 0 .. Words - 1 loop
+         W := Unsigned_16 (Read8 (Buffer + Unsigned_64 (I) * 2))
+              or Unsigned_16 (Shift_Left (
+                   Unsigned_64 (Read8 (Buffer + Unsigned_64 (I) * 2 + 1)), 8));
+         Outw (Ch.Base + R_Data, W);
+      end loop;
+   end Write_Words_From;
+
+   --  Program the LBA and sector count registers.  LBA48 writes the high
+   --  order bytes first, then the low order ones, then device/head with the
+   --  LBA bit set.
+   procedure Set_Transfer (Ch    : Channel;
+                           Unit  : Unsigned_32;
+                           Lba   : Unsigned_64;
+                           Count : Unsigned_32;
+                           Lba48 : Boolean) is
+   begin
+      Outb (Ch.Base + R_Feat, 0);
+      if Lba48 then
+         Outb (Ch.Base + R_Count,
+               Unsigned_8 (Shift_Right (Count, 8) and 16#FF#));
+         Outb (Ch.Base + R_Lba0,
+               Unsigned_8 (Shift_Right (Lba, 24) and 16#FF#));
+         Outb (Ch.Base + R_Lba1,
+               Unsigned_8 (Shift_Right (Lba, 32) and 16#FF#));
+         Outb (Ch.Base + R_Lba2,
+               Unsigned_8 (Shift_Right (Lba, 40) and 16#FF#));
+         Outb (Ch.Base + R_Count, Unsigned_8 (Count and 16#FF#));
+         Outb (Ch.Base + R_Lba0, Unsigned_8 (Lba and 16#FF#));
+         Outb (Ch.Base + R_Lba1,
+               Unsigned_8 (Shift_Right (Lba, 8) and 16#FF#));
+         Outb (Ch.Base + R_Lba2,
+               Unsigned_8 (Shift_Right (Lba, 16) and 16#FF#));
+         Outb (Ch.Base + R_Drive,
+               16#40# or Unsigned_8 (Shift_Left (Unit, 4)));
+      else
+         Outb (Ch.Base + R_Count, Unsigned_8 (Count and 16#FF#));
+         Outb (Ch.Base + R_Lba0, Unsigned_8 (Lba and 16#FF#));
+         Outb (Ch.Base + R_Lba1,
+               Unsigned_8 (Shift_Right (Lba, 8) and 16#FF#));
+         Outb (Ch.Base + R_Lba2,
+               Unsigned_8 (Shift_Right (Lba, 16) and 16#FF#));
+         Outb (Ch.Base + R_Drive,
+               16#E0# or Unsigned_8 (Shift_Left (Unit, 4))
+               or Unsigned_8 (Shift_Right (Lba, 24) and 16#0F#));
+      end if;
+      Delay_400ns (Ch);
+   end Set_Transfer;
+
    procedure Build_Model (Words : Word_Array; Model : out Model_Text) is
       W : Unsigned_16;
    begin
@@ -241,18 +312,20 @@ package body Ide is
       begin
          D.Present := True;
          D.Atapi := Is_Atapi;
+         D.Lba48 := (Words (83) and 16#0400#) /= 0;
          D.Bus := (if Ch.Base = 16#1F0# then 0 else 1);
          D.Unit := Unit;
          if not Is_Atapi then
-            D.Sectors :=
-              Unsigned_64 (Words (60))
-              or Shift_Left (Unsigned_64 (Words (61)), 16);
-            if D.Sectors = 0 then
+            if D.Lba48 then
                D.Sectors :=
                  Unsigned_64 (Words (100))
                  or Shift_Left (Unsigned_64 (Words (101)), 16)
                  or Shift_Left (Unsigned_64 (Words (102)), 32)
                  or Shift_Left (Unsigned_64 (Words (103)), 48);
+            else
+               D.Sectors :=
+                 Unsigned_64 (Words (60))
+                 or Shift_Left (Unsigned_64 (Words (61)), 16);
             end if;
          end if;
          Build_Model (Words, G_Models (Natural (Index)));
@@ -294,12 +367,14 @@ package body Ide is
       G_Count := 0;
       for I in G_Drives'Range loop
          G_Drives (I) :=
-           (Present => False, Atapi => False, Bus => 0, Unit => 0,
-            Sectors => 0);
+           (Present => False, Atapi => False, Lba48 => False, Bus => 0,
+            Unit => 0, Sectors => 0);
       end loop;
       G_Channels :=
         ((Base => 16#1F0#, Ctrl => 16#3F6#, Active => True),
          (Base => 16#170#, Ctrl => 16#376#, Active => True));
+      --  Drive records are rebuilt from scratch by Probe_Channel; the
+      --  Lba48 flag defaults to False until IDENTIFY sets it.
       for C in 0 .. 1 loop
          Probe_Channel (G_Channels (C));
       end loop;
@@ -367,6 +442,7 @@ package body Ide is
       Cur_Lba   : Unsigned_64 := Lba;
       Source    : Unsigned_64 := Unsigned_64 (To_Integer (Buffer));
       Chunk     : Unsigned_32;
+      Use_48    : Boolean;
    begin
       if not Valid (Drive) or else Buffer = System.Null_Address then
          return -1;
@@ -385,23 +461,21 @@ package body Ide is
          if Cur_Lba + Unsigned_64 (Chunk) > D.Sectors then
             return -1;
          end if;
+         Use_48 := D.Lba48
+                   and then Cur_Lba + Unsigned_64 (Chunk) > 16#1000_0000#;
+         if not D.Lba48
+           and then Cur_Lba + Unsigned_64 (Chunk) > 16#1000_0000#
+         then
+            return -1;
+         end if;
 
          Choose_Drive (Ch, D.Unit);
          if not Wait_Not_Busy (Ch) then
             return -1;
          end if;
-         Outb (Ch.Base + R_Feat, 0);
-         Outb (Ch.Base + R_Count, Unsigned_8 (Chunk and 16#FF#));
-         Outb (Ch.Base + R_Lba0, Unsigned_8 (Cur_Lba and 16#FF#));
-         Outb (Ch.Base + R_Lba1,
-               Unsigned_8 (Shift_Right (Cur_Lba, 8) and 16#FF#));
-         Outb (Ch.Base + R_Lba2,
-               Unsigned_8 (Shift_Right (Cur_Lba, 16) and 16#FF#));
-         Outb (Ch.Base + R_Drive,
-               16#E0# or Unsigned_8 (Shift_Left (D.Unit, 4))
-               or Unsigned_8 (Shift_Right (Cur_Lba, 24) and 16#0F#));
-         Delay_400ns (Ch);
-         Outb (Ch.Base + R_Command, Cmd_Read);
+         Set_Transfer (Ch, D.Unit, Cur_Lba, Chunk, Use_48);
+         Outb (Ch.Base + R_Command,
+               (if Use_48 then Cmd_Read_Lba48 else Cmd_Read));
 
          for Sector in Unsigned_32 range 0 .. Chunk - 1 loop
             if not Wait_Drq (Ch) then
@@ -416,6 +490,107 @@ package body Ide is
       end loop;
       return 0;
    end Read_Block;
+
+   function Write_Block (Drive  : Interfaces.C.int;
+                         Lba    : Unsigned_64;
+                         Count  : Unsigned_32;
+                         Buffer : System.Address)
+     return Interfaces.C.int is
+      D : Drive_Record;
+      Ch : Channel;
+      Remaining : Unsigned_32 := Count;
+      Cur_Lba   : Unsigned_64 := Lba;
+      Source    : Unsigned_64 := Unsigned_64 (To_Integer (Buffer));
+      Chunk     : Unsigned_32;
+      Use_48    : Boolean;
+   begin
+      if not Valid (Drive) or else Buffer = System.Null_Address then
+         return -1;
+      end if;
+      D := G_Drives (Natural (Drive));
+      if D.Atapi then
+         return -1;
+      end if;
+      Ch := G_Channels (Natural (D.Bus));
+      while Remaining > 0 loop
+         if Remaining > 128 then
+            Chunk := 128;
+         else
+            Chunk := Remaining;
+         end if;
+         if Cur_Lba + Unsigned_64 (Chunk) > D.Sectors then
+            return -1;
+         end if;
+         Use_48 := D.Lba48
+                   and then Cur_Lba + Unsigned_64 (Chunk) > 16#1000_0000#;
+         if not D.Lba48
+           and then Cur_Lba + Unsigned_64 (Chunk) > 16#1000_0000#
+         then
+            return -1;
+         end if;
+
+         Choose_Drive (Ch, D.Unit);
+         if not Wait_Not_Busy (Ch) then
+            return -1;
+         end if;
+         Set_Transfer (Ch, D.Unit, Cur_Lba, Chunk, Use_48);
+         Outb (Ch.Base + R_Command,
+               (if Use_48 then Cmd_Write_Lba48 else Cmd_Write));
+
+         for Sector in Unsigned_32 range 0 .. Chunk - 1 loop
+            if not Wait_Drq (Ch) then
+               return -1;
+            end if;
+            Write_Words_From (Ch, Source, 256);
+            Source := Source + Sector_Size;
+         end loop;
+
+         if not Wait_Not_Busy (Ch) then
+            return -1;
+         end if;
+         declare
+            S : constant Unsigned_8 := Status (Ch);
+         begin
+            if (S and (St_Err or St_Df)) /= 0 then
+               return -1;
+            end if;
+         end;
+
+         Cur_Lba := Cur_Lba + Unsigned_64 (Chunk);
+         Remaining := Remaining - Chunk;
+      end loop;
+      return 0;
+   end Write_Block;
+
+   function Flush (Drive : Interfaces.C.int) return Interfaces.C.int is
+      D : Drive_Record;
+      Ch : Channel;
+   begin
+      if not Valid (Drive) then
+         return -1;
+      end if;
+      D := G_Drives (Natural (Drive));
+      if D.Atapi then
+         return -1;
+      end if;
+      Ch := G_Channels (Natural (D.Bus));
+      Choose_Drive (Ch, D.Unit);
+      if not Wait_Not_Busy (Ch) then
+         return -1;
+      end if;
+      Outb (Ch.Base + R_Command, Cmd_Flush);
+      if not Wait_Not_Busy (Ch) then
+         return -1;
+      end if;
+      declare
+         S : constant Unsigned_8 := Status (Ch);
+      begin
+         if (S and (St_Err or St_Df)) /= 0 then
+            return -1;
+         end if;
+      end;
+      return 0;
+   end Flush;
 
    function Atapi_Packet (Drive    : Interfaces.C.int;
                           Cdb      : System.Address;
@@ -438,28 +613,34 @@ package body Ide is
       if not D.Atapi then
          return -1;
       end if;
-      if Cdb_Len < 12 or else Cdb_Len > 16 then
+      if Cdb_Len /= 12 and then Cdb_Len /= 16 then
          return -1;
       end if;
       Ch := G_Channels (Natural (D.Bus));
 
       Choose_Drive (Ch, D.Unit);
       if not Wait_Not_Busy (Ch) then
+         Console (Msg_Not_Ready'Address);
          return -1;
       end if;
       Outb (Ch.Base + R_Feat, 0);
       Outb (Ch.Base + R_Count, 0);
       Outb (Ch.Base + R_Lba0, 0);
-      Outb (Ch.Base + R_Lba1, 16#08#);
-      Outb (Ch.Base + R_Lba2, 16#00#);
+      --  Byte Count Limit = 0 means 64 KiB, the largest PIO transfer.  A
+      --  small non-zero limit makes the device split every 2 KiB block into
+      --  many DRQ cycles that this single-shot reader never services.
+      Outb (Ch.Base + R_Lba1, 0);
+      Outb (Ch.Base + R_Lba2, 0);
       Outb (Ch.Base + R_Command, Cmd_Packet);
 
       if not Wait_Drq (Ch) then
+         Console (Msg_Packet_Drq'Address);
          return -1;
       end if;
 
       Cdb_Addr := Unsigned_64 (To_Integer (Cdb));
-      for I in 0 .. 5 loop
+      --  A packet CDB is 12 or 16 bytes, written as 16-bit words.
+      for I in 0 .. (Cdb_Len + 1) / 2 - 1 loop
          W := Unsigned_16 (Read8 (Cdb_Addr + Unsigned_64 (I) * 2))
               or Shift_Left (
                    Unsigned_16 (Read8 (Cdb_Addr + Unsigned_64 (I) * 2 + 1)),
@@ -472,6 +653,7 @@ package body Ide is
       end if;
 
       if not Wait_Drq (Ch) then
+         Console (Msg_Data_Drq'Address);
          return -1;
       end if;
 
@@ -507,6 +689,7 @@ package body Ide is
             S : constant Unsigned_8 := Status (Ch);
          begin
             if (S and St_Err) /= 0 or else (S and St_Df) /= 0 then
+               Console (Msg_Data_Err'Address);
                return -1;
             end if;
             exit when (S and St_Bsy) = 0 and then (S and St_Drq) = 0;

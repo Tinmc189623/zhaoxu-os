@@ -28,24 +28,29 @@
 # define DOARGS_5 DOARGS_4
 # define DOARGS_6 DOARGS_5
 
-/* Legacy calls report failure as exactly -1; convert that to -errno before
- * the common range check.  Numbers above 85 already come back as -errno. */
+/* Legacy calls (0-85) report failure as exactly -1; convert that to -errno
+ * before the common range check.  The number is kept in %r11d and compared
+ * at run time: cpp macro expansion cannot emit the newline an `.if` needs,
+ * and %r11 is already clobbered by the syscall ABI. */
 # undef PSEUDO
 # define PSEUDO(name, syscall_name, args)				\
   .text;								\
   ENTRY (name)								\
-    DO_CALL (syscall_name, args)					\
-  .if SYS_ify (syscall_name) <= 85					\
+    movl $SYS_ify (syscall_name), %r11d;				\
+    movl %r11d, %eax;							\
+    DOARGS_##args							\
+    int $0x80;								\
+    cmpl $85, %r11d;							\
+    ja 2f;								\
     cmpq $-1, %rax;							\
-    jne 1f;								\
+    jne 2f;								\
     movl $112, %eax;							\
     int $0x80;								\
     testl %eax, %eax;							\
     jne 1f;								\
     movl $5, %eax;		/* EIO when nothing was recorded */	\
 1:  negl %eax;								\
-  .endif								\
-    cmpq $-4095, %rax;							\
+2:  cmpq $-4095, %rax;							\
     jae SYSCALL_ERROR_LABEL
 
 # undef PSEUDO_END
